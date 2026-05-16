@@ -1,0 +1,29 @@
+#!/usr/bin/with-contenv sh
+# Phase 10 §M — control-plane longrun.
+#
+# Reviewer L5: with-contenv stays HERE (python needs RESTREAM_* env
+#   to derive AppSettings + unlock KeyMaterial). nginx/run, init-data/up,
+#   control-plane/log/run dropped with-contenv — they don't need the env
+#   and narrowing the in-container env-var blast radius is cheap defense
+#   in depth (one fewer /proc/<pid>/environ holding the master passphrase).
+# Reviewer I3: set -eu so a venv-binary-missing exec failure surfaces
+#   immediately for s6 to catch.
+# Reviewer M4: umask 027 so any files python creates in /data are not
+#   world-readable on the host bind-mount.
+#
+# Delegates to `python -m app.main` so that app/main.py::main() is the
+# single source of truth for uvicorn config (factory=True, workers=1,
+# log_config=None, access_log=False). Do NOT invoke uvicorn directly
+# here — bypassing main() makes the `workers=1` invariant invisible
+# to grep tooling and lets a future "improvement" silently bump it.
+#
+# `s6-setuidgid restream` drops to uid 10001 BEFORE exec'ing python,
+# so the entire python process tree (including the supervisor's
+# subprocess.Popen'd ffmpeg children) runs unprivileged.
+#
+# `s6-notifyoncheck` is NOT used here — app/main.py writes to fd 3
+# directly after supervisor.wait_ready() succeeds (Phase 10 §C+§M).
+set -eu
+umask 027
+cd /app
+exec s6-setuidgid restream /opt/venv/bin/python -m app.main

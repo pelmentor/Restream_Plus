@@ -1,0 +1,4 @@
+#!/usr/bin/with-contenv sh
+# Phase 10 §D — crash backoff. s6 by default restarts a crashed longrun
+# immediately; a 2s sleep prevents tight loops on persistent failure.
+exec sleep 2

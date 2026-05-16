@@ -1,0 +1,84 @@
+"""Users repository — single admin row per ADR-0005."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+from pydantic import AwareDatetime, BaseModel, ConfigDict, SecretStr
+from sqlalchemy import select, update
+
+from app.db.models import UserORM
+
+if TYPE_CHECKING:  # pragma: no cover
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+
+class UserDTO(BaseModel):
+    """Frozen, immutable view over a `users` row.
+
+    `password_hash` is a `SecretStr` so that an accidental `repr()` /
+    structlog event renders `**********`. The Argon2 PHC string contains
+    derived key material, not the original password, but redacting it
+    keeps a defence-in-depth posture consistent with the rest of the
+    codebase.
+    """
+
+    model_config = ConfigDict(frozen=True, from_attributes=True)
+
+    id: str
+    username: str
+    password_hash: SecretStr | None
+    created_at: AwareDatetime
+    last_login_at: AwareDatetime | None
+
+
+class UsersRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def get_by_username(self, username: str) -> UserDTO | None:
+        result = await self._s.execute(select(UserORM).where(UserORM.username == username))
+        row = result.scalar_one_or_none()
+        return UserDTO.model_validate(row) if row is not None else None
+
+    async def get_by_id(self, user_id: str) -> UserDTO | None:
+        result = await self._s.execute(select(UserORM).where(UserORM.id == user_id))
+        row = result.scalar_one_or_none()
+        return UserDTO.model_validate(row) if row is not None else None
+
+    async def create(
+        self,
+        *,
+        username: str,
+        password_hash: str | None,
+    ) -> UserDTO:
+        """Create a user row. Used by tests and any future multi-user flow.
+
+        Production seeding goes through `schema_init._seed_initial_rows`,
+        which inserts the admin row directly; this method exists so the
+        repository test suite has a well-typed creation path.
+        """
+        user_id = uuid.uuid4().hex
+        now = datetime.now(tz=UTC)
+        row = UserORM(
+            id=user_id,
+            username=username,
+            password_hash=password_hash,
+            created_at=now,
+            last_login_at=None,
+        )
+        self._s.add(row)
+        await self._s.flush()
+        return UserDTO.model_validate(row)
+
+    async def update_password_hash(self, user_id: str, password_hash: str) -> None:
+        await self._s.execute(
+            update(UserORM).where(UserORM.id == user_id).values(password_hash=password_hash)
+        )
+
+    async def touch_last_login(self, user_id: str, at: datetime) -> None:
+        if at.tzinfo is None:
+            raise ValueError("at must be timezone-aware")
+        await self._s.execute(update(UserORM).where(UserORM.id == user_id).values(last_login_at=at))

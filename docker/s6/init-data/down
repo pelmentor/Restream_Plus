@@ -1,0 +1,3 @@
+#!/usr/bin/with-contenv sh
+# init-data is idempotent; nothing to undo on shutdown.
+exit 0

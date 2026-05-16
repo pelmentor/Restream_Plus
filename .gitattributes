@@ -1,0 +1,55 @@
+# Default: let git decide line endings per OS for text files.
+* text=auto
+
+# Files that MUST stay LF regardless of host platform — these run
+# inside the Linux container and a CRLF in a shebang line produces
+# `^M: bad interpreter` at exec time.
+*.sh             text eol=lf
+docker/s6/**     text eol=lf
+docker/nginx.conf text eol=lf
+docker/Dockerfile text eol=lf
+docker/entrypoint.sh text eol=lf
+docker/healthcheck.sh text eol=lf
+
+# Python source is LF on disk too (ruff/black assume LF).
+*.py             text eol=lf
+
+# Frontend / TS sources stay LF (matches Vite + ESLint expectations).
+*.ts             text eol=lf
+*.tsx            text eol=lf
+*.js             text eol=lf
+*.jsx            text eol=lf
+*.mjs            text eol=lf
+*.json           text eol=lf
+*.css            text eol=lf
+*.html           text eol=lf
+
+# Markdown / YAML / TOML keep LF too — matches editor defaults.
+*.md             text eol=lf
+*.yaml           text eol=lf
+*.yml            text eol=lf
+*.toml           text eol=lf
+
+# SQL schema — server reads as LF; keep consistent.
+*.sql            text eol=lf
+
+# Lock files / requirements lock — LF for reproducible diffs.
+*.lock           text eol=lf
+requirements*.txt text eol=lf
+
+# Binary types — never touch line endings.
+*.png            binary
+*.jpg            binary
+*.jpeg           binary
+*.gif            binary
+*.ico            binary
+*.svg            text eol=lf
+*.woff           binary
+*.woff2          binary
+*.ttf            binary
+*.eot            binary
+*.pdf            binary
+*.tar            binary
+*.tar.gz         binary
+*.tar.xz         binary
+*.zip            binary

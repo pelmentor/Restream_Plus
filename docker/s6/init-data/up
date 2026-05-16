@@ -1,0 +1,31 @@
+#!/bin/sh
+# Phase 10 §F — boot-time fs prep. Runs as root before any longrun.
+# Reviewer L5: with-contenv dropped — chown/mkdir need no RESTREAM_* env.
+# Reviewer M2: chown uses -h (don't follow symlinks); refuse to chown if
+#   /data itself is a symlink (operator footgun: `ln -s /etc /data` would
+#   chown the host's /etc on the next restart without -h).
+# Reviewer M3: chown is conditional on the top-level /data not already
+#   being uid 10001, so operator-owned files dropped via `docker cp` are
+#   not silently re-owned on every container restart. The mkdir steps
+#   stay unconditional (cheap, no harm if dirs already exist).
+set -eu
+
+if [ -L /data ]; then
+    echo "ERROR: /data must be a directory, not a symlink (refusing to chown)." >&2
+    exit 1
+fi
+
+mkdir -p /data /data/logs /data/logs/control-plane /data/tls
+
+# uid 10001 is LOAD-BEARING — operators chown host directories to this
+# uid before mounting. See Phase 10 §F I-F1.
+current_uid="$(stat -c '%u' /data)"
+if [ "$current_uid" != "10001" ]; then
+    # First boot, or operator-provided mount with foreign uid.
+    chown -hR 10001:10001 /data
+fi
+# Always ensure the sub-dirs (which we may have just mkdir'd) are owned
+# correctly even when /data itself was already 10001 — covers the case
+# where a new subdir gets created mid-life of an existing mount.
+chown -h 10001:10001 /data/logs /data/logs/control-plane /data/tls
+chmod 0750 /data /data/logs /data/logs/control-plane /data/tls

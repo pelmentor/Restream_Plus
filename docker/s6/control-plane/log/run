@@ -1,0 +1,11 @@
+#!/bin/sh
+# Phase 10 §N — capture control-plane stdout/stderr to a rotating
+# s6-log directory at /data/logs/control-plane/. Files:
+#   current             (active log)
+#   @<timestamp>.s      (rotated, .s = "size cap reached")
+# `-bp` flags: bind to producer (always have a writer), preserve fds.
+#
+# Reviewer L5: s6-log needs no RESTREAM_* env; with-contenv dropped.
+# Reviewer I3: set -eu so any startup misconfig fails fast.
+set -eu
+exec s6-setuidgid restream s6-log -bp /data/logs/control-plane

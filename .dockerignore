@@ -1,0 +1,39 @@
+# Everything excluded by default; allowlist what the image needs.
+# Build context is small this way and free of secrets / cruft.
+#
+# Phase 10 §B I-B2 — the implicit exclusions cover: tests/, docs/,
+# .git/, web/node_modules/, htmlcov/, .pytest_cache/, .ruff_cache/,
+# .mypy_cache/. The `**` line at top is what blocks them. Don't
+# allowlist any of those unless you know why.
+
+**
+
+# Backend
+!pyproject.toml
+!poetry.lock
+!uv.lock
+!app/
+app/**/__pycache__/
+app/**/*.pyc
+
+# Frontend
+!web/package.json
+!web/package-lock.json
+!web/tsconfig.json
+!web/tsconfig.app.json
+!web/tsconfig.node.json
+!web/vite.config.ts
+!web/eslint.config.js
+!web/index.html
+!web/src/
+!web/scripts/
+
+# Docker assets
+!docker/
+docker/**/*.swp
+# Keep build context tight — the s6 service tree is just text files,
+# but exclude any editor swap files that might land there.
+
+# License & metadata
+!LICENSE
+!README.md

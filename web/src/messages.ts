@@ -1,0 +1,466 @@
+/**
+ * All user-facing strings. Per ux-flows.md §8 (F# UX-F.messages-ts) and
+ * design-system.md §9, hardcoded JSX literals are a CI lint failure;
+ * everything user-facing goes through this file.
+ *
+ * The `t()` helper is typed against the `Messages` shape — typo'd keys
+ * are TypeScript errors at compile time. A future i18n pass swaps the
+ * implementation of `t()` without touching call sites.
+ */
+
+const messages = {
+  app: {
+    name: "Restream_Plus",
+    tagline: "Multi-platform restreamer",
+  },
+
+  common: {
+    loading: "Loading…",
+    cancel: "Cancel",
+    retry: "Retry",
+    dismiss: "Dismiss",
+    signIn: "Sign in",
+    signOut: "Log out",
+    settings: "Settings",
+    submit: "Submit",
+    save: "Save",
+    saving: "Saving…",
+    networkError: "Cannot reach the server. Check your connection.",
+    unexpectedError: "Something went wrong. Try again or reload the page.",
+    skipToContent: "Skip to main content",
+    closeMenu: "Close menu",
+    openMenu: "Open menu",
+  },
+
+  theme: {
+    label: "Theme",
+    light: "Light",
+    dark: "Dark",
+    system: "System",
+    lightAria: "Light theme",
+    darkAria: "Dark theme",
+    systemAria: "System theme",
+  },
+
+  login: {
+    title: "Sign in",
+    passwordLabel: "Password",
+    passwordPlaceholder: "Master password",
+    capsLockOn: "Caps Lock is on",
+    invalidCredentials: "Wrong password. Try again.",
+    rateLimitedTitle: "Too many attempts",
+    rateLimitedBody: "Try again in {seconds}s.",
+    submitting: "Signing in…",
+  },
+
+  unlock: {
+    title: "Service locked",
+    intro:
+      "Paste the master passphrase to unlock the restreamer. " +
+      "The passphrase derives the encryption keys for stored credentials.",
+    passphraseLabel: "Master passphrase",
+    unlockButton: "Unlock",
+    unlocking: "Unlocking…",
+    unlockingInProgressTitle: "Unlocking…",
+    unlockingInProgressBody:
+      "Key derivation is running. This page refreshes automatically.",
+    unlockFailed: "Wrong passphrase or unlock failed. Try again.",
+    rateLimitedTitle: "Too many unlock attempts",
+    rateLimitedBody: "Try again in {seconds}s.",
+    successRedirecting: "Unlocked. Loading…",
+  },
+
+  appShell: {
+    runStateOffline: "OFFLINE",
+    runStateOfflineAria: "Service offline",
+    wordmarkLink: "Restream_Plus home",
+    accountMenuTrigger: "Account menu",
+    accountAvatarAlt: "Admin",
+    accountChangePassword: "Change password",
+    accountApiTokens: "API tokens",
+    buildSha: "Build {sha}",
+  },
+
+  runState: {
+    offline: "OFFLINE",
+    starting: "STARTING…",
+    stopping: "STOPPING…",
+    armed: "ARMED",
+    live: "LIVE",
+    error: "ERROR",
+    offlineAria: "Service offline",
+    startingAria: "Starting up",
+    stoppingAria: "Stopping",
+    armedAria: "Armed, waiting for OBS",
+    liveAria: "Live",
+    liveAriaWithTimer: "Live for {timer}",
+    errorAria: "Error — open dashboard for details",
+  },
+
+  hero: {
+    start: "START",
+    stop: "STOP",
+    starting: "STARTING…",
+    stopping: "STOPPING…",
+    pushOBSTo: "Push OBS to",
+    streamKey: "Stream key",
+    revealInSettings: "Reveal in Settings to copy the full key.",
+    startingBody: "Spawning workers…",
+    stoppingBody: "Draining workers…",
+    armedTitle: "Waiting for OBS to start streaming",
+    armedBody: "Workers are ready. Press Start in OBS to go live.",
+    liveSummary:
+      "Live to {runningCount}/{totalEnabled} targets · {bitrate} Mbps · drops {drops}",
+    errorTitle: "Stream failed",
+    errorBody: "Open a target tile to see the redacted error and retry.",
+    stopConfirm: "Stop",
+    stopCancel: "Cancel",
+    stopConfirmAria: "Confirm stop, 3 seconds to cancel",
+  },
+
+  dashboard: {
+    emptyTitle: "Add a target to get started",
+    emptyBody: "Enable at least one platform to enable START.",
+    emptyCta: "Open targets",
+    targetsHeading: "Targets",
+    reconnectingTitle: "Reconnecting to control plane…",
+    staleRunState:
+      "Your view was out of date. Showing the latest run state now.",
+    vkPromptTitle: "Stream key required for VK Live",
+    vkPromptIntro:
+      "VK requires a fresh stream key each broadcast. Paste it once and the supervisor will wipe it when the session ends.",
+    vkLooksValid: "Looks valid.",
+    vkLooksMalformed: "Looks malformed — double-check.",
+    vkUseAndStart: "Use & start",
+    vkSkip: "Skip this time",
+    firstRunStep1: "Copy the ingest URL and key into OBS.",
+    firstRunStep2: "Start streaming in OBS.",
+    firstRunStep3: "Click START here.",
+  },
+
+  tile: {
+    statusDisabled: "Disabled",
+    statusNoKey: "No key",
+    statusEnabled: "Enabled",
+    statusStarting: "Starting",
+    statusLive: "Live",
+    statusDegraded: "Degraded",
+    statusReconnecting: "Reconnecting",
+    statusStopped: "Stopped",
+    metricBitrate: "Bitrate",
+    metricDrops: "Drops",
+    metricWorker: "Worker",
+    metricBreaker: "Failures",
+  },
+
+  targetDetails: {
+    close: "Close details",
+    sparklineAria: "Bitrate over the last 5 minutes",
+    sparklineEmptyAria: "No samples yet.",
+    chartUnavailable: "Chart unavailable.",
+    logsTitle: "Worker logs",
+    retryNow: "Retry now",
+    disable: "Disable just this target",
+    metricLastEvent: "Last event",
+    metricRole: "Role",
+  },
+
+  logViewer: {
+    pause: "Pause tail",
+    resume: "Resume tail",
+    copyAll: "Copy all",
+    download: "Download .log",
+    resumeTail: "Resume tail",
+    empty: "No log lines.",
+  },
+
+  recentEvents: {
+    trigger: "Recent events",
+    empty: "No recent events.",
+    clear: "Clear",
+  },
+
+  // ---------------- Phase 9 — Settings ----------------
+
+  settings: {
+    backToDashboard: "← Dashboard",
+    sidebarHeading: "Settings",
+    sectionSaved: "Saved.",
+    sectionSaveFailed: "Couldn't save. Try again.",
+    requiredFieldSr: "(required)",
+    discard: "Discard",
+    save: "Save changes",
+    saving: "Saving…",
+    networkError: "Cannot reach the server. Check your connection.",
+    unsavedTitle: "Discard changes?",
+    unsavedBody: "You have unsaved changes. Discard them?",
+    pageGeneralTitle: "General",
+    pageGeneralSubtitle: "Server-wide preferences.",
+    pageSecurityTitle: "Security",
+    pageSecuritySubtitle: "Password, master passphrase, API tokens, sessions.",
+    pageSessionsTitle: "Sessions",
+    pageSessionsSubtitle: "Past go-live sessions.",
+    pageAboutTitle: "About",
+    pageAboutSubtitle: "Version, build, and where to find your logs.",
+    pageTargetsHeading: "Targets",
+    tabGeneral: "General",
+    tabSecurity: "Security",
+    tabSessions: "Sessions",
+    tabAbout: "About",
+    tabTargets: "Targets",
+    tabTwitch: "Twitch",
+    tabYoutube: "YouTube",
+    tabKick: "Kick",
+    tabVk: "VK Live",
+    tabCustom: "Custom",
+  },
+
+  general: {
+    ingestSection: "Ingest configuration",
+    ingestUrlLabel: "Server URL",
+    ingestUrlHelper:
+      "Paste this into OBS → Settings → Stream → Custom Server.",
+    ingestKeyLabel: "Ingest key",
+    ingestKeyRevealAria: "Reveal ingest key",
+    regenerate: "Regenerate",
+    regenerateConfirmTitle: "Regenerate ingest key?",
+    regenerateConfirmBody:
+      "Regenerating the ingest key invalidates the URL and key you saved in OBS. You will need to paste the new key into OBS before your next stream.",
+    regenerateConfirmCannotUndo: "Cannot be undone.",
+    regeneratePhrase: "REGENERATE",
+    runBehaviorSection: "Run behavior",
+    idleTimeoutLabel: "Idle timeout",
+    idleTimeoutHelper:
+      "How long workers wait after OBS disconnects before stopping the session.",
+    logRetentionLabel: "Log retention (days)",
+    logRetentionHelper:
+      "Per-target ffmpeg logs older than this are deleted on a daily sweep.",
+  },
+
+  security: {
+    changePasswordSection: "Change password",
+    changePasswordWarning:
+      "Changing your password signs you out of all sessions.",
+    currentPasswordLabel: "Current password",
+    newPasswordLabel: "New password",
+    confirmNewPasswordLabel: "Confirm new password",
+    changePassword: "Change password",
+    rotatePassphraseSection: "Rotate master passphrase",
+    rotatePassphraseWarning:
+      "Rotating the passphrase re-encrypts every stored credential and revokes every session and API token. You will be signed out.",
+    currentPassphraseLabel: "Current master passphrase",
+    newPassphraseLabel: "New master passphrase",
+    confirmNewPassphraseLabel: "Confirm new master passphrase",
+    rotatePassphrase: "Rotate passphrase",
+    rotating: "Rotating… (re-encrypting credentials)",
+    apiTokensSection: "API tokens",
+    apiTokenColCreated: "Created",
+    apiTokenColLastUsed: "Last used",
+    customRowEdit: "Edit",
+    apiTokensEmpty: "No API tokens yet.",
+    apiTokensEmptyHelper: "Create one for headless or scripted use of the API.",
+    newToken: "New token",
+    tokenLabelInput: "Label",
+    create: "Create token",
+    revoke: "Revoke",
+    revokeConfirm: "Revoke this token?",
+    httpSessionsSection: "Signed-in sessions",
+    httpSessionsEmpty: "No active sessions.",
+    httpSessionsCurrent: "this device",
+    logoutAllSection: "Sign out everywhere",
+    logoutAllButton: "Sign out everywhere",
+    logoutAllConfirmTitle: "Sign out of all devices?",
+    logoutAllConfirmBody:
+      "You will need to sign in again on each device. This includes this browser.",
+    logoutAllPhrase: "log out",
+  },
+
+  sessionsTab: {
+    columnStarted: "Started",
+    columnDuration: "Duration",
+    columnEnded: "Ended",
+    columnReason: "Reason",
+    empty: "No streams yet.",
+    emptyHelper: "Your past sessions will appear here.",
+    loadOlder: "Load older sessions",
+    loading: "Loading…",
+  },
+
+  aboutTab: {
+    buildSection: "Build",
+    versionLabel: "Version",
+    buildShaLabel: "Build SHA",
+    uptimeSection: "Uptime",
+    uptimeLabel: "Server uptime",
+    lastRebootsLabel: "Last reboots",
+    logsSection: "Logs",
+    logsPath: "/data/logs/",
+    logsHelper:
+      "Per-target ffmpeg logs and the control-plane log live here on the host.",
+    licenseSection: "License",
+    licenseLabel: "Apache-2.0",
+    diagnosticsSection: "Diagnostics",
+    forgotPassword: "Forgot password?",
+    forgotPasswordHelper: "See docs for the recovery procedure.",
+  },
+
+  targetTab: {
+    statusSection: "Status",
+    enabledLabel: "Enabled",
+    lastSession: "Last session",
+    neverStreamed: "Never streamed",
+    identitySection: "Identity",
+    labelInput: "Label",
+    urlSection: "Ingest URL",
+    urlPresetLabel: "Endpoint",
+    urlCustom: "Custom URL…",
+    urlCustomInput: "URL",
+    streamKeySection: "Stream key",
+    streamKeyEmpty: "Not configured",
+    showKeyOnce: "Show key once",
+    changeKey: "Change key",
+    saveKey: "Save key",
+    clearKey: "Clear key",
+    clearKeyConfirm: "Clear the stream key?",
+    clearKeyConfirmBody:
+      "You will need to paste it again before the next stream.",
+    dangerZone: "Danger zone",
+    deleteTarget: "Delete target",
+    deleteConfirmTitle: "Delete target?",
+    deleteConfirmBody:
+      "Removes the target. Past run-history records keep their entry.",
+    vkAdvancedToggle: "Use a stored key for next session only",
+    vkInfoTitle: "Stream key required per broadcast",
+    vkInfoBody:
+      "VK requires a fresh stream key for each broadcast. You'll paste it on the Dashboard when you start. Keys are wiped after each session.",
+    saveForNext: "Save for next session",
+    addCustomTarget: "Add custom target",
+    customEmpty: "No custom targets yet.",
+    customEditTitle: "Edit custom target",
+    customNewTitle: "Add custom target",
+    customListEmptyCta: "Add custom target",
+  },
+
+  secret: {
+    revealAria: "Reveal",
+    hideAria: "Hide",
+    countdownHidesIn: "Hides in {time}",
+    countdownAnnounceRevealed: "Stream key revealed. Hides in 60 seconds.",
+    countdownAnnounceHidden: "Stream key hidden.",
+    lockedHelper: "Locked; rotate passphrase to edit.",
+    pasteOnlyValid: "Looks valid.",
+    pasteOnlyMalformed: "Looks malformed — double-check.",
+  },
+
+  copy: {
+    idle: "Copy",
+    copying: "Copying…",
+    copied: "Copied",
+    failed: "Copy failed",
+    announceCopied: "Copied to clipboard.",
+    announceFailed: "Copy failed.",
+    fallbackTooltip: "Press Ctrl+C to copy",
+  },
+
+  confirm: {
+    cancel: "Cancel",
+    confirm: "Confirm",
+    inactivityCancelled: "Confirmation cancelled.",
+    typeToConfirm: "Type {phrase} to confirm",
+    matchProgress: "{matched} of {total} characters match.",
+    matchOk: "Match — action enabled.",
+  },
+
+  reveal: {
+    bannerTitle: "Copy this now — it will not be shown again",
+    bannerBody: "This value is shown only this once. Save it somewhere safe.",
+    bannerDismiss: "I've saved it — dismiss",
+    announceMount: "Value created. Copy it now; it will not be shown again.",
+    announceDismiss: "Dismissed.",
+  },
+
+  slider: {
+    seconds: "{n} seconds",
+    secondsWithMinutes: "{n} seconds ({m} minutes)",
+  },
+
+  reprompt: {
+    title: "Confirm with your password",
+    bodyRevealStreamKey: "You're about to reveal a stream key.",
+    bodyRevealIngestKey: "You're about to reveal the ingest key.",
+    bodyRegenerateIngestKey:
+      "You're about to regenerate the ingest key. Your OBS configuration will stop working until you paste the new key.",
+    bodyRotatePassphrase:
+      "You're about to rotate the master passphrase. All sessions and API tokens will be invalidated.",
+    bodyChangePassword:
+      "You're about to change your password. All sessions will be signed out.",
+    bodyDeleteTarget: "You're about to delete a target. This cannot be undone.",
+    bodyRevokeApiToken: "You're about to revoke this API token.",
+    bodyClearCredential:
+      "You're about to clear the stream key for this target.",
+    passwordLabel: "Password",
+    cancel: "Cancel",
+    confirm: "Confirm",
+    confirming: "Confirming…",
+    invalidPassword: "Wrong password.",
+    rateLimitedTitle: "Too many attempts",
+    rateLimitedBody: "Try again in {seconds}s.",
+    busy: "A confirmation is already in progress.",
+    grantExpired: "Confirmation expired. Try again.",
+    networkError: "Cannot reach the server.",
+  },
+
+
+  notFound: {
+    title: "Page not found",
+    body: "The page you requested does not exist.",
+    backHome: "Back to Dashboard",
+  },
+
+  auth: {
+    sessionExpiredTitle: "Session expired",
+    sessionExpiredBody: "Please sign in again.",
+  },
+
+  errors: {
+    serviceLocked: "Service is locked. Unlock with the master passphrase.",
+    serviceUnlocking: "Unlocking… this page refreshes automatically.",
+  },
+} as const;
+
+type Messages = typeof messages;
+
+/**
+ * String paths into the messages tree, e.g. "login.invalidCredentials".
+ * Limited to 2-level keys — matches the actual structure and keeps the
+ * type recursion bounded.
+ */
+type MessagePath = {
+  [K1 in keyof Messages]: Messages[K1] extends Record<string, string>
+    ? {
+        [K2 in keyof Messages[K1]]: K2 extends string ? `${K1 & string}.${K2}` : never;
+      }[keyof Messages[K1]]
+    : never;
+}[keyof Messages];
+
+/**
+ * Lookup a message by dotted path. Optional `params` are substituted
+ * for `{name}` placeholders using a minimal sprintf — no library, no
+ * locale, no plural handling. The future-i18n pass swaps this body.
+ */
+export function t(path: MessagePath, params?: Readonly<Record<string, string | number>>): string {
+  const [k1, k2] = path.split(".") as [keyof Messages, string];
+  const section = messages[k1] as Record<string, string>;
+  const raw = section[k2];
+  if (raw === undefined) {
+    return path;
+  }
+  if (params === undefined) return raw;
+  return raw.replace(/\{(\w+)\}/g, (_, key: string) => {
+    const v = params[key];
+    return v === undefined ? `{${key}}` : String(v);
+  });
+}
+
+export type { MessagePath, Messages };
+export { messages };

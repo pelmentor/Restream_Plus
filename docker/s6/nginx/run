@@ -1,0 +1,56 @@
+#!/bin/sh
+# Phase 10 §C — nginx longrun with readiness gating.
+# Reviewer L5: nginx + the readiness wrapper need NO RESTREAM_* env;
+#   plain /bin/sh narrows the in-container env-var blast radius (only
+#   control-plane/run uses with-contenv).
+# Reviewer I3: set -eu so an exec failure (wrong nginx path, missing
+#   binary, missing `nc`) fails the run script immediately and lets
+#   s6 surface the crash + apply the finish-script backoff.
+# Reviewer M4: umask 027 so any logs nginx creates in /data/logs/ are
+#   not world-readable on the host bind-mount.
+#
+# nginx binds in foreground; this wrapper polls loopback :1935 and
+# writes to s6's notification-fd (fd 3) only after the listen socket
+# is ready. control-plane then starts (its s6 dep on nginx waits for
+# `ready`, not just `started`).
+#
+# The setcap on /usr/sbin/nginx (Dockerfile §G) is currently unused —
+# v1 ports 1935 + 8000 are both > 1024 — but pre-applied for forward
+# compatibility with a future TLS panel on :443. The nginx master
+# process here still starts as root (s6's default uid for longruns);
+# nginx.conf's `user restream;` drops the WORKERS to restream after
+# the master binds. Reviewer M1: this contradicts an earlier memo
+# claim that master ran as restream — the design memo is corrected;
+# this comment is the authoritative source.
+set -eu
+umask 027
+
+# Start nginx in background so we can poll the socket.
+/usr/sbin/nginx -g 'daemon off;' &
+NGINX_PID=$!
+
+# Poll the loopback :1935 socket up to ~5s. Each iteration is 100 ms.
+i=0
+while [ "$i" -lt 50 ]; do
+    if nc -z 127.0.0.1 1935 2>/dev/null; then
+        # Notify s6 we're ready. Single byte over fd 3 + close.
+        # Reviewer M5: `exec 3>&-` closes the write-end of the s6
+        # notification pipe in this shell process so it isn't inherited
+        # into nginx workers (defense in depth — nginx workers are
+        # already forked before this poll succeeds, but if any future
+        # nginx config changes that fork-order, the close is the safe
+        # default).
+        printf '\n' >&3
+        exec 3>&-
+        # Now block on the nginx process; exit with whatever nginx exits.
+        wait "$NGINX_PID"
+        exit $?
+    fi
+    sleep 0.1
+    i=$((i + 1))
+done
+
+# Bind never succeeded in 5s. Kill the child; s6 will respawn us.
+kill "$NGINX_PID" 2>/dev/null || true
+echo "nginx run: failed to bind :1935 within 5s" >&2
+exit 1

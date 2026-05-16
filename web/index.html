@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="description" content="Restream_Plus — self-hosted multi-platform restreamer control panel." />
+    <title>Restream_Plus</title>
+    <!--
+      Inline theme bootstrapper. Runs before React paints to avoid a
+      light-flash on dark systems. Reads localStorage and applies
+      data-theme on <html> before stylesheet parse completes.
+    -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("restream-plus.theme");
+          if (t === "light" || t === "dark") {
+            document.documentElement.setAttribute("data-theme", t);
+          }
+        } catch (_) { /* localStorage may be unavailable */ }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>
+      <p style="padding: 2rem; font-family: system-ui, sans-serif">
+        Restream_Plus requires JavaScript. Enable it and reload.
+      </p>
+    </noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,254 @@
+# ADR-0005: Auth model — single admin, Argon2id, session cookie + API token
+
+## Status
+Accepted — 2026-05-15
+
+## Context
+
+The web panel controls the start/stop of a live stream and stores stream
+keys that, if leaked, allow strangers to broadcast to the user's channels.
+A weak auth story is the same as no auth.
+
+The deployment context is a single user running a single instance on their
+own machine or a small VPS. There is no need (and explicit rejection in
+system-overview.md §1) for multi-user accounts, federated identity, or
+role-based access control.
+
+The non-negotiables (drawn from the backend-architect prompt: defense in
+depth, encryption in transit, secure auth that doesn't fall to common
+vulnerabilities):
+
+- Passwords must be hashed with a memory-hard KDF.
+- Login flows must be resistant to timing attacks, replay, and brute-force.
+- Session cookies must be HttpOnly, Secure (when TLS is configured),
+  SameSite=Lax (the panel is not embedded as an iframe anywhere).
+- The API must be usable by automation (e.g., a streamer's deck script)
+  without a browser session — i.e., a long-lived token is needed.
+- No password = no service. The control plane refuses to start without
+  one configured.
+
+## Decision
+
+**Single admin user. Password hashed with Argon2id. Login produces a
+server-side session keyed by an opaque random ID stored in an HttpOnly
+cookie. Long-lived API tokens are issued via the UI and live in a separate
+table; they are stored hashed (HMAC-SHA-256) and matched at request time.**
+
+### Bootstrap
+
+On first container start with an empty database:
+
+1. The control plane reads `RESTREAM_ADMIN_PASSWORD` from env (or, if
+   absent, generates a random 20-char passphrase and prints it to stdout
+   exactly once).
+2. Hashes it with Argon2id (`time_cost=3, memory_cost=64MiB,
+   parallelism=2`) and writes the hash to the `users` table with
+   `username='admin'`.
+3. On subsequent boots, the env var is ignored unless explicitly told to
+   rotate (see "Password rotation" below).
+
+### Login flow
+
+```
+POST /api/auth/login
+  body: { username, password }
+  → server: argon2.verify(stored_hash, password)
+    → on success:
+        - generate cookie value:  cookie_value = secrets.token_urlsafe(32)
+        - compute token_hash:     token_hash = HMAC-SHA256(
+                                      session_token_mac_key, cookie_value)
+        - persist session row(token_hash=<bytes>, user_id, created_at,
+                              expires_at = +30 days, last_seen_at,
+                              user_agent, ip)
+        - set cookie: __Host-rp_session=<cookie_value>; HttpOnly; Secure;
+                      SameSite=Lax; Path=/; Max-Age=2592000
+        - return 200 with body { "user": {
+                                   "username": "admin",
+                                   "last_login_at": "<iso8601-utc>"
+                                 } }
+          (body shape lets the SPA paint the header chrome and
+           "last sign-in" banner without a second round-trip)
+    → on failure:
+        - constant-time delay to ~normalize total response time
+        - return 401 with body { error: "invalid_credentials" }
+```
+
+The login endpoint is rate-limited via **two independent sliding-window
+counters**, both of which must be under the threshold for an attempt
+to proceed:
+
+- **Per-IP**: 5 failed attempts per `client_ip` per 15 minutes.
+- **Per-username** (lowercased): 5 failed attempts per `username` per
+  15 minutes.
+
+IP-only buckets are insufficient against a distributed attacker
+(botnet → unlimited guesses against the admin account);
+username-only buckets invite a trivial DoS that locks the admin out.
+The pair-of-buckets approach (logical AND: either tripping blocks the
+attempt) defeats both single-IP brute force and distributed
+brute force at the same per-account budget, at the cost of one extra
+dict lookup per request.
+
+The `client_ip` is determined from the request's immediate peer address
+and the `X-Forwarded-For` header, **but only when the peer IP is inside
+the operator-supplied CIDR list `RESTREAM_TRUSTED_PROXIES`** (comma-
+separated, default empty). The walk is rightmost-to-leftmost: drop hops
+whose IP is in the trusted set; the first non-trusted entry is the
+client. A request whose peer is not in the trusted set ignores
+`X-Forwarded-For` entirely. This means a fresh deployment behind nginx
+that forgot to set `RESTREAM_TRUSTED_PROXIES=127.0.0.1/32` will
+rate-limit every request as `127.0.0.1` — annoying but safe — instead
+of trusting forged headers from the public internet.
+
+Tracked **in-memory** (sliding window). The product is single-user
+and single-machine, so memory is fine — no Redis. Per Backend
+Architect review F# BA-3: this state is **volatile**. On control-plane
+restart (s6), the rate-limit window resets. We accept this trade
+explicitly — persisting the counter would mean a write per failed
+login, which is its own attack surface, and the worst-case is one
+extra window of attempts immediately after a crash. Documented here
+so future-me doesn't add a "crutch" persistent counter under the
+mistaken impression it was missed.
+
+### Session validation
+
+Every authenticated request:
+
+1. Read cookie `__Host-rp_session`.
+2. Compute `token_hash = HMAC-SHA256(session_token_mac_key, cookie_value)`.
+3. Look up the `sessions` row by `token_hash` (primary key, no scan).
+4. Reject if missing or `expires_at <= now()`.
+5. Update `last_seen_at = now()`.
+
+The HMAC key (`session-token-mac-v1` per ADR-0006) lives only in
+process memory; a stolen DB backup yields fingerprints, not cookie
+values that can be reversed without the key. The lookup + update is
+one indexed UPDATE per request, which SQLite under WAL handles
+trivially at our scale (≤ a few hundred req/s worst-case). There is
+no in-memory session cache — Software Architect review F# SA-E.cache
+flagged that as premature optimization. SQLite handles per-request
+reads on a Raspberry Pi without a cache; we are not the first user it
+has.
+
+Sessions are revoked by deleting their row. The UI has a "log out of
+all devices" button which truncates the user's sessions.
+
+### API tokens
+
+For headless / scripted use:
+
+- UI page "API tokens": list existing, create new, revoke.
+- Creating a new token:
+  - Generate 40 chars of `secrets.token_urlsafe`.
+  - Show it to the user **exactly once** in the UI (banner with
+    copy-to-clipboard, "you will not see this again").
+  - Store `hmac_sha256(token, server_key)` in the `api_tokens` table
+    with a user-supplied label, created_at, last_used_at.
+- Token use: header `Authorization: Bearer <token>` **only**. The
+  middleware recomputes the HMAC and looks up the hash. No plaintext
+  compare, constant-time comparison on the hash bytes. Query-parameter
+  authentication (`?token=…`) is explicitly rejected — query strings
+  end up in nginx access logs, browser referer headers, and operator
+  shell history, where the application-layer redaction processor
+  (ADR-0006 §"Log redaction invariant") cannot see them.
+- Tokens never expire automatically. The user revokes them by deleting
+  the row.
+
+The `server_key` is derived from the same master passphrase that
+encrypts stream keys (ADR-0006), via the `api-token-mac-v1` HKDF info
+string. If the passphrase rotates, all tokens are invalidated — this
+is intentional and documented.
+
+(Note: an earlier draft of this ADR derived a third
+`session-cookie-mac` HKDF key for *signed* cookies — the Flask-style
+stateless-session pattern. That derivation was removed
+when we settled on opaque server-side IDs. ADR-0006 was subsequently
+amended to add a *different* third info, `session-token-mac-v1`, used
+exclusively for the keyed-fingerprint DB-lookup helper described
+above. The two are not the same primitive and do not share intent.)
+
+### Boot-time KEK availability and locked-mode endpoint surface
+
+Per ADR-0010, the master passphrase may be unavailable at boot in
+`RESTREAM_PASSPHRASE_SOURCE=paste` mode. Auth depends on derived keys
+(`api-token-mac-v1` for bearer-token verification,
+`session-token-mac-v1` for cookie fingerprinting), so the auth surface
+must observe a process-wide "are keys available yet" state.
+
+The contract:
+
+- `/api/unlock` — accepts `{passphrase}`; derives keys; transitions
+  process from `locked` → `ready`. Idempotent under `ready` (returns
+  204). Rate-limited per ADR-0010 (3 attempts per IP per 15 min) using
+  the same trusted-proxy IP extraction described above.
+- `/api/auth/login` — accepts `{username, password}` **only**. Returns
+  **503 `service_locked`** while the process is in `locked` or
+  `unlocking` state. Never accepts a `passphrase` field. (An earlier
+  draft of ADR-0010 conflated the two flows; that conflation is
+  retracted here.)
+
+Implementation shape: `KeyMaterial` singleton at `app/auth/key_material.py`,
+held on `app.state.key_material`, exposed via `Depends(get_key_material)`
+and the higher-level `Depends(require_unlocked_keys)` which returns the
+`DerivedKeys` dataclass and raises `HTTPException(503,
+"service_locked")` when the process is not yet ready. Three states:
+`locked`, `unlocking` (Argon2id in flight; returns 503 with
+`Retry-After: 2`), `ready`. In `env` mode the FastAPI lifespan
+transitions to `ready` at startup; in `paste` mode the
+`/api/unlock` handler is the only entry point that can transition.
+
+### Password rotation
+
+Two ways:
+
+- Logged-in user: Settings → "Change password" → old + new → standard
+  flow. Old sessions are revoked, current session is re-issued.
+- Forgot password / first-boot reset: container env var
+  `RESTREAM_RESET_ADMIN_PASSWORD=1` plus a fresh value in
+  `RESTREAM_ADMIN_PASSWORD`. On boot, control plane detects the flag,
+  re-hashes, truncates all sessions and API tokens, logs to audit. Flag
+  is single-use (control plane writes a marker that prevents accidental
+  re-resets without explicit re-trigger).
+
+### Audit
+
+A small append-only `audit_log` table records: login success/failure,
+password change, API token created/revoked, start/stop run, target
+created/modified/deleted (without the stream key in the diff).
+
+## Consequences
+
+**Easier:**
+- One user = no permissions matrix. The middleware is "are you logged
+  in or do you have a valid bearer token? then yes."
+- Argon2id via `argon2-cffi` is one function call.
+- HMAC-stored tokens mean a DB compromise doesn't directly leak working
+  tokens, only their fingerprints.
+
+**Harder:**
+- API tokens require a UI page (create / list / revoke). Cheap to build,
+  but it's a real page, not a stub.
+- The forgot-password path is operationally awkward (requires container
+  env var + restart). We accept this: it's a deliberately blunt recovery
+  surface that matches the threat model (the user has shell on the host).
+
+**Rejected alternatives:**
+- **Multi-user accounts**: out of scope (system-overview.md §1).
+- **OAuth/OIDC (sign in with GitHub etc.)**: too much friction for a
+  self-hosted single-user app, and doesn't solve any threat we have.
+- **No auth, bind to localhost only**: rejected because users put this
+  behind a reverse proxy on a VPS often, and "localhost-only" silently
+  becomes "internet-exposed" the moment they do. Auth always on.
+- **HTTP Basic auth**: passwords in every request, not constant-time
+  compared by default in most stacks, and no UI for token management.
+  Rejected.
+- **JWT sessions**: rejected. Stateless tokens are great for distributed
+  systems we don't have. For a single instance, opaque server-side
+  sessions are easier to revoke and easier to reason about. No JWT.
+
+## Open questions / revisit triggers
+
+- If we ever add multi-user (we won't, per non-goals), this whole ADR
+  is replaced.
+- If the rate-limit in-memory store proves insufficient because the user
+  is behind a many-IP NAT (unlikely for self-hosted), revisit.

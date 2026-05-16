@@ -1,0 +1,4 @@
+#!/usr/bin/with-contenv sh
+# Phase 10 §D — crash backoff. 2s sleep prevents tight restart loops
+# when control-plane crashes early (e.g., wrong passphrase in env mode).
+exec sleep 2

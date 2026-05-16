@@ -1,0 +1,149 @@
+-- Restream_Plus canonical SQLite schema.
+--
+-- This file is the SINGLE SOURCE OF TRUTH for the persistence layout.
+-- Per ADR-0007 (and Rule №2 — no migration baggage) there is no
+-- migrations chain. On every shape change, bump SCHEMA_VERSION in
+-- app/db/schema_init.py and document the export → reimport procedure
+-- in docs/ops/upgrade.md (Phase 12). schema_init refuses to start when
+-- the on-disk PRAGMA user_version is below the compiled-in constant.
+--
+-- All tables are STRICT (SQLite 3.37+). Timestamps are INTEGER epoch
+-- seconds in UTC. The ORM TypeDecorator at app/db/types.py converts to
+-- timezone-aware datetimes at the Python boundary.
+--
+-- Cryptographic material (HMAC fingerprints, AEAD ciphertexts/nonces/
+-- salts) is BLOB. Application-level JSON blobs are TEXT named *_json.
+-- Booleans are INTEGER 0/1 with CHECK constraints.
+--
+-- Pragmas are NOT set here; they live in app/db/engine.py and apply
+-- per-connection at the SQLAlchemy connect-hook level.
+
+CREATE TABLE users (
+    id              TEXT    PRIMARY KEY,
+    username        TEXT    NOT NULL UNIQUE,
+    password_hash   TEXT,
+    created_at      INTEGER NOT NULL,
+    last_login_at   INTEGER
+) STRICT;
+
+CREATE TABLE sessions (
+    -- HMAC fingerprint of the cookie value; the cookie itself is never
+    -- stored. Per ADR-0005: validation is a single SQL UPDATE+RETURNING.
+    token_hash      BLOB    PRIMARY KEY,
+    user_id         TEXT    NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at      INTEGER NOT NULL,
+    expires_at      INTEGER NOT NULL,
+    last_seen_at    INTEGER NOT NULL,
+    user_agent      TEXT,
+    ip              TEXT
+) STRICT;
+CREATE INDEX idx_sessions_user_id    ON sessions(user_id);
+CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
+
+CREATE TABLE api_tokens (
+    id              TEXT    PRIMARY KEY,
+    -- Owner FK. Phase-6 closes a Phase-3-deferred gap: the bearer auth
+    -- path used to hardcode "admin" to identify the owner because no
+    -- link existed. The FK + CASCADE means revoking a user (if multi-user
+    -- ever lands) cleans their tokens automatically.
+    user_id         TEXT    NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- HMAC fingerprint of the bearer-token value; the bearer is never stored.
+    token_hash      BLOB    NOT NULL UNIQUE,
+    label           TEXT    NOT NULL,
+    created_at      INTEGER NOT NULL,
+    last_used_at    INTEGER,
+    revoked_at      INTEGER
+) STRICT;
+-- Non-unique: one user may hold many tokens. Index supports the future
+-- "revoke all for this user" admin action and any per-user audit filter.
+CREATE INDEX idx_api_tokens_user_id    ON api_tokens(user_id);
+CREATE INDEX idx_api_tokens_revoked_at ON api_tokens(revoked_at);
+
+CREATE TABLE targets (
+    id              TEXT    PRIMARY KEY,
+    -- TargetType discriminator: twitch | youtube | kick | vk_live | custom.
+    -- Not enforced by CHECK so adding a new type does not require a schema bump.
+    type            TEXT    NOT NULL,
+    label           TEXT    NOT NULL,
+    url             TEXT    NOT NULL,
+    enabled         INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    -- Per-type config (e.g., YouTube backup URL, custom headers). JSON object.
+    settings_json   TEXT    NOT NULL DEFAULT '{}',
+    created_at      INTEGER NOT NULL,
+    updated_at      INTEGER NOT NULL
+) STRICT;
+CREATE INDEX idx_targets_type    ON targets(type);
+CREATE INDEX idx_targets_enabled ON targets(enabled);
+
+CREATE TABLE credentials (
+    id              TEXT    PRIMARY KEY,
+    -- One active credential per target (ADR-0009). On target delete, cascade.
+    target_id       TEXT    NOT NULL UNIQUE REFERENCES targets(id) ON DELETE CASCADE,
+    -- CredentialLifetime: persistent | per_session | refresh_token.
+    lifetime        TEXT    NOT NULL,
+    -- AES-256-GCM material per ADR-0006. AAD = b"credential:stream_key:v1" + salt.
+    ciphertext      BLOB    NOT NULL,
+    nonce           BLOB    NOT NULL,
+    salt            BLOB    NOT NULL,
+    -- Last four characters of the plaintext, for masked UI display ("●●●● 7F2A").
+    last4           TEXT    NOT NULL,
+    created_at      INTEGER NOT NULL,
+    -- Used by refresh_token lifetime; NULL for persistent/per_session.
+    expires_at      INTEGER
+) STRICT;
+
+CREATE TABLE audit_log (
+    -- AUTOINCREMENT (vs plain ROWID) so id is monotonic — required for the
+    -- append-only invariant per ADR-0007.
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    at              INTEGER NOT NULL,
+    event_type      TEXT    NOT NULL,
+    -- 'admin' or 'system'; NULL allowed for events with no actor.
+    actor           TEXT,
+    -- Target context, if any. Survives target deletion via SET NULL so the
+    -- audit trail is preserved even when its referent is removed.
+    target_id       TEXT REFERENCES targets(id) ON DELETE SET NULL,
+    data_json       TEXT    NOT NULL DEFAULT '{}'
+) STRICT;
+CREATE INDEX idx_audit_log_at         ON audit_log(at);
+CREATE INDEX idx_audit_log_event_type ON audit_log(event_type);
+CREATE INDEX idx_audit_log_target_id  ON audit_log(target_id);
+
+CREATE TABLE sessions_history (
+    -- RUN sessions (live-stream sessions), distinct from HTTP sessions above.
+    id                TEXT    PRIMARY KEY,
+    started_at        INTEGER NOT NULL,
+    -- NULL while the run is live. Set on STOP or via crash-recovery on boot.
+    ended_at          INTEGER,
+    -- normal | user_stop | control_plane_crash | error. NULL while live.
+    end_reason        TEXT,
+    notes_json        TEXT    NOT NULL DEFAULT '{}'
+) STRICT;
+CREATE INDEX idx_sessions_history_started_at ON sessions_history(started_at);
+CREATE INDEX idx_sessions_history_ended_at   ON sessions_history(ended_at);
+
+CREATE TABLE settings (
+    -- Singleton row (id always = 1).
+    id                          INTEGER PRIMARY KEY CHECK (id = 1),
+    first_run_complete          INTEGER NOT NULL DEFAULT 0 CHECK (first_run_complete IN (0, 1)),
+    idle_timeout_seconds        INTEGER NOT NULL DEFAULT 600,
+    log_retention_days          INTEGER NOT NULL DEFAULT 14,
+    -- OBS stream key currently accepted by the on_publish webhook.
+    ingest_key_current          TEXT    NOT NULL,
+    -- Previously-active key, still accepted until grace_until. NULL when no rotation.
+    ingest_key_previous         TEXT,
+    ingest_key_rotated_at       INTEGER,
+    ingest_key_grace_until      INTEGER,
+    updated_at                  INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE system (
+    -- KV table for internal markers per ADR-0007: kdf_salt_rotated_at,
+    -- last_passphrase_rotation_at, etc. PRAGMA user_version owns the
+    -- schema version; this table holds application-level markers only.
+    key             TEXT    PRIMARY KEY,
+    value_text      TEXT,
+    value_int       INTEGER,
+    value_blob      BLOB,
+    updated_at      INTEGER NOT NULL
+) STRICT;

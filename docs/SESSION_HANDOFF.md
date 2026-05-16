@@ -4,7 +4,13 @@
 this project cold, after a context compaction or a fresh conversation.
 Read this first; everything else is reachable from here.
 
-**Last updated:** 2026-05-16
+**Last updated:** 2026-05-17
+
+**GitHub:** https://github.com/pelmentor/Restream_Plus
+(initial commit `a100f2a` pushed 2026-05-17 covers Phases 0–10;
+local `main` tracks `origin/main`. Author identity is set
+**repo-locally** to `pelmentor <cssnik2013@gmail.com>` — `.git/config`,
+not global.)
 
 ---
 
@@ -12,7 +18,9 @@ Read this first; everything else is reachable from here.
 
 Self-hosted RTMP restreamer (OBS → server → Twitch / YouTube Live / Kick /
 VK Video Live) with a web control panel, packaged as one Docker image,
-published to GHCR. **Design complete. Phases 1 (config + crypto),
+published to GHCR. **Source pushed to
+https://github.com/pelmentor/Restream_Plus** (2026-05-17 initial
+commit covers Phases 0–10). **Design complete. Phases 1 (config + crypto),
 2 (persistence), 3 (auth), 4 (domain), 5 (supervisor + ffmpeg workers
 + redaction + event bus), 6 (Backend HTTP — REST + WebSocket + health
 + locked-mode middleware + lifespan + supervisor wiring), 7 (Frontend
@@ -34,6 +42,32 @@ that will actually build the image. Next code phase is Phase 11
 
 When resuming: read §"Resume checklist" below, then pick up at
 Phase 11 in `docs/CODE_PLAN.md`.
+
+---
+
+## Repository / git state (2026-05-17)
+
+- **Remote:** `origin → https://github.com/pelmentor/Restream_Plus.git`
+- **Default branch:** `main` (created with `git init -b main`)
+- **Initial commit:** `a100f2a` — 261 files, Phases 0–10.
+- **Author identity:** `pelmentor <cssnik2013@gmail.com>` — set
+  **repo-locally** in `.git/config` (NOT global). Never overwrite
+  the global git config; if a teammate clones, they set their own.
+- **`.gitattributes`** pins shell scripts + s6 service files +
+  `Dockerfile` + `nginx.conf` to `eol=lf`. Critical: Windows checkouts
+  without this give `^M: bad interpreter` errors inside the Linux
+  container. Don't remove it without auditing every shell/s6 file.
+- **`.gitignore`** excludes `.venv/`, `node_modules/`, `*.db`,
+  `*.tsbuildinfo`, `.env*`, `*.pem`/`*.key`/`*.crt`, `.kdf_salt`,
+  `.first-boot-password`, all tool caches (`.{pytest,mypy,ruff,
+  hypothesis}_cache/`), `web/dist/`, build artifacts.
+- **Hygiene verified** at first commit: 0 matches for any of the above
+  in the staged set. No secrets, no caches, no binaries.
+
+When pushing future commits: regular `git push` is fine. Don't
+`--force` push to `main` unless explicitly asked. Don't skip hooks
+(no `--no-verify`) — there aren't any installed today, but the rule
+holds.
 
 ---
 
@@ -1588,8 +1622,11 @@ hold; pipeline numbers match exactly (616 backend pytest, 9/9 vitest,
 d:\Projects\Programming\Restream_Plus\
 ├── README.md                       # public-facing project description
 ├── LICENSE                         # Apache-2.0
-├── .gitignore, .dockerignore
+├── .gitignore, .gitattributes      # gitattributes pins LF for shell+s6+Dockerfile
+├── .dockerignore                   # default-deny allowlist
 ├── pyproject.toml                  # backend deps + tooling (ruff, mypy, pytest)
+├── .git/                           # repo initialized 2026-05-17; tracks
+│                                   #   origin/main at github.com/pelmentor/Restream_Plus
 ├── .venv/                          # local Python 3.12 venv (NOT in version control)
 ├── app/                            # PHASES 1 + 2 + 3 + 4 LANDED — see "what landed" sections
 │   ├── __init__.py

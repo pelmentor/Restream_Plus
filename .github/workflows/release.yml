@@ -407,10 +407,18 @@ jobs:
           # doesn't start with v0. (mirror of the :vX major-tag rule). The
           # prior config moved :latest on v0.x.y stable releases, which
           # contradicted operator expectations once v1 ships.
+          #
+          # Tag patterns MUST keep the `v` prefix to match the operator
+          # contract documented above (lines 363-374) and in
+          # docs/releases/v*.md, docs/ops/ghcr-retention.md, README.
+          # The `{{version}}` semver template STRIPS the leading v by
+          # design — so we wrap with literal `v`. First exercised on
+          # v1.0.0: stillborn #3 was caused by this drift (image got
+          # published at :1.0.0 while every doc said :v1.0.0).
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}},enable=${{ !startsWith(needs.preflight.outputs.tag, 'v0.') }}
+            type=semver,pattern=v{{version}}
+            type=semver,pattern=v{{major}}.{{minor}}
+            type=semver,pattern=v{{major}},enable=${{ !startsWith(needs.preflight.outputs.tag, 'v0.') }}
             type=raw,value=latest,enable=${{ !contains(needs.preflight.outputs.tag, '-') && !startsWith(needs.preflight.outputs.tag, 'v0.') }}
             type=sha,format=short,prefix=sha-
 

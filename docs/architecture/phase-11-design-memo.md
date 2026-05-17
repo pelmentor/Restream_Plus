@@ -305,10 +305,15 @@ CI's `frontend` job runs `npm audit --audit-level=high` separately
       # build-image.yml
       type=edge,branch=main
       type=sha,format=short,prefix=sha-
-      # release.yml
-      type=semver,pattern={{version}}
-      type=semver,pattern={{major}}.{{minor}}
-      type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
+      # release.yml — keep the `v` prefix on semver tags to match the
+      # operator contract (deployment.md, ghcr-retention.md, README).
+      # The `{{version}}` template strips the leading `v` by design;
+      # `pattern=v{{version}}` composes it back. Stillborn #3 of v1.0.0
+      # was caused by the bare-`{{version}}` form — image got published
+      # at `:1.0.0` while every doc said `:v1.0.0`.
+      type=semver,pattern=v{{version}}
+      type=semver,pattern=v{{major}}.{{minor}}
+      type=semver,pattern=v{{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
       type=raw,value=latest,enable=${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
 ```
 

@@ -1,31 +1,38 @@
-#!/bin/sh
+#!/command/execlineb -P
 # Phase 10 §F — boot-time fs prep. Runs as root before any longrun.
+#
+# s6-rc parses up/down files as EXECLINE, not shell. The original
+# `#!/bin/sh` + `set -eu` form (Phase 10) made s6 try to exec a
+# binary literally named `set`, failing on first ever container boot
+# with `s6-rc-oneshot-run: fatal: unable to exec set: No such file
+# or directory`. Wrapping the body in `/bin/sh -c "..."` lets us keep
+# the shell logic; execline-internal `$` and `"` must be backslash-
+# escaped so they reach the inner sh unaltered.
+#
 # Reviewer L5: with-contenv dropped — chown/mkdir need no RESTREAM_* env.
 # Reviewer M2: chown uses -h (don't follow symlinks); refuse to chown if
 #   /data itself is a symlink (operator footgun: `ln -s /etc /data` would
 #   chown the host's /etc on the next restart without -h).
-# Reviewer M3: chown is conditional on the top-level /data not already
-#   being uid 10001, so operator-owned files dropped via `docker cp` are
-#   not silently re-owned on every container restart. The mkdir steps
-#   stay unconditional (cheap, no harm if dirs already exist).
+# Reviewer M3: chown of top-level /data is conditional on uid != 10001
+#   so operator-owned files dropped via `docker cp` aren't silently
+#   re-owned on every container restart. mkdir + chown of the subdirs
+#   stays unconditional (cheap, no harm if dirs already exist).
+# I-F1: uid 10001 is LOAD-BEARING — operators chown host directories to
+#   this uid before mounting.
+/bin/sh -c "
 set -eu
 
 if [ -L /data ]; then
-    echo "ERROR: /data must be a directory, not a symlink (refusing to chown)." >&2
+    echo 'ERROR: /data must be a directory, not a symlink (refusing to chown).' >&2
     exit 1
 fi
 
 mkdir -p /data /data/logs /data/logs/control-plane /data/tls
 
-# uid 10001 is LOAD-BEARING — operators chown host directories to this
-# uid before mounting. See Phase 10 §F I-F1.
-current_uid="$(stat -c '%u' /data)"
-if [ "$current_uid" != "10001" ]; then
-    # First boot, or operator-provided mount with foreign uid.
+current_uid=\$(stat -c '%u' /data)
+if [ \"\$current_uid\" != '10001' ]; then
     chown -hR 10001:10001 /data
 fi
-# Always ensure the sub-dirs (which we may have just mkdir'd) are owned
-# correctly even when /data itself was already 10001 — covers the case
-# where a new subdir gets created mid-life of an existing mount.
 chown -h 10001:10001 /data/logs /data/logs/control-plane /data/tls
 chmod 0750 /data /data/logs /data/logs/control-plane /data/tls
+"

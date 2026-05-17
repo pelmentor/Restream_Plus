@@ -1,3 +1,6 @@
-#!/usr/bin/with-contenv sh
+#!/command/execlineb -P
 # init-data is idempotent; nothing to undo on shutdown.
-exit 0
+# Like `up`, s6-rc parses this as execline — `exit 0` would try to
+# exec a binary literally named `exit`. /bin/true is the canonical
+# no-op.
+/bin/true

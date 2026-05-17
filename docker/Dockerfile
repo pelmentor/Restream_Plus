@@ -196,8 +196,12 @@ ENV PATH=/opt/venv/bin:$PATH
 
 # PB-1: --require-hashes enforces every package + every wheel SHA-256.
 # PB-17: no --no-deps (--require-hashes implies an exhaustive closure).
+# --no-compile: skip the .pyc bytecode generation pass that pip does by
+# default. PYTHONDONTWRITEBYTECODE=1 prevents the runtime from creating
+# new pyc files, but pip's install-time compile still produces
+# `__pycache__/*.pyc` under /opt/venv which the H5 smoke check flags.
 COPY docker/requirements.hashes.lock /tmp/requirements.lock
-RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements.lock
+RUN pip install --no-cache-dir --no-compile --require-hashes -r /tmp/requirements.lock
 
 # ===========================================================================
 # Stage 4 — runtime

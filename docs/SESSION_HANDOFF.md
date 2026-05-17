@@ -97,8 +97,8 @@ live). The earlier tail section §"v1.0.0 tag-push attempt
 record of the diagnosis only; do NOT act on its "DECISION REQUIRED"
 prompts — they were resolved.
 
-**Branch-protection-vs-docs-only structural gap — fix in flight as
-PR #5 on branch `fix/ci-docs-only-required-checks`.** Adds
+**Branch-protection-vs-docs-only structural gap — RESOLVED. PR #5
+merged as `5eb2421` on 2026-05-17.** Added
 `.github/workflows/ci-docs.yml` (no-op mirror of the 5 required-check
 job names, triggered on the inverse `paths:` filter) and a new PA-34
 invariant in `ci.yml`'s `workflow-pins` job that asserts both
@@ -107,12 +107,14 @@ set-diff, not hardcoded list — the hardcoded variant was discarded
 on architect feedback because adding a 6th required check would
 silently break ci-docs.yml mirroring). PA-34 also added to
 `docs/architecture/phase-11-design-memo.md` canonical invariants
-list. This PR's own diff is mixed-path (workflow file + handoff
-doc), so both ci.yml and ci-docs.yml will trigger on the PR and all
-5 required checks pass cleanly the first time. Once merged, future
-docs-only PRs satisfy branch protection via ci-docs.yml's no-op
-echos without spending real CI minutes on the full test suite.
-See the PR description for design rationale and the two architect
+list. Future docs-only PRs satisfy branch protection via
+`ci-docs.yml`'s no-op echos without spending real CI minutes on the
+full test suite. The mixed-path PR #5 itself triggered BOTH
+workflows (5 required checks reported pass twice each); the
+follow-up docs-only handoff cleanup PR (this commit's parent) was
+the first real-world end-to-end validation — only `ci-docs.yml`
+triggered, branch protection satisfied without `ci.yml` running.
+See PR #5 description for design rationale and the two architect
 consults that drove it.
 
 ---
@@ -147,15 +149,16 @@ consults that drove it.
   `allow_force_pushes=false`, `allow_deletions=false`. Verify with
   `gh api repos/pelmentor/Restream_Plus/branches/main/protection --jq '...'`
   per branch-protection.md §"How to verify".
-- **Known protection gap:** any docs-only PR (paths under `docs/**`
-  or `*.md`) does NOT trigger `ci.yml` (paths-ignore excludes them),
-  so the 5 required checks never report, blocking merge under
-  `enforce_admins=true`. THIS SESSION'S SESSION_HANDOFF.md UPDATE
-  IS UNCOMMITTED ON LOCAL `main` for this exact reason — see
-  `git status`. Mitigations: (i) widen `ci.yml` to emit success on
-  docs-only paths, (ii) admin-bypass docs PRs via UI (requires
-  toggling enforce_admins temporarily), or (iii) bundle the
-  SESSION_HANDOFF.md update inside the next non-docs PR's diff.
+- **Protection-gap RESOLVED (PR #5, merged as `5eb2421`):** the
+  long-standing problem where docs-only PRs (paths under `docs/**`
+  or `*.md`) could not satisfy the 5 required checks (because
+  `ci.yml`'s `paths-ignore` skipped them) is now closed. New
+  `.github/workflows/ci-docs.yml` mirrors the 5 required-check job
+  names as no-op `echo` jobs and triggers on the inverse `paths:`
+  filter; PA-34 (enforced by `workflow-pins`) asserts the two
+  workflow files declare the same job-name set via sorted set-diff.
+  Docs-only PRs now satisfy branch protection without spending
+  real CI minutes on the full suite.
 - **CI status at current HEAD `5399fb5`:** every required check green
   on PR #4 (`backend-test`, `backend-lint`, `frontend`,
   `backend-lockfile`, `workflow-pins` + informational `pr-image-smoke`).
@@ -352,12 +355,10 @@ a. **Confirm remaining USER-action items from the v1.0.0 ship.**
    `:v1.0.0` → at least one platform end-to-end); (v) announce
    (release-checklist step 14). None of these block v1.0.0 being
    live; they're hygiene + verification.
-b. **Close the branch-protection-vs-docs-only structural gap.**
-   Widen `ci.yml` to emit success on docs-only paths so docs PRs
-   can satisfy the 5 required checks. Today, this file's update is
-   uncommitted on local `main` for that reason. Proper Rule №1 fix
-   that closes the gap going forward; could bundle with this
-   uncommitted handoff diff.
+b. **(DONE — PR #5 merged as `5eb2421`.)** The branch-protection-
+   vs-docs-only gap is closed by `.github/workflows/ci-docs.yml` +
+   PA-34. Docs-only PRs now satisfy required checks via no-op
+   echos. No remaining action under this item.
 c. **Pick up an open follow-up** from the remaining carryovers
    (first-run-complete auto-flip, YouTube backup-ingest, AuthReprompt
    grant-expired retry, HTTP sessions revoke reprompt). None gate
@@ -3531,18 +3532,17 @@ release.yml succeeded) and continue through 14 (announce).
   (release-checklist.md step 13) — DO LAST, after re-cut +
   release.yml green + cosign verify + real-RTMP smoke.
 
-### This handoff doc note
+### This handoff doc note (HISTORICAL — gap RESOLVED)
 
-This SESSION_HANDOFF.md update is UNCOMMITTED on local `main`
-(`git status` shows the diff). Branch protection now applied on
-`main` blocks docs-only direct pushes (paths-ignore on `ci.yml`
-means the 5 required checks never report for docs-only PRs).
-Options: (i) include this update inside the `release.yml` fix PR's
-diff (recommended — one PR carries both code fix + handoff bump),
-(ii) widen ci.yml to emit success on docs paths, or (iii) accept
-admin-bypass for docs PRs (requires temporarily flipping
-`enforce_admins=false`). Per project Rule №1, option (i) avoids
-the whole gap.
+This passage originally described the docs-only-PR merge gap as an
+active blocker requiring bundling the SESSION_HANDOFF.md update
+into a non-docs PR. **The gap was closed by PR #5 (`5eb2421`) on
+2026-05-17** — `.github/workflows/ci-docs.yml` now satisfies the
+5 required checks on docs-only PRs via no-op echos, enforced for
+drift by the PA-34 step in `ci.yml`'s `workflow-pins` job. Future
+docs-only updates to this file can be merged directly via their own
+PR (this very cleanup PR was the first to do so end-to-end). Left
+here as historical record of the diagnosis, not a current action.
 
 ---
 

@@ -308,7 +308,7 @@ class TestRequireAuthenticated:
             from app.repositories.users import UsersRepository
 
             users = UsersRepository(session)
-            ghost = await users.create(username="ghost-user", password_hash=None)
+            ghost = await users.create(username="ghost-user", password_hash="ghost-placeholder")
             svc = ApiTokenService(
                 tokens=ApiTokensRepository(session),
                 keys=auth_state.key_material.require_ready(),

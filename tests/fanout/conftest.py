@@ -25,6 +25,9 @@ def _build_settings(tmp_path: Path) -> AppSettings:
     return AppSettings(
         passphrase_source="paste",
         data_dir=tmp_path,
+        # Supply admin_password so schema_init takes the env-set path
+        # rather than autogen-+-print to test stdout.
+        admin_password="fanout-test-admin-pw-12345",
         # Phase 10 §Q1 / I-Q1: production default flipped to True; this
         # suite does not run nginx — opt out to match the contract.
         healthz_check_nginx=False,

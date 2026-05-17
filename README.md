@@ -16,7 +16,6 @@ docker run -d \
   -p 8000:8000 \
   -v restream-data:/data \
   -e RESTREAM_MASTER_PASSPHRASE='change-me-to-something-long-and-random' \
-  -e RESTREAM_ADMIN_PASSWORD='change-me-on-first-boot' \
   ghcr.io/<your-user>/restream-plus:latest
 ```
 
@@ -24,7 +23,13 @@ docker run -d \
   `rtmp://<docker-host>:1935/live`; Stream Key: shown in the web panel
   under *Settings → General*.
 - Open the panel at `http://<docker-host>:8000/`.
-- Log in as `admin` with the password from `RESTREAM_ADMIN_PASSWORD`.
+- Log in as `admin`. On first boot, the container generates a 20-char
+  admin password and prints it to stdout exactly once — grab it from
+  `docker logs restream-plus` (look for the `RESTREAM_PLUS FIRST BOOT`
+  banner). To skip the autogen, set `-e RESTREAM_ADMIN_PASSWORD='your-pw'`
+  on first boot. To rotate later, change it from *Settings → Change
+  Password* in the UI (or restart with `-e RESTREAM_RESET_ADMIN_PASSWORD=1`
+  paired with a new `RESTREAM_ADMIN_PASSWORD`).
 - Configure each target (URL + stream key) and toggle them on.
 - Click **START** in the panel. Then start streaming from OBS.
 
@@ -70,16 +75,20 @@ Apache-2.0. See [LICENSE](LICENSE).
 
 ## Status
 
-v0 — in active development. All 12 planned phases of `docs/CODE_PLAN.md`
-are complete (design, scaffold, expert review, ADRs 0001–0011, backend
+v1.0.0 candidate. All 12 planned phases of `docs/CODE_PLAN.md` are
+complete (design, scaffold, expert review, ADRs 0001–0011, backend
 Phases 1–6, frontend Phases 7–9, container Phase 10, CI/CD Phase 11,
 ops docs Phase 12). Everything is on GitHub and every CI job is green:
 `ci` (workflow-pins, frontend, backend-lint, backend-lockfile,
 backend-test, pr-image-smoke) and `build-image` (preflight, build
 amd64/arm64, runtime-smoke, scan, merge+sign — the publish step).
-Phase 11 first-push exposed 12 latent issues across the codebase
-(documented in `docs/SESSION_HANDOFF.md` §"Phase 11 first-push fix
-iteration"), all resolved. Next move is operator-facing — open
-follow-ups in `docs/SESSION_HANDOFF.md` or cut the first `v1.0.0` tag
-(which exercises the cosign-signed `release.yml` publish path through
-the same `release-checklist.md` walkthrough).
+Phase 11 first-push exposed 12 latent issues
+(`docs/SESSION_HANDOFF.md` §"Phase 11 first-push fix iteration"),
+all resolved. The pre-v1.0.0 ADR-0005 first-boot bootstrap drift is
+also resolved — env-var-absent now triggers autogen + stdout-print
+per ADR-0005 §"Bootstrap"; `SCHEMA_VERSION` bumped 1 → 2; 639/639
+backend tests green (see `docs/SESSION_HANDOFF.md` §"ADR-0005
+first-boot bootstrap reconciliation"). Next move is the first
+`v1.0.0` tag (which exercises the cosign-signed `release.yml`
+publish path through the `release-checklist.md` walkthrough; the
+release body MUST carry `[schema-bump]`).

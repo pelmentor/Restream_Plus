@@ -260,8 +260,7 @@ async def change_password(
         # Verify the supplied current password as final guard. The reprompt
         # already proved knowledge at issue-time; this catches a UI-bug
         # case where a stolen grant gets used with a different payload.
-        if auth.user.password_hash is None:
-            raise http_exception(ErrorCode.INVALID_CREDENTIALS, status.HTTP_401_UNAUTHORIZED)
+        # `password_hash` is non-optional since SCHEMA_VERSION=2.
         verify_result = await asyncio.to_thread(
             verify_password,
             auth.user.password_hash.get_secret_value(),
@@ -316,13 +315,12 @@ async def issue_reprompt_grant(
     success we issue a scope-bound grant id that the destructive
     handler will consume via `X-Reprompt-Grant`.
 
-    Failure modes collapse to a single 401 — wrong password, missing
-    hash, locked account all return the same body so a probe can't
-    distinguish them.
+    Failure modes collapse to a single 401 — wrong password or locked
+    account return the same body so a probe can't distinguish them.
+    (`password_hash` is non-optional since SCHEMA_VERSION=2, so the
+    historical "missing hash" failure mode is no longer constructible.)
     """
     scope = _scope_or_400(body.scope)
-    if auth.user.password_hash is None:
-        raise http_exception(ErrorCode.INVALID_CREDENTIALS, status.HTTP_401_UNAUTHORIZED)
     verify_result = await asyncio.to_thread(
         verify_password,
         auth.user.password_hash.get_secret_value(),

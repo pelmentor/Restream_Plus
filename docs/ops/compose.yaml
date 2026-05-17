@@ -25,9 +25,13 @@ services:
     # SIGKILLs mid-publish; do not lower.
     stop_grace_period: 30s
 
-    # Load the master passphrase + admin password from a host file with
-    # mode 0600, root-owned. Inline `environment:` blocks leak in
-    # `docker inspect` output (Phase 10 DA-7) — prefer the env-file.
+    # Load the master passphrase (REQUIRED) + admin password (OPTIONAL —
+    # if omitted, the control plane autogenerates one and prints it to
+    # stdout on first boot per ADR-0005 §"Bootstrap"; for an unattended
+    # Compose deployment, set it explicitly so you don't have to grep
+    # `docker logs` for the banner) from a host file with mode 0600,
+    # root-owned. Inline `environment:` blocks leak in `docker inspect`
+    # output (Phase 10 DA-7) — prefer the env-file.
     env_file:
       - /etc/restream/env
 

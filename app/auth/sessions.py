@@ -362,14 +362,16 @@ class SessionAuthService:
     ) -> LoginOutcome:
         user = await self._users.get_by_username(normalized_username)
 
-        stored_hash: str | None = None
-        if user is not None and user.password_hash is not None:
-            stored_hash = user.password_hash.get_secret_value()
-
-        hash_to_verify = stored_hash if stored_hash is not None else _dummy_password_hash()
+        # Constant-time floor: always run argon2 against SOMETHING so the
+        # wall-clock cost of `unknown username` matches `wrong password`.
+        # `UserDTO.password_hash` is `SecretStr` (non-optional) since
+        # SCHEMA_VERSION=2; the only None case is `user is None`.
+        hash_to_verify = (
+            user.password_hash.get_secret_value() if user is not None else _dummy_password_hash()
+        )
         verify_result = await asyncio.to_thread(verify_password, hash_to_verify, password)
 
-        if user is None or stored_hash is None or not verify_result.ok:
+        if user is None or not verify_result.ok:
             raise InvalidCredentialsError("invalid_credentials")
 
         # Rehash is NOT applied inline (per Phase 3 security review).

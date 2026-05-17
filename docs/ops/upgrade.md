@@ -151,8 +151,11 @@ the exact equivalent of this procedure tailored to that release):
 6. Start the **NEW** image with the fresh `/data` and the same
    `RESTREAM_MASTER_PASSPHRASE`. The fresh-boot path runs
    `schema.sql` at the new version.
-7. Open the panel; first-boot admin reset applies as it did on
-   day one. Set up the admin via `RESTREAM_ADMIN_PASSWORD`.
+7. Open the panel; first-boot admin bootstrap applies as it did on
+   day one (ADR-0005 §"Bootstrap"). Either set
+   `RESTREAM_ADMIN_PASSWORD` for the new container or let it
+   autogenerate and capture the password from
+   `docker logs restream-plus 2>&1 | grep -A 8 'FIRST BOOT'`.
 8. Use the panel's **Settings → Import** to load the bundle into the
    new DB.
 9. Verify targets, credentials, and audit history all appear.

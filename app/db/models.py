@@ -31,7 +31,7 @@ class UserORM(Base):
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     username: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
-    password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCEpochSeconds, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(UTCEpochSeconds, nullable=True)
 

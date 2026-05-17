@@ -23,8 +23,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 def build_settings(tmp_path: Path, **overrides: object) -> AppSettings:
     """Construct an AppSettings rooted at tmp_path with paste-mode defaults.
 
-    Tests that need an admin password or other env-driven fields pass
-    them in via `**overrides`.
+    By default `admin_password` is left UNSET so callers exercise the
+    ADR-0005 autogen path. Tests that don't care about the autogen
+    behaviour should use the `settings` fixture (or pass an explicit
+    `admin_password=` override) to silence the boot-time banner.
     """
     base: dict[str, object] = {
         "passphrase_source": "paste",
@@ -44,7 +46,10 @@ def db_path(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def settings(tmp_path: Path) -> AppSettings:
-    return build_settings(tmp_path)
+    """Default settings: env-supplied admin_password so the autogen
+    banner does not spam test stdout. Schema-init tests that exercise
+    the autogen path construct settings via `build_settings()` directly."""
+    return build_settings(tmp_path, admin_password="db-conftest-admin-pw-12345")
 
 
 @pytest_asyncio.fixture

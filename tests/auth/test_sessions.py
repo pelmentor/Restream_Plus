@@ -204,28 +204,13 @@ class TestLoginFailures:
         with pytest.raises(InvalidCredentialsError):
             await service.login(username="not-a-user", password=ADMIN_PASSWORD, ip="127.0.0.1")
 
-    @pytest.mark.asyncio
-    async def test_user_with_no_password_rejected(
-        self,
-        session: AsyncSession,
-        derived_keys: DerivedKeys,
-        users_repo: UsersRepository,
-        sessions_repo: HttpSessionsRepository,
-        rate_limiter: LoginRateLimiter,
-    ) -> None:
-        # Create a user without a password (the first-boot state).
-        await users_repo.create(username="nopass", password_hash=None)
-        await session.commit()
-
-        svc = SessionAuthService(
-            users=users_repo,
-            sessions=sessions_repo,
-            keys=derived_keys,
-            rate_limiter=rate_limiter,
-            constant_time_floor_seconds=0.0,
-        )
-        with pytest.raises(InvalidCredentialsError):
-            await svc.login(username="nopass", password="anything-12345678", ip="127.0.0.1")
+    # NOTE: a `test_user_with_no_password_rejected` case lived here pre-
+    # v1.0.0 to verify the login path rejected `password_hash IS NULL`.
+    # Since SCHEMA_VERSION=2 the NOT NULL constraint on `users.password_hash`
+    # makes this state unreachable through any test path (the ORM
+    # IntegrityError fires before `login()` is invoked). The defensive
+    # `password_hash is None` check in `_login_body` remains as defense-
+    # in-depth but has no constructible test input.
 
 
 class TestRateLimitIntegration:

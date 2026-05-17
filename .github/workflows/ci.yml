@@ -55,8 +55,16 @@ jobs:
   # ---------------------------------------------------------------------------
   backend-test:
     name: backend-test
+    needs: backend-lockfile
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # `needs: backend-lockfile` so the `pip install --no-deps -e .` step
+    # below (which is correct for editable-install: deps come from the
+    # hash-pinned lockfile) can never paper over a missing dep that's
+    # been added to pyproject.toml without a corresponding lockfile
+    # regen. backend-lockfile fails-fast on drift; running it first
+    # closes the parallel-jobs race window flagged in the Phase 11
+    # final security review.
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 

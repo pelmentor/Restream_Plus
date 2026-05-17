@@ -2,11 +2,11 @@
 #
 # Restream_Plus — single-image build
 #
-# Four stages (Phase 10 design memo §A):
-#   1. frontend-builder  (node:22-alpine)      → /web/dist
-#   2. nginx-builder     (debian:12-slim)      → /usr/sbin/nginx + /etc/nginx/mime.types
-#   3. backend-builder   (python:3.12-slim)    → /opt/venv
-#   4. runtime           (debian:12-slim)      ← COPYs from all three
+# Four stages (Phase 10 design memo §A, runtime base updated Phase 11):
+#   1. frontend-builder  (node:22-alpine)             → /web/dist
+#   2. nginx-builder     (debian:12-slim)             → /usr/sbin/nginx + /etc/nginx/mime.types
+#   3. backend-builder   (python:3.12-slim)           → /opt/venv
+#   4. runtime           (python:3.12-slim-bookworm)  ← COPYs from all three
 #
 # Multi-arch ready (§L): builders pin --platform=$BUILDPLATFORM; runtime
 # inherits $TARGETPLATFORM. Phase 10 ships amd64 only; Phase 11's CI
@@ -39,7 +39,7 @@
 # R-14: NGINX_RTMP_MODULE_SHA bumped from the Phase 10 value
 # (9879e1de32b2624e44ec8d99a9e286d59c41bd54 — does NOT exist on GitHub)
 # to v1.2.2 release commit (23e1873aa62acb58b7881eed2a501f5bf35b82e9).
-ARG NGINX_VERSION=1.26.2
+ARG NGINX_VERSION=1.30.1
 ARG NGINX_RTMP_MODULE_SHA=23e1873aa62acb58b7881eed2a501f5bf35b82e9
 ARG S6_OVERLAY_VERSION=3.2.0.2
 
@@ -262,7 +262,7 @@ RUN apt-get update \
         tzdata \
         xz-utils \
         zlib1g \
- && apt-get upgrade -y \
+ && apt-get upgrade -y --no-install-recommends \
  && rm -rf /usr/share/doc/ffmpeg* /usr/share/man/*/ffmpeg* \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*

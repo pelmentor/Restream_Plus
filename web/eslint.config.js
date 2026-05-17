@@ -22,7 +22,12 @@ export default tseslint.config(
     files: ["src/**/*.{ts,tsx}"],
     languageOptions: {
       parserOptions: {
-        project: ["./tsconfig.app.json"],
+        // typescript-eslint 8.x projectService — uses TS's LanguageService
+        // and avoids the cross-platform quirks of the legacy `project: [...]`
+        // pattern (which silently fell back to default-program "any" types
+        // on Linux + node 22, masking 655 type-aware errors as 0 errors on
+        // Windows + node 24).
+        projectService: true,
         tsconfigRootDir: import.meta.dirname,
       },
       globals: { ...globals.browser },
@@ -62,7 +67,7 @@ export default tseslint.config(
     files: ["vite.config.ts"],
     languageOptions: {
       parserOptions: {
-        project: ["./tsconfig.node.json"],
+        projectService: true,
         tsconfigRootDir: import.meta.dirname,
       },
       globals: { ...globals.node },

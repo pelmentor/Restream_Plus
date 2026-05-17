@@ -1,4 +1,4 @@
-#!/usr/bin/with-contenv sh
+#!/command/with-contenv sh
 # Phase 10 §M — control-plane longrun.
 #
 # Reviewer L5: with-contenv stays HERE (python needs RESTREAM_* env

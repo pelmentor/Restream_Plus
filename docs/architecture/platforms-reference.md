@@ -3,7 +3,9 @@
 Verified by a research subagent against OBS Studio's canonical
 `services.json` and each platform's official documentation as of
 **May 2026**. Quarterly re-verification is part of the maintenance
-checklist (`docs/ops/maintenance.md`, TBD).
+checklist ([`docs/ops/maintenance.md`](../ops/maintenance.md)) and is
+spot-checked again at every release per
+[`docs/ops/release-checklist.md` step 3](../ops/release-checklist.md).
 
 These constants ship as **defaults** in the application. Users can
 override any URL in the per-target Settings — overrides are useful when
@@ -117,4 +119,4 @@ The research subagent flagged that Kick's help center returns 403 to
 non-browser clients. The URL above is from search-engine-cached text
 of an official help article; before each release we **manually
 spot-check the Kick URL in a real browser** as part of the release
-checklist. This is documented in `docs/ops/release-checklist.md` (TBD).
+checklist — see [`docs/ops/release-checklist.md` step 3](../ops/release-checklist.md).

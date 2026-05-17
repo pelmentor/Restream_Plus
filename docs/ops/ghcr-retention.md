@@ -1,5 +1,5 @@
 ---
-applies-to: edge
+applies-to: v1.0.0+
 last-verified: 2026-05-17
 audience: maintainer
 ---

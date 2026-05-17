@@ -45,7 +45,6 @@ from typing import Annotated, Final
 
 import structlog
 from fastapi import APIRouter, Header, Request, Response, status
-from fastapi.responses import JSONResponse
 
 from app.api.errors import ErrorCode, http_exception
 from app.api.schemas import (
@@ -149,9 +148,6 @@ async def rotate_passphrase(
     operator restarts. Single-user appliance; deliberately blunt.
     """
     start = time.perf_counter()
-    # DEBUG (temporary, Phase 11 round-19 backend-test diagnostic): log
-    # the code path taken so we can see where the 500 actually happens.
-    _logger.info("rotate_passphrase:entry", has_grant=bool(x_reprompt_grant))
     try:
         if not x_reprompt_grant:
             raise http_exception(ErrorCode.REPROMPT_REQUIRED, status.HTTP_403_FORBIDDEN)
@@ -176,30 +172,20 @@ async def rotate_passphrase(
         # unwrapped values (reviewer H-1 follow-up): `SecretStr.__eq__`
         # is constant-time but the explicit call makes the intent legible.
         #
-        # NOTE: returns JSONResponse(422) directly rather than
-        # `raise http_exception(..., 422)`. fastapi 0.129's HTTPException
-        # handler treats status 422 as a RequestValidationError shape
-        # (expects list-typed `detail`); raising HTTPException(422,
-        # detail="<string>") triggers an internal "string is not list"
-        # error and the client sees 500 instead of 422. JSONResponse
-        # bypasses that special-case handler. Other early raises in
-        # this function (401, 403, 409) are unaffected — only 422.
-        old_bytes = body.old_passphrase.get_secret_value().encode("utf-8")
-        new_bytes = body.new_passphrase.get_secret_value().encode("utf-8")
-        _logger.info(
-            "rotate_passphrase:precompare",
-            old_len=len(old_bytes),
-            new_len=len(new_bytes),
-            old_hash=hashlib.sha256(old_bytes).hexdigest()[:8],
-            new_hash=hashlib.sha256(new_bytes).hexdigest()[:8],
-        )
-        if _stdlib_secrets.compare_digest(old_bytes, new_bytes):
-            _logger.info("rotate_passphrase:same_passphrase_match — returning 422")
-            return JSONResponse(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                content={"detail": ErrorCode.SAME_PASSPHRASE.value},
+        # NOTE: must use `HTTP_422_UNPROCESSABLE_CONTENT` (RFC 9110 name)
+        # rather than the legacy `HTTP_422_UNPROCESSABLE_ENTITY`. Starlette
+        # 0.49+ raises DeprecationWarning on attribute-access of the
+        # legacy name; the test suite's `filterwarnings = ["error", ...]`
+        # turns that warning into an exception, which surfaces as a 500
+        # to the client (Phase 11 round-23 backend-test fallout). 401 /
+        # 403 / 409 weren't renamed so the OTHER raise sites are unaffected.
+        if _stdlib_secrets.compare_digest(
+            body.old_passphrase.get_secret_value().encode("utf-8"),
+            body.new_passphrase.get_secret_value().encode("utf-8"),
+        ):
+            raise http_exception(
+                ErrorCode.SAME_PASSPHRASE, status.HTTP_422_UNPROCESSABLE_CONTENT
             )
-        _logger.info("rotate_passphrase:passphrases_differ — continuing")
 
         # Single process-wide lock guards step 9 + 10 against a second
         # concurrent rotate. `start_run` checks the same flag (run.py)

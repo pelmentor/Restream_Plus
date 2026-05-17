@@ -1,0 +1,433 @@
+# .github/workflows/build-image.yml — main-push multi-arch publish.
+#
+# Trigger: every push to `main` + manual workflow_dispatch.
+# Produces: ghcr.io/<owner>/restream-plus:edge + :sha-<short>
+# Supply-chain artifacts: SLSA provenance (mode=max), per-arch SPDX SBOM
+# (attached at build time via docker/build-push-action sbom: true), grype
+# scan, cosign keyless OIDC signature on the merged manifest.
+# Runtime smoke (amd64) verifies /livez before publish; failure blocks
+# publish (R-7 — no :smoke-failed tag).
+#
+# DIGEST HANDOFF (C1/H5c fix): per-arch jobs write `${runner.temp}/digests/`
+# and upload as artifacts named `digests-<arch>`; the merge job downloads
+# both, assembling the multi-arch manifest list from the file names. Job
+# `outputs:` blocks are NOT used for digests — they race in matrix legs.
+#
+# Invariants encoded here:
+#   PA-2:  runs on every main commit, no path filter (`:sha-<short>` is bisect anchor).
+#   PA-3:  cancel-in-progress: false (never cancel a mid-flight publish).
+#   PA-7:  ubuntu-24.04 (amd64) + ubuntu-24.04-arm (arm64 native).
+#   PA-9:  per-arch matrix on native runners.
+#   PA-10: per-arch jobs push by digest; merge-manifests assembles tags.
+#   PA-11: per-arch gha cache scopes (no shared scope).
+#   PA-13: pre-build guard fails on empty/malformed checksums (via scripts/load-checksums.sh).
+#   PA-18: cosign keyless OIDC sign of merged manifest.
+#   PA-20: :edge tracks main; :sha-<short> always; :latest NEVER moves here.
+#   PA-21: every published image has :sha-<short>.
+#   PA-22, PA-23: GITHUB_TOKEN only; workflow-level explicit permissions.
+#   PB-9, PB-10: SBOM + SLSA provenance via build-push-action sbom + provenance.
+#   PB-11: grype scan with HIGH+ fixable as block; only-fixed.
+#   PB-13: smoke generates passphrase in-job via openssl; no secrets ref.
+#   PB-14: SOURCE_DATE_EPOCH from commit timestamp + rewrite-timestamp=true.
+#   PA-27: 8 build-time smoke checks per arch.
+#   PA-28: runtime smoke verifies /livez + RTMP + HEALTHCHECK + docker stop -t 30.
+
+name: build-image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-image-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/restream-plus
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Pre-flight: validate .github/checksums.env via safe parser (H3 sec).
+  # PA-13: every *_SHA256 must be populated + format-valid.
+  # ---------------------------------------------------------------------------
+  preflight:
+    name: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      source_date_epoch: ${{ steps.epoch.outputs.value }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Validate .github/checksums.env (safe parser)
+        run: scripts/load-checksums.sh >/dev/null
+
+      - name: Compute SOURCE_DATE_EPOCH from commit timestamp
+        id: epoch
+        run: |
+          set -euo pipefail
+          echo "value=$(git log -1 --pretty=%ct)" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  # Build per-arch on native runners, push by-digest only.
+  # Digest exchange via upload-artifact + download-artifact (C1/H5c fix).
+  # ---------------------------------------------------------------------------
+  build:
+    name: build (${{ matrix.arch_tag }})
+    needs: preflight
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            arch_tag: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch_tag: arm64
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Load checksum build-args (validated)
+        run: scripts/load-checksums.sh >> "$GITHUB_ENV"
+
+      - name: Build + push-by-digest
+        id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: ${{ matrix.platform }}
+          # PB-9 / PB-10: docker/build-push-action's sbom + provenance
+          # produce per-arch SPDX SBOM + SLSA build provenance attached
+          # as OCI artifacts on the registry. The separate anchore/sbom-action
+          # in the `scan` job is a syft handoff to grype, NOT the
+          # attestation path. Do not delete one thinking it's redundant.
+          provenance: mode=max
+          sbom: true
+          outputs: |
+            type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true,rewrite-timestamp=true
+          cache-from: type=gha,scope=${{ matrix.arch_tag }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch_tag }}
+          build-args: |
+            SOURCE_DATE_EPOCH=${{ needs.preflight.outputs.source_date_epoch }}
+            NGINX_VERSION=${{ env.NGINX_VERSION }}
+            NGINX_SHA256=${{ env.NGINX_SHA256 }}
+            NGINX_RTMP_MODULE_SHA=${{ env.NGINX_RTMP_MODULE_SHA }}
+            NGINX_RTMP_MODULE_TARBALL_SHA256=${{ env.NGINX_RTMP_MODULE_TARBALL_SHA256 }}
+            S6_OVERLAY_VERSION=${{ env.S6_OVERLAY_VERSION }}
+            S6_OVERLAY_NOARCH_SHA256=${{ env.S6_OVERLAY_NOARCH_SHA256 }}
+            S6_OVERLAY_X86_64_SHA256=${{ env.S6_OVERLAY_X86_64_SHA256 }}
+            S6_OVERLAY_AARCH64_SHA256=${{ env.S6_OVERLAY_AARCH64_SHA256 }}
+
+      - name: Persist digest as filename for merge job (C1/H5c fix)
+        # docker multi-arch cookbook pattern. Filename is the digest minus
+        # the sha256: prefix; merge job recombines into sha256:<name>.
+        run: |
+          set -euo pipefail
+          digest="${{ steps.build.outputs.digest }}"
+          if [ -z "${digest}" ]; then
+              echo "::error::no digest output from build step"
+              exit 1
+          fi
+          mkdir -p "${RUNNER_TEMP}/digests"
+          touch "${RUNNER_TEMP}/digests/${digest#sha256:}"
+
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: digests-${{ matrix.arch_tag }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+      # ---- PA-27 build-time smoke (per-arch image, pull by digest) ----
+      - name: Pull just-built image by digest
+        run: |
+          set -euo pipefail
+          digest="${{ steps.build.outputs.digest }}"
+          docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${digest}"
+          docker tag  "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${digest}" "smoke:${{ matrix.arch_tag }}"
+
+      - name: Build-time smoke (H1-H8)
+        env:
+          IMAGE_REF: smoke:${{ matrix.arch_tag }}
+        run: |
+          set -euo pipefail
+          size_bytes=$(docker image inspect "$IMAGE_REF" --format='{{.Size}}')
+          size_mb=$(( size_bytes / 1024 / 1024 ))
+          echo "H1 image size: ${size_mb} MB"
+          [ "${size_mb}" -le 420 ] || { echo "::error::H1: ${size_mb} MB > 420 MB"; exit 1; }
+
+          docker run --rm --entrypoint='' "$IMAGE_REF" \
+              getcap /usr/sbin/nginx | grep -q cap_net_bind_service \
+              || { echo "::error::H2 CAP_NET_BIND_SERVICE missing"; exit 1; }
+
+          docker run --rm --entrypoint='' "$IMAGE_REF" \
+              nginx -t -c /etc/nginx/nginx.conf
+
+          docker run --rm --entrypoint='' "$IMAGE_REF" \
+              /opt/venv/bin/python -c "import app.main"
+
+          if docker run --rm --entrypoint='' "$IMAGE_REF" \
+              sh -c 'find /opt/venv -name __pycache__ -type d -print -quit' | grep -q .; then
+              echo "::error::H5 pycache present"; exit 1
+          fi
+
+          docker run --rm --entrypoint='' "$IMAGE_REF" id restream \
+              | grep -q 'uid=10001' \
+              || { echo "::error::H6 uid != 10001"; exit 1; }
+
+          docker run --rm --entrypoint='' "$IMAGE_REF" \
+              stat -c '%U:%G' /data | grep -qx 'restream:restream' \
+              || { echo "::error::H7 /data ownership wrong"; exit 1; }
+
+          if docker run --rm "$IMAGE_REF" >/dev/null 2>&1; then
+              echo "::error::H8 entrypoint did not fail-fast"; exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Runtime smoke — amd64 only (native; no qemu cold-argon2id penalty).
+  # PA-28: /livez + RTMP port + HEALTHCHECK + docker stop -t 30.
+  # Failure here BLOCKS publish — no :smoke-failed tag (R-7).
+  # ---------------------------------------------------------------------------
+  smoke:
+    name: runtime-smoke (amd64)
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Log in to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download amd64 digest artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: digests-amd64
+          path: ${{ runner.temp }}/digests
+
+      - name: Pull amd64 image by digest
+        run: |
+          set -euo pipefail
+          digest_file=$(find "${RUNNER_TEMP}/digests" -maxdepth 1 -type f | head -n1)
+          [ -n "${digest_file}" ] || { echo "::error::no digest file"; exit 1; }
+          digest="sha256:$(basename "${digest_file}")"
+          docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${digest}"
+          docker tag  "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${digest}" runtime-smoke:amd64
+
+      - name: Runtime smoke — boot → /livez → RTMP port → docker stop -t 30
+        # M7 sec: $PASS is generated in-job via openssl rand -hex 32. Future
+        # maintainers must NOT add `docker inspect smoke` to debug — env
+        # vars surface verbatim in the Actions log (Phase 10 DA-7).
+        run: |
+          set -euo pipefail
+          PASS=$(openssl rand -hex 32)
+
+          # M1 code: ensure container is reaped on any exit path so a
+          # failure mid-flight doesn't leave a zombie blocking re-runs.
+          cleanup() {
+              docker stop smoke 2>/dev/null || true
+              docker rm   smoke 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          docker run -d --name smoke \
+              -e RESTREAM_MASTER_PASSPHRASE="$PASS" \
+              -p 18000:8000 -p 11935:1935 \
+              runtime-smoke:amd64
+
+          # PA-28: poll /livez for up to 90 s (HEALTHCHECK --start-period=60s + 30s slack).
+          LIVE=0
+          for i in $(seq 1 18); do
+              sleep 5
+              if curl -fsS http://127.0.0.1:18000/livez >/dev/null 2>&1; then
+                  echo "live in ~$((i*5))s"
+                  LIVE=1
+                  break
+              fi
+          done
+          if [ "$LIVE" -ne 1 ]; then
+              echo "::error::PA-28: /livez did not return 200 within 90s"
+              docker logs smoke || true
+              exit 1
+          fi
+
+          # RTMP port reachable
+          nc -z 127.0.0.1 11935 || {
+              echo "::error::PA-28: RTMP port 1935 not reachable"
+              docker logs smoke || true
+              exit 1
+          }
+
+          # HEALTHCHECK state — never "unhealthy"
+          health=$(docker inspect --format='{{.State.Health.Status}}' smoke || echo unknown)
+          if [ "$health" = "unhealthy" ]; then
+              echo "::error::PA-28: HEALTHCHECK reports unhealthy"
+              docker logs smoke || true
+              exit 1
+          fi
+
+          # PA-28: graceful docker stop -t 30 (Phase 10 I-D4 contract).
+          # Disable trap-based cleanup for the happy path; explicit stop with timing.
+          trap - EXIT
+          time docker stop -t 30 smoke
+          docker rm smoke
+
+  # ---------------------------------------------------------------------------
+  # Image scan — grype, HIGH+ fixable as block; PB-11.
+  # SBOM here is for grype consumption only — the OCI-attached SBOM is
+  # produced by docker/build-push-action `sbom: true` at build time.
+  # ---------------------------------------------------------------------------
+  scan:
+    name: scan (amd64)
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download amd64 digest artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: digests-amd64
+          path: ${{ runner.temp }}/digests
+
+      - name: Pull amd64 image by digest
+        run: |
+          set -euo pipefail
+          digest_file=$(find "${RUNNER_TEMP}/digests" -maxdepth 1 -type f | head -n1)
+          digest="sha256:$(basename "${digest_file}")"
+          docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${digest}"
+          docker tag  "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${digest}" scan:amd64
+
+      - name: Generate SBOM (SPDX-JSON) via syft, for grype consumption
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: scan:amd64
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Scan image via grype (HIGH+ fixable blocks)
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          image: scan:amd64
+          fail-build: true
+          severity-cutoff: high
+          only-fixed: true
+
+  # ---------------------------------------------------------------------------
+  # Merge per-arch manifests into the human-readable tags. PA-10, PA-20, PA-21.
+  # Cosign sign the merged manifest list (PA-18).
+  # Runs only after build + smoke + scan all pass.
+  # ---------------------------------------------------------------------------
+  merge-and-sign:
+    name: merge + sign
+    needs: [build, smoke, scan]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download per-arch digest artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      # PA-20: :edge on main; :sha-<short> always. NEVER :latest here.
+      - name: docker/metadata-action tags
+        id: meta
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=edge,branch=main
+            type=sha,format=short,prefix=sha-
+
+      - name: Create + push multi-arch manifest list
+        id: merge
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          set -euo pipefail
+          # Assemble image refs (one per arch) from digest file names.
+          # Each filename is the digest minus the sha256: prefix.
+          refs=""
+          for f in *; do
+              [ -f "$f" ] || continue
+              refs="${refs} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:${f}"
+          done
+          if [ -z "${refs}" ]; then
+              echo "::error::no per-arch digest files found"
+              exit 1
+          fi
+
+          # Build the -t args from metadata-action output.
+          tags_args=""
+          while IFS= read -r tag; do
+              [ -z "${tag}" ] && continue
+              tags_args="${tags_args} -t ${tag}"
+          done <<< "${{ steps.meta.outputs.tags }}"
+
+          # shellcheck disable=SC2086
+          docker buildx imagetools create ${tags_args} ${refs}
+
+          first_tag=$(echo "${{ steps.meta.outputs.tags }}" | head -n1)
+          merged_digest=$(docker buildx imagetools inspect "${first_tag}" --format '{{json .Manifest.Digest}}' | tr -d '"')
+
+          # L2 sec: guard against fragile parsing producing an empty digest.
+          if [ -z "${merged_digest}" ] || ! printf '%s' "${merged_digest}" | grep -qE '^sha256:[a-f0-9]{64}$'; then
+              echo "::error::merged digest empty or malformed: '${merged_digest}'"
+              exit 1
+          fi
+          echo "digest=${merged_digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign merged manifest (keyless OIDC)
+        env:
+          DIGEST: ${{ steps.merge.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes \
+              "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"

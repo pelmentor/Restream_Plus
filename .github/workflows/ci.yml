@@ -1,0 +1,345 @@
+# .github/workflows/ci.yml — PR + main-push validation gate.
+#
+# Five required-status-check jobs run in parallel under a 5-min p95 wall-
+# clock budget. Branch protection on `main` requires:
+#   backend-test, backend-lint, frontend, backend-lockfile, workflow-pins
+#
+# The optional pr-image-smoke job builds the Dockerfile on amd64 and runs
+# the build-time smoke battery without pushing — informational signal,
+# not a required check.
+#
+# Invariants encoded here:
+#   PA-3:  cancel-in-progress only on PR path.
+#   PA-5:  no `secrets:` in any job; pr-image-smoke uses isolated cache scope.
+#   PA-7:  ubuntu-24.04 pin (no ubuntu-latest).
+#   PA-13: workflow-pins fails on empty checksum values.
+#   PA-23: explicit, default-deny permissions at workflow level.
+#   PA-24: all third-party actions pinned by 40-char commit SHA.
+#   PA-33: 5-min PR critical-path budget.
+#   PB-1:  --require-hashes is the only pip install mode for runtime+dev.
+#   PB-7:  backend-lockfile fails on drift between pyproject.toml and lockfiles.
+#   L5 sec: `pip install -e .` uses --no-build-isolation so hatchling
+#           comes from the hash-pinned lockfile, never PyPI directly.
+
+name: ci
+
+on:
+  pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+      - ".gitattributes"
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+      - ".gitattributes"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # backend-test — 636 pytest + ruff + format + mypy --strict.
+  # Wall-clock target: ≤ 4 min.
+  # ---------------------------------------------------------------------------
+  backend-test:
+    name: backend-test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip wheels
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('docker/requirements-dev.hashes.lock', 'pyproject.toml') }}
+          restore-keys: |
+            pip-${{ runner.os }}-
+
+      - name: Install hash-pinned runtime + dev dependencies
+        # PB-1, PB-17: --require-hashes only.
+        # L5 sec: --no-build-isolation so hatchling (PEP 517 backend) comes
+        #         from the hash-pinned lockfile, never network-resolved.
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r docker/requirements-dev.hashes.lock
+          pip install --no-deps --no-build-isolation -e .
+
+      - name: pytest
+        run: pytest -n auto
+
+  # ---------------------------------------------------------------------------
+  # backend-lint — ruff check + ruff format --check + mypy --strict.
+  # Wall-clock target: ≤ 90 s.
+  # ---------------------------------------------------------------------------
+  backend-lint:
+    name: backend-lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip wheels
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('docker/requirements-dev.hashes.lock', 'pyproject.toml') }}
+          restore-keys: |
+            pip-${{ runner.os }}-
+
+      - name: Install hash-pinned dev dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r docker/requirements-dev.hashes.lock
+          pip install --no-deps --no-build-isolation -e .
+
+      - name: ruff check
+        run: ruff check .
+
+      - name: ruff format --check
+        run: ruff format --check .
+
+      - name: mypy --strict app/
+        run: mypy --strict app/
+
+  # ---------------------------------------------------------------------------
+  # frontend — typecheck + lint + vitest + production build.
+  # Wall-clock target: ≤ 3 min.
+  # ---------------------------------------------------------------------------
+  frontend:
+    name: frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: npm audit (high+ only, informational)
+        # Load-bearing signature check (PB-15) is in the Dockerfile's
+        # frontend-builder stage. This `npm audit` is a CVE-feed signal
+        # at PR time and is intentionally non-blocking on transient
+        # registry blips.
+        run: npm audit --audit-level=high || true
+
+      - run: npm run lint
+
+      - run: npm run typecheck
+
+      - run: npm run test
+
+      - run: npm run build
+
+  # ---------------------------------------------------------------------------
+  # backend-lockfile — PB-7: fail on drift between pyproject.toml and the
+  # committed hash lockfiles. uv version pinned to match
+  # scripts/regenerate-lockfile.sh.
+  # Wall-clock target: ≤ 30 s.
+  # ---------------------------------------------------------------------------
+  backend-lockfile:
+    name: backend-lockfile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.14"
+          enable-cache: true
+
+      - name: Regenerate lockfiles into /tmp + diff
+        run: |
+          set -euo pipefail
+          uv pip compile pyproject.toml \
+              --generate-hashes \
+              --python-version 3.12 \
+              --universal \
+              --output-file /tmp/requirements.hashes.lock
+          uv pip compile pyproject.toml \
+              --extra dev \
+              --generate-hashes \
+              --python-version 3.12 \
+              --universal \
+              --output-file /tmp/requirements-dev.hashes.lock
+          diff -u docker/requirements.hashes.lock /tmp/requirements.hashes.lock \
+              || { echo "::error::docker/requirements.hashes.lock drift — run scripts/regenerate-lockfile.sh"; exit 1; }
+          diff -u docker/requirements-dev.hashes.lock /tmp/requirements-dev.hashes.lock \
+              || { echo "::error::docker/requirements-dev.hashes.lock drift — run scripts/regenerate-lockfile.sh"; exit 1; }
+
+      - name: Verify runtime lockfile installs cleanly
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/installtest
+          /tmp/installtest/bin/pip install --no-cache-dir --require-hashes \
+              -r docker/requirements.hashes.lock
+
+  # ---------------------------------------------------------------------------
+  # workflow-pins — PA-24 / PB-6: every `uses:` line in .github/workflows/*.yml
+  # pinned by 40-char commit SHA; no `ubuntu-latest` runners.
+  # PA-13: validate .github/checksums.env via scripts/load-checksums.sh
+  #        (H3 sec — safe parser, NOT shell-source).
+  # Wall-clock target: ≤ 10 s.
+  # ---------------------------------------------------------------------------
+  workflow-pins:
+    name: workflow-pins
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Enforce SHA-pinned actions
+        run: |
+          set -euo pipefail
+          # Every `uses: foo/bar@<ref>` must have <ref> = 40-char hex SHA.
+          # Allowed exception: `uses: ./...` for local composite actions.
+          unpinned=$(grep -rEn '^[[:space:]]*uses:[[:space:]]*[^./[:space:]]' .github/workflows/ \
+              | grep -vE 'uses:[[:space:]]*[^@[:space:]]+@[a-f0-9]{40}([[:space:]]|$)' || true)
+          if [ -n "${unpinned}" ]; then
+              echo "::error::Unpinned action references found:"
+              echo "${unpinned}"
+              exit 1
+          fi
+
+      - name: Enforce no ubuntu-latest
+        run: |
+          set -euo pipefail
+          if grep -rEn 'runs-on:[[:space:]]*ubuntu-latest' .github/workflows/; then
+              echo "::error::Use ubuntu-24.04 (or ubuntu-24.04-arm), not ubuntu-latest"
+              exit 1
+          fi
+
+      - name: Validate .github/checksums.env (safe parser)
+        # H3 sec — uses the validated-parse helper that rejects malformed
+        # values (shell-metachar smuggling defense). PA-13: every field
+        # must be populated.
+        run: scripts/load-checksums.sh >/dev/null
+
+  # ---------------------------------------------------------------------------
+  # pr-image-smoke (INFORMATIONAL — not a required status check).
+  # Builds the Dockerfile on amd64, loads into the local engine (no push),
+  # runs the 8-check build-time smoke battery (PA-27 H1..H8).
+  # Wall-clock target: ≤ 10 min. Skipped on docs-only changes.
+  #
+  # PA-5: no `secrets:`, no `packages:write` — fork-PR safe.
+  # C2 code-reviewer: distinct `pr-smoke-amd64` cache scope — PR runs MUST
+  # NOT poison the production `amd64` GHA cache scope read by build-image.yml.
+  # ---------------------------------------------------------------------------
+  pr-image-smoke:
+    name: pr-image-smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Load checksum build-args (validated)
+        run: scripts/load-checksums.sh >> "$GITHUB_ENV"
+
+      - name: Build amd64 image (no push, load into engine)
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        id: build
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: restream-plus:pr-${{ github.event.pull_request.number || 'manual' }}
+          cache-from: type=gha,scope=pr-smoke-amd64
+          cache-to: type=gha,mode=max,scope=pr-smoke-amd64
+          build-args: |
+            NGINX_VERSION=${{ env.NGINX_VERSION }}
+            NGINX_SHA256=${{ env.NGINX_SHA256 }}
+            NGINX_RTMP_MODULE_SHA=${{ env.NGINX_RTMP_MODULE_SHA }}
+            NGINX_RTMP_MODULE_TARBALL_SHA256=${{ env.NGINX_RTMP_MODULE_TARBALL_SHA256 }}
+            S6_OVERLAY_VERSION=${{ env.S6_OVERLAY_VERSION }}
+            S6_OVERLAY_NOARCH_SHA256=${{ env.S6_OVERLAY_NOARCH_SHA256 }}
+            S6_OVERLAY_X86_64_SHA256=${{ env.S6_OVERLAY_X86_64_SHA256 }}
+            S6_OVERLAY_AARCH64_SHA256=${{ env.S6_OVERLAY_AARCH64_SHA256 }}
+
+      - name: Build-time smoke (H1-H8)
+        env:
+          IMAGE_REF: restream-plus:pr-${{ github.event.pull_request.number || 'manual' }}
+        run: |
+          set -euo pipefail
+
+          # H1 — image size ≤ 420 MB
+          size_bytes=$(docker image inspect "$IMAGE_REF" --format='{{.Size}}')
+          size_mb=$(( size_bytes / 1024 / 1024 ))
+          echo "Image size: ${size_mb} MB"
+          if [ "${size_mb}" -gt 420 ]; then
+              echo "::error::H1: image size ${size_mb} MB exceeds 420 MB ceiling"
+              exit 1
+          fi
+
+          # H2 — CAP_NET_BIND_SERVICE on nginx (Phase 10 reviewer L3)
+          docker run --rm --entrypoint='' "$IMAGE_REF" \
+              getcap /usr/sbin/nginx | grep -q cap_net_bind_service \
+              || { echo "::error::H2: nginx missing CAP_NET_BIND_SERVICE"; exit 1; }
+
+          # H3 — nginx config syntax
+          docker run --rm --entrypoint='' "$IMAGE_REF" \
+              nginx -t -c /etc/nginx/nginx.conf
+
+          # H4 — venv intact, app importable
+          docker run --rm --entrypoint='' "$IMAGE_REF" \
+              /opt/venv/bin/python -c "import app.main"
+
+          # H5 — no pycache bloat (Phase 10 I-B4)
+          if docker run --rm --entrypoint='' "$IMAGE_REF" \
+              sh -c 'find /opt/venv -name __pycache__ -type d -print -quit' | grep -q .; then
+              echo "::error::H5: pycache directories present in /opt/venv"
+              exit 1
+          fi
+
+          # H6 — load-bearing uid 10001 (Phase 10 I-F1)
+          docker run --rm --entrypoint='' "$IMAGE_REF" id restream \
+              | grep -q 'uid=10001' \
+              || { echo "::error::H6: restream user does not have uid=10001"; exit 1; }
+
+          # H7 — /data ownership
+          docker run --rm --entrypoint='' "$IMAGE_REF" \
+              stat -c '%U:%G' /data | grep -qx 'restream:restream' \
+              || { echo "::error::H7: /data ownership is not restream:restream"; exit 1; }
+
+          # H8 — entrypoint fail-fast on missing passphrase
+          if docker run --rm "$IMAGE_REF" >/dev/null 2>&1; then
+              echo "::error::H8: entrypoint did not fail-fast on missing RESTREAM_MASTER_PASSPHRASE"
+              exit 1
+          fi
+
+          echo "All build-time smoke checks passed."

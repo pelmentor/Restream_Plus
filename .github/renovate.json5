@@ -1,0 +1,197 @@
+// .github/renovate.json5 — dep-bump bot config.
+//
+// PA-25: Renovate is the only dep-bump bot in this repo. No .github/dependabot.yml.
+// PA-26: scripts/refresh-checksums.sh (invoked from postUpgradeTasks) is the only
+//        mechanism that writes the SHA fields in .github/checksums.env.
+// PB-16: python-deps-crypto group has automerge: false (ADR-0006 trust root).
+//
+// Cadence: weekly Monday 06:00 UTC for routine bumps; vulnerability alerts
+// fire immediately.
+
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+  ],
+  timezone: "UTC",
+  schedule: ["before 6am on monday"],
+  prConcurrentLimit: 5,
+  prHourlyLimit: 2,
+  rangeStrategy: "bump",
+  rebaseWhen: "conflicted",
+  labels: ["dependencies"],
+  semanticCommitType: "chore",
+  semanticCommitScope: "deps",
+
+  // Auto-PRs for security CVEs ignore the weekly cadence.
+  vulnerabilityAlerts: {
+    labels: ["security", "priority/critical"],
+    schedule: ["at any time"],
+    minimumReleaseAge: "0 days",
+  },
+
+  packageRules: [
+    // Docker base images (FROM lines). Renovate uses the dockerfile manager.
+    {
+      matchManagers: ["dockerfile"],
+      matchUpdateTypes: ["digest", "pinDigest", "patch", "minor", "major"],
+      groupName: "docker-base-images",
+      pinDigests: true,
+      automerge: false,
+    },
+    // GitHub Actions — pin every uses: line by digest.
+    // minimumReleaseAge=3d gives the broader community a window to flag a
+    // compromised action republish before our automerge fires (L4 sec).
+    {
+      matchManagers: ["github-actions"],
+      groupName: "github-actions",
+      pinDigests: true,
+      automerge: true,
+      automergeType: "pr",
+      matchUpdateTypes: ["patch", "minor", "digest", "pinDigest"],
+      minimumReleaseAge: "3 days",
+      // Major bumps require human review (breaking-change risk).
+    },
+    // Python crypto deps — quarantined (ADR-0006 trust root).
+    // PB-16: NEVER auto-merge.
+    {
+      matchManagers: ["pep621"],
+      matchPackageNames: [
+        "argon2-cffi",
+        "argon2-cffi-bindings",
+        "cryptography",
+        "cffi",
+        "pycparser",
+      ],
+      groupName: "python-deps-crypto",
+      automerge: false,
+      minimumReleaseAge: "7 days",
+      labels: ["dependencies", "security-review"],
+    },
+    // Python runtime deps (rest of [project.dependencies]).
+    {
+      matchManagers: ["pep621"],
+      matchDepTypes: ["project.dependencies"],
+      excludePackageNames: [
+        "argon2-cffi",
+        "argon2-cffi-bindings",
+        "cryptography",
+        "cffi",
+        "pycparser",
+      ],
+      groupName: "python-deps-runtime",
+      automerge: true,
+      matchUpdateTypes: ["patch"],
+      minimumReleaseAge: "3 days",
+    },
+    // Python dev deps ([project.optional-dependencies] dev).
+    {
+      matchManagers: ["pep621"],
+      matchDepTypes: ["project.optional-dependencies"],
+      groupName: "python-deps-dev",
+      automerge: true,
+      matchUpdateTypes: ["patch", "minor"],
+    },
+    // npm runtime deps.
+    {
+      matchManagers: ["npm"],
+      matchDepTypes: ["dependencies"],
+      matchFileNames: ["web/package.json"],
+      groupName: "npm-runtime",
+      automerge: true,
+      matchUpdateTypes: ["patch"],
+    },
+    // npm dev deps.
+    {
+      matchManagers: ["npm"],
+      matchDepTypes: ["devDependencies"],
+      matchFileNames: ["web/package.json"],
+      groupName: "npm-dev",
+      automerge: true,
+      matchUpdateTypes: ["patch", "minor"],
+    },
+    // nginx-stack — version + SHA fields in .github/checksums.env (customManagers below).
+    {
+      matchManagers: ["regex"],
+      matchPackagePatterns: ["^nginx$", "arut/nginx-rtmp-module"],
+      groupName: "nginx-stack",
+      automerge: false,
+    },
+    // s6-overlay — version + 3 SHA fields in .github/checksums.env.
+    {
+      matchManagers: ["regex"],
+      matchPackagePatterns: ["just-containers/s6-overlay"],
+      groupName: "s6-overlay",
+      automerge: false,
+    },
+  ],
+
+  // After a Python or upstream-tarball bump, regenerate the hash lockfiles
+  // (uv) or refresh tarball SHA-256s (curl + sha256sum) in the same PR.
+  // PA-26: refresh-checksums.sh is the only writer of the SHA fields.
+  //
+  // COUPLING NOTE (L1 sec): if a future package rule adds another script
+  // to `commands`, the matching output file must be added to fileFilters
+  // too — otherwise Renovate silently drops the regenerated file from
+  // the PR.
+  postUpgradeTasks: {
+    commands: [
+      "bash scripts/regenerate-lockfile.sh",
+      "bash scripts/refresh-checksums.sh",
+    ],
+    fileFilters: [
+      "docker/requirements.hashes.lock",
+      "docker/requirements-dev.hashes.lock",
+      ".github/checksums.env",
+    ],
+    executionMode: "branch",
+  },
+
+  // Custom managers — Renovate's default managers cannot bump version fields
+  // in .github/checksums.env, so we tell it where to look.
+  //
+  // nginx is tracked via github-tags against nginx/nginx (the upstream mirror)
+  // with tags formatted `release-X.Y.Z`. We rejected `datasource: docker`
+  // (it tracks the nginx container image on Docker Hub, which has a
+  // different patch cadence) and `datasource: custom` (extra moving parts).
+  // The github-tags datasource gives version + commit SHA tightly bound
+  // to upstream's release ceremony (H4 code-reviewer).
+  customManagers: [
+    {
+      customType: "regex",
+      fileMatch: ["^\\.github/checksums\\.env$"],
+      matchStrings: [
+        "NGINX_VERSION=(?<currentValue>\\S+)",
+      ],
+      datasourceTemplate: "github-tags",
+      depNameTemplate: "nginx/nginx",
+      extractVersionTemplate: "^release-(?<version>.*)$",
+    },
+    {
+      customType: "regex",
+      fileMatch: ["^\\.github/checksums\\.env$"],
+      matchStrings: [
+        "NGINX_RTMP_MODULE_SHA=(?<currentDigest>[a-f0-9]{40})",
+      ],
+      // Track tagged releases of arut/nginx-rtmp-module (currentValue
+      // matches `v*` tags). Rolling master tracking was rejected per
+      // L3 sec-reviewer — Renovate would suggest bumps to un-released
+      // commits, which contradicts the "stable release" posture.
+      currentValueTemplate: "v1.2.2",
+      datasourceTemplate: "github-tags",
+      depNameTemplate: "arut/nginx-rtmp-module",
+    },
+    {
+      customType: "regex",
+      fileMatch: ["^\\.github/checksums\\.env$"],
+      matchStrings: [
+        "S6_OVERLAY_VERSION=(?<currentValue>\\S+)",
+      ],
+      datasourceTemplate: "github-releases",
+      depNameTemplate: "just-containers/s6-overlay",
+      extractVersionTemplate: "^v(?<version>.*)$",
+    },
+  ],
+}

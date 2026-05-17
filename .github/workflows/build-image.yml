@@ -355,7 +355,16 @@ jobs:
       # would be a no-op anyway).
       - name: Diagnostic — print HIGH+ fixable CVEs as table
         if: failure() && steps.scan.outcome == 'failure'
-        run: grype scan:amd64 --fail-on high --only-fixed -o table || true
+        run: |
+          set +e
+          # anchore/scan-action installs grype into the runner toolcache but
+          # doesn't put it on PATH for subsequent steps. Find it.
+          GRYPE=$(find /opt/hostedtoolcache/grype -name grype -type f 2>/dev/null | head -1)
+          if [ -z "$GRYPE" ]; then
+              echo "grype binary not found in toolcache"
+              exit 0
+          fi
+          "$GRYPE" scan:amd64 --fail-on high --only-fixed -o table || true
 
   # ---------------------------------------------------------------------------
   # Merge per-arch manifests into the human-readable tags. PA-10, PA-20, PA-21.

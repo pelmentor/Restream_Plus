@@ -21,6 +21,7 @@
     "noImplicitOverride": true,
     "exactOptionalPropertyTypes": true,
 
+    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
     }

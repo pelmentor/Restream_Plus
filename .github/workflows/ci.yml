@@ -159,16 +159,23 @@ jobs:
       # first import that fails with TS2307 in Docker. If `paths` is
       # missing from showConfig or the trace doesn't show paths matching,
       # we have a smoking gun for whichever tsconfig setting got dropped.
-      - name: Diagnostic — tsc --showConfig + traceResolution for @/lib/api
+      - name: Diagnostic — full trace around @/lib/api resolution
         run: |
           set +e
-          echo "::group::tsc --showConfig -p tsconfig.app.json"
-          npx tsc -p tsconfig.app.json --showConfig 2>&1 | head -60
-          echo "::endgroup::"
-          echo "::group::tsc --traceResolution (@/ matches only)"
+          echo "::group::tsc --traceResolution full block for @/lib/api"
+          # Captures the full block from 'Resolving module '@/lib/api'' to
+          # the next '========' marker — no grep filtering — so we see the
+          # COMPLETE sequence of steps TS takes (substitution → file lookup
+          # → node_modules fallback → resolved-or-not). Round-5 diagnostic
+          # showed CI skipping the file/folder lookup step entirely; need
+          # to see what it does instead.
           npx tsc -p tsconfig.app.json --noEmit --traceResolution 2>&1 \
-              | grep -E "(@/lib/api|paths|baseUrl|matched pattern|substitution|was successfully resolved|TS2307)" \
-              | head -40
+              | awk "/Resolving module '@\\/lib\\/api'/,/Module name '@\\/lib\\/api' (was successfully resolved|was not resolved)/" \
+              | head -50
+          echo "::endgroup::"
+          echo "::group::pwd + ls -la web/src/lib"
+          pwd
+          ls -la src/lib/ | head -20
           echo "::endgroup::"
         continue-on-error: true
 

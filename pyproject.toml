@@ -9,12 +9,14 @@ authors = [{ name = "Restream_Plus contributors" }]
 
 dependencies = [
   # HTTP + WebSocket
-  # fastapi >=0.118 to allow starlette >=0.47 (older fastapi 0.115.x
-  # caps starlette<0.47 which blocks the GHSA-7f5h-v6xp-fcq8 HIGH fix).
-  # `<1` on both keeps us off the 1.0 majors until we explicitly test
-  # against them.
-  "fastapi>=0.118,<1",
-  "starlette>=0.49.1,<1",
+  # fastapi 0.125 is the lowest version that allows starlette>=0.49.1
+  # — 0.118-0.124 cap starlette<0.49, blocking the GHSA-7f5h-v6xp-fcq8
+  # HIGH fix. Range deliberately narrow (`<0.130`) to minimize the
+  # API-surface change vs the previous 0.115 baseline; a wide bump to
+  # 0.136 broke `tests/api/test_phase9_endpoints.py::
+  # test_rotate_passphrase_same_returns_422` (500 instead of 422).
+  "fastapi>=0.125,<0.130",
+  "starlette>=0.49.1,<0.51",
   "uvicorn[standard]>=0.32,<0.33",
   "websockets>=13,<14",
   # Required for FastAPI's `Form(...)` parameters (nginx-rtmp webhooks).
@@ -29,7 +31,13 @@ dependencies = [
   "aiosqlite>=0.20,<0.21",
   # Security
   "argon2-cffi>=23.1,<24",
-  "cryptography>=43,<44",
+  # cryptography 46 fixes HIGH GHSA-r6ph-v2qm-q3c2 (surfaced by Phase 11
+  # grype scan after the python-multipart/starlette pass closed the
+  # earlier HIGH set). Per ADR-0006 quarantine, this is a
+  # security-justified bump — Renovate's `python-deps-crypto` group
+  # remains automerge=false (PB-16) so a future bump still requires
+  # human review.
+  "cryptography>=46,<47",
   # Logging
   "structlog>=24.4,<25",
   # HTTP client (for outbound platform pings if needed)

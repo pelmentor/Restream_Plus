@@ -183,9 +183,7 @@ async def rotate_passphrase(
             body.old_passphrase.get_secret_value().encode("utf-8"),
             body.new_passphrase.get_secret_value().encode("utf-8"),
         ):
-            raise http_exception(
-                ErrorCode.SAME_PASSPHRASE, status.HTTP_422_UNPROCESSABLE_CONTENT
-            )
+            raise http_exception(ErrorCode.SAME_PASSPHRASE, status.HTTP_422_UNPROCESSABLE_CONTENT)
 
         # Single process-wide lock guards step 9 + 10 against a second
         # concurrent rotate. `start_run` checks the same flag (run.py)

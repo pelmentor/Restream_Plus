@@ -153,6 +153,16 @@ const messages = {
     metricBreaker: "Failures",
   },
 
+  liveStats: {
+    egress: "Egress",
+    cpu: "CPU",
+    ingest: "Ingest",
+    ingestUnavailable: "Ingest unavailable",
+    sparklineAria: "Aggregate egress over the last 60 seconds",
+    unitMbps: "Mbps",
+    unitPct: "%",
+  },
+
   targetDetails: {
     close: "Close details",
     sparklineAria: "Bitrate over the last 5 minutes",

@@ -3,9 +3,15 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { statusStream } from "@/lib/ws";
 import { applyWsEventToCache } from "@/lib/wsReducer";
+import {
+  applyLiveMetricsEvent,
+  EMPTY_LIVE_METRICS,
+  type LiveMetricsStateT,
+} from "@/lib/liveMetricsReducer";
 import { RunStateView, type RunStateViewT, type TargetUiStateT } from "@/lib/schemas/run";
 import { WsKnownEvent } from "@/lib/schemas/wsEnvelopes";
 import { RUN_STATE_QUERY_KEY } from "@/hooks/useRunState";
+import { LIVE_METRICS_QUERY_KEY } from "@/hooks/useLiveMetrics";
 import { useRecentEventsActions, type RecentEvent } from "@/components/RecentEventsProvider";
 
 /**
@@ -46,6 +52,14 @@ export function StatusStreamHost(): ReactNode {
       queryClient.setQueryData<RunStateViewT | undefined>(
         RUN_STATE_QUERY_KEY,
         (prev) => applyWsEventToCache(prev, known),
+      );
+
+      // Parallel reducer for live metrics (host CPU + sparkline buffers).
+      // Separate cache key because the buffers grow over time and don't
+      // belong in the run-state shape (see phase-12 stats memo).
+      queryClient.setQueryData<LiveMetricsStateT>(
+        LIVE_METRICS_QUERY_KEY,
+        (prev) => applyLiveMetricsEvent(prev ?? EMPTY_LIVE_METRICS, known),
       );
 
       // Edge-detect for RecentEventsMenu.

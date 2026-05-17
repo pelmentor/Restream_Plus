@@ -41,16 +41,19 @@ from app.api.schemas import (
     WS_PROTOCOL_VERSION,
     RunStateView,
     TargetSnapshot,
+    WorkerProgressView,
     WorkerSnapshotView,
     WsEnvelope,
 )
 from app.auth.key_material import KeyMaterialState
 from app.auth.sessions import SESSION_COOKIE_NAME
 from app.domain.target import Target
+from app.domain.worker_state import WorkerSnapshot
 from app.fanout.event_bus import (
     BusEvent,
     DropAlertEvent,
     EventBus,
+    HostStatsEvent,
     RunStateChangedEvent,
     TargetSnapshotEvent,
 )
@@ -269,14 +272,7 @@ def _event_to_envelope(event: BusEvent) -> WsEnvelope | None:
         )
     if isinstance(payload, TargetSnapshotEvent):
         snapshots = tuple(
-            WorkerSnapshotView(
-                role=s.role,
-                state=s.state,
-                last_event_at=s.last_event_at,
-                last_error=s.last_error,
-                breaker_failures_in_window=s.breaker_failures_in_window,
-            ).model_dump(mode="json")
-            for s in payload.snapshots_by_role
+            _snapshot_to_view(s).model_dump(mode="json") for s in payload.snapshots_by_role
         )
         return WsEnvelope(
             event="target.snapshot",
@@ -284,6 +280,24 @@ def _event_to_envelope(event: BusEvent) -> WsEnvelope | None:
                 "target_id": payload.target_id,
                 "ui_state": payload.ui_state.value,
                 "snapshots_by_role": snapshots,
+                "at": event.at.isoformat(),
+            },
+        )
+    if isinstance(payload, HostStatsEvent):
+        return WsEnvelope(
+            event="host.stats",
+            data={
+                "cpu_total_pct": payload.cpu_total_pct,
+                "cpu_by_target": [
+                    {
+                        "target_id": entry.worker_id.target_id,
+                        "role": entry.worker_id.role.value,
+                        "cpu_pct": entry.cpu_pct,
+                    }
+                    for entry in payload.cpu_by_target
+                ],
+                "rss_bytes": payload.rss_bytes,
+                "ingest_kbps": payload.ingest_kbps,
                 "at": event.at.isoformat(),
             },
         )
@@ -297,6 +311,32 @@ def _event_to_envelope(event: BusEvent) -> WsEnvelope | None:
     return None
 
 
+def _snapshot_to_view(s: WorkerSnapshot) -> WorkerSnapshotView:
+    """Project a domain `WorkerSnapshot` into its WS-friendly view.
+
+    Single source of truth for the projection — keeps the `target.snapshot`
+    envelope and the `state.full` initial payload in sync. If a new field
+    is added to either side, change here.
+    """
+    progress_view: WorkerProgressView | None = None
+    if s.last_progress is not None:
+        progress_view = WorkerProgressView(
+            bitrate_kbps=s.last_progress.bitrate_kbps,
+            fps=s.last_progress.fps,
+            drop_frames=s.last_progress.drop_frames,
+            speed=s.last_progress.speed,
+            at=s.last_progress.at,
+        )
+    return WorkerSnapshotView(
+        role=s.role,
+        state=s.state,
+        last_event_at=s.last_event_at,
+        last_error=s.last_error,
+        breaker_failures_in_window=s.breaker_failures_in_window,
+        last_progress=progress_view,
+    )
+
+
 def _build_state_full(supervisor: Supervisor, bus: EventBus) -> dict[str, object]:
     """Compose the synthetic `state.full` payload sent on connect."""
     targets_view = tuple(
@@ -304,13 +344,7 @@ def _build_state_full(supervisor: Supervisor, bus: EventBus) -> dict[str, object
             target_id=t.id,
             ui_state=t.ui_state(),
             snapshots_by_role=tuple(
-                WorkerSnapshotView(
-                    role=s.role,
-                    state=s.state,
-                    last_event_at=s.last_event_at,
-                    last_error=s.last_error,
-                    breaker_failures_in_window=s.breaker_failures_in_window,
-                )
+                _snapshot_to_view(s)
                 for role in t.expected_worker_roles()
                 if (s := t.worker_set.role(role)) is not None
             ),

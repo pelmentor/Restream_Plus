@@ -48,6 +48,12 @@ dependencies = [
   "httpx>=0.27,<0.28",
   # System utilities
   "anyio>=4.6,<5",
+  # XML defense-in-depth — parses nginx-rtmp's loopback stat endpoint
+  # in app/fanout/host_stats.py. The source is on 127.0.0.1 (no
+  # external attacker reach), but defusedxml is ~60 KB and removes the
+  # XXE / billion-laughs / entity-expansion attack class entirely.
+  # Architect Rule №4 review on the live-stats feature.
+  "defusedxml>=0.7,<0.8",
 ]
 
 [project.optional-dependencies]
@@ -60,6 +66,9 @@ dev = [
   "ruff>=0.7,<0.8",
   "mypy>=1.13,<2",
   "httpx>=0.27,<0.28",
+  # Type stubs for defusedxml (runtime dep added for the host-stats
+  # nginx-rtmp XML parser). Dev-only — mypy --strict needs them.
+  "types-defusedxml>=0.7,<0.8",
   # Hash-pinned in CI so `pip install --no-build-isolation -e .`
   # never network-resolves the PEP 517 build backend (security-reviewer L5).
   "hatchling>=1.25,<2",

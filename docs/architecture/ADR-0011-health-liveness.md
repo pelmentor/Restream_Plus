@@ -134,3 +134,18 @@ no extra logic; it serves the same handler.
   detail might be expanded with histograms.
 - If the supervisor grows N parallel task groups (it shouldn't — see
   ADR-0001 amended), each gets a heartbeat slot.
+- **Dashboard CPU% and aggregate Mbps are surfaced via the existing
+  WS event stream (`host.stats` envelope from
+  `app/fanout/host_stats.py`), not `/metrics`.** Three reasons:
+  (a) the dashboard is the only consumer and already drains the bus
+  via `ws_broadcaster`, so a parallel transport doubles the source of
+  truth; (b) Prometheus-style pulls need a separate auth posture (no
+  cookie, IP allowlist or bearer token) versus the WS cookie path,
+  introducing one more auth surface to harden; (c) adding `/metrics`
+  would split the canonical shape of `HostStatsEvent` between bus +
+  scrape, forcing a serialization-shape ADR we don't need yet. Add
+  `/metrics` only when a Grafana wiring is concrete, not speculative.
+  The host-stats sampler reads `/proc/<pid>/stat` directly (no
+  `psutil` dep) and polls nginx-rtmp `/rtmp_stat` on loopback for
+  ingest bitrate; both are best-effort and degrade silently to `null`
+  rather than crashing the sampler loop.

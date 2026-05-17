@@ -44,10 +44,27 @@ export const DropAlertData = z.object({
 });
 export type DropAlertDataT = z.infer<typeof DropAlertData>;
 
+export const HostCpuByTargetEntry = z.object({
+  target_id: z.string(),
+  role: z.enum(["primary", "backup"]),
+  cpu_pct: z.number(),
+});
+export type HostCpuByTargetEntryT = z.infer<typeof HostCpuByTargetEntry>;
+
+export const HostStatsData = z.object({
+  cpu_total_pct: z.number(),
+  cpu_by_target: z.array(HostCpuByTargetEntry),
+  rss_bytes: z.number().int().nonnegative(),
+  ingest_kbps: z.number().nullable(),
+  at: AwareDatetime,
+});
+export type HostStatsDataT = z.infer<typeof HostStatsData>;
+
 export const WsKnownEvent = z.discriminatedUnion("event", [
   z.object({ event: z.literal("state.full"), data: StateFullData }),
   z.object({ event: z.literal("run.state.changed"), data: RunStateChangedData }),
   z.object({ event: z.literal("target.snapshot"), data: TargetSnapshotData }),
   z.object({ event: z.literal("bus.drop_alert"), data: DropAlertData }),
+  z.object({ event: z.literal("host.stats"), data: HostStatsData }),
 ]);
 export type WsKnownEventT = z.infer<typeof WsKnownEvent>;

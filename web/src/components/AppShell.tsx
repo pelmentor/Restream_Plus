@@ -7,6 +7,7 @@ import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { t } from "@/messages";
 import { ThemeToggle } from "@/theme/ThemeToggle";
+import { LiveStatsStrip } from "@/components/LiveStatsStrip";
 import { RecentEventsMenu } from "@/components/RecentEventsMenu";
 import { RunStateBadge } from "@/components/RunStateBadge";
 
@@ -79,6 +80,7 @@ function Header(): ReactNode {
           {t("app.name")}
         </Link>
         <RunStateBadge />
+        <LiveStatsStrip />
         <div className="ml-auto flex items-center gap-3">
           <RecentEventsMenu />
           <ThemeToggle />

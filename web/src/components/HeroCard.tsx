@@ -10,6 +10,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Banner } from "./Banner";
 import { Button } from "./Button";
 import { InlinePromptCard } from "./InlinePromptCard";
+import { Sparkline, type SparklineSample } from "./Sparkline";
 import { apiFetch, type ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { TARGETS_QUERY_KEY, type TargetWithSnapshot } from "@/hooks/useTargets";
@@ -25,7 +26,15 @@ export interface HeroCardProps {
   readonly enabledTargets: readonly TargetWithSnapshot[];
   readonly firstRunComplete: boolean;
   readonly ingestKeyLast4: string | null;
+  /** Latest aggregate egress in Mbps (sum across enabled targets), or
+   * null when no progress sample has arrived yet. */
   readonly aggregateBitrate: number | null;
+  /** Rolling sparkline buffer (last ~60 s of aggregate egress in kbps).
+   * Empty array hides the sparkline. */
+  readonly aggregateSamples: readonly SparklineSample[];
+  /** Ingest-side kbps from nginx-rtmp, or null when unavailable (no
+   * publisher / nginx wedged). UI renders "—", never 0. */
+  readonly ingestKbps: number | null;
   readonly runningCount: number;
   readonly totalEnabled: number;
   readonly totalDrops: number;
@@ -47,6 +56,8 @@ export function HeroCard({
   firstRunComplete,
   ingestKeyLast4,
   aggregateBitrate,
+  aggregateSamples,
+  ingestKbps,
   runningCount,
   totalEnabled,
   totalDrops,
@@ -161,6 +172,8 @@ export function HeroCard({
           runState={runState}
           ingestKeyLast4={ingestKeyLast4}
           aggregateBitrate={aggregateBitrate}
+          aggregateSamples={aggregateSamples}
+          ingestKbps={ingestKbps}
           runningCount={runningCount}
           totalEnabled={totalEnabled}
           totalDrops={totalDrops}
@@ -310,6 +323,8 @@ interface HeroBodyProps {
   readonly runState: RunStateT;
   readonly ingestKeyLast4: string | null;
   readonly aggregateBitrate: number | null;
+  readonly aggregateSamples: readonly SparklineSample[];
+  readonly ingestKbps: number | null;
   readonly runningCount: number;
   readonly totalEnabled: number;
   readonly totalDrops: number;
@@ -319,6 +334,8 @@ function HeroBody({
   runState,
   ingestKeyLast4,
   aggregateBitrate,
+  aggregateSamples,
+  ingestKbps,
   runningCount,
   totalEnabled,
   totalDrops,
@@ -361,14 +378,26 @@ function HeroBody({
       );
     case "live":
       return (
-        <p className="text-(length:--text-base) text-(--color-fg-default)">
-          {t("hero.liveSummary", {
-            runningCount,
-            totalEnabled,
-            bitrate: aggregateBitrate === null ? "—" : aggregateBitrate.toFixed(1),
-            drops: totalDrops,
-          })}
-        </p>
+        <div className="w-full flex flex-col items-center gap-(--space-3)">
+          <p className="text-(length:--text-base) text-(--color-fg-default)">
+            {t("hero.liveSummary", {
+              runningCount,
+              totalEnabled,
+              bitrate: aggregateBitrate === null ? "—" : aggregateBitrate.toFixed(1),
+              drops: totalDrops,
+            })}
+          </p>
+          <IngestEgressPair
+            ingestKbps={ingestKbps}
+            egressMbps={aggregateBitrate}
+          />
+          {aggregateSamples.length > 0 && (
+            <Sparkline
+              samples={aggregateSamples}
+              ariaLabel={t("liveStats.sparklineAria")}
+            />
+          )}
+        </div>
       );
     case "stopping":
       return <p className="text-(--color-fg-muted)">{t("hero.stoppingBody")}</p>;
@@ -379,6 +408,43 @@ function HeroBody({
         </Banner>
       );
   }
+}
+
+interface IngestEgressPairProps {
+  readonly ingestKbps: number | null;
+  readonly egressMbps: number | null;
+}
+
+function IngestEgressPair({ ingestKbps, egressMbps }: IngestEgressPairProps): ReactNode {
+  const ingestMbps = ingestKbps === null ? "—" : (ingestKbps / 1000).toFixed(1);
+  const egressDisplay = egressMbps === null ? "—" : egressMbps.toFixed(1);
+  return (
+    <dl className="flex items-baseline gap-(--space-6) text-(length:--text-sm)">
+      <div className="flex flex-col items-center gap-1">
+        <dt className="text-(length:--text-2xs) uppercase tracking-wider text-(--color-fg-muted)">
+          {t("liveStats.ingest")}
+        </dt>
+        <dd className="font-(family-name:--font-mono) tabular-nums text-(--color-fg-strong)">
+          {ingestMbps}
+          <span className="ml-1 text-(--color-fg-muted) font-(family-name:--font-sans)">
+            {t("liveStats.unitMbps")}
+          </span>
+        </dd>
+      </div>
+      <span aria-hidden="true" className="text-(--color-fg-muted)">→</span>
+      <div className="flex flex-col items-center gap-1">
+        <dt className="text-(length:--text-2xs) uppercase tracking-wider text-(--color-fg-muted)">
+          {t("liveStats.egress")}
+        </dt>
+        <dd className="font-(family-name:--font-mono) tabular-nums text-(--color-fg-strong)">
+          {egressDisplay}
+          <span className="ml-1 text-(--color-fg-muted) font-(family-name:--font-sans)">
+            {t("liveStats.unitMbps")}
+          </span>
+        </dd>
+      </div>
+    </dl>
+  );
 }
 
 function FirstRunHint(): ReactNode {

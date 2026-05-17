@@ -27,7 +27,7 @@ from typing import Final
 from app.domain.run_state import RunState
 from app.domain.target import TargetUiState
 from app.domain.worker_state import WorkerSnapshot
-from app.fanout.worker import WorkerEvent
+from app.fanout.worker import WorkerEvent, WorkerId
 
 EVENT_BUS_CAPACITY: Final[int] = 10_000
 """ADR-0003 fixes this. With ≤ 6 targets producing ~1 progress event
@@ -64,13 +64,48 @@ class DropAlertEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class HostCpuByTarget:
+    """Per-(target_id, role) CPU% sample inside a `HostStatsEvent`.
+
+    `cpu_pct` is normalized to 0-100% of one host (i.e. divided by
+    `os.cpu_count()`) so values are comparable to `cpu_total_pct` on
+    the carrying event.
+    """
+
+    worker_id: WorkerId
+    cpu_pct: float
+
+
+@dataclass(frozen=True, slots=True)
+class HostStatsEvent:
+    """Host-level periodic sample: process-tree CPU%, RSS, ingest bitrate.
+
+    Produced by the supervisor's `_host_stats_loop` at a fixed tick (2 s
+    default — fast enough for the operator's eye, slow enough that CPU
+    deltas are meaningful). Subscribers render this as the always-visible
+    header chip + ingest/egress pair in the hero card.
+
+    `ingest_kbps` is None when nginx-rtmp's stat endpoint is unreachable
+    or no publisher is currently connected — the UI must NOT render
+    "0 Mbps" in that case, which would imply the show is dark.
+    """
+
+    cpu_total_pct: float
+    cpu_by_target: tuple[HostCpuByTarget, ...]
+    rss_bytes: int
+    ingest_kbps: float | None
+
+
+@dataclass(frozen=True, slots=True)
 class BusEvent:
     """The single tagged-union envelope on the bus. Ordering preserved."""
 
     at: datetime
     monotonic_ns: int
     target_id: str | None
-    payload: WorkerEvent | RunStateChangedEvent | TargetSnapshotEvent | DropAlertEvent
+    payload: (
+        WorkerEvent | RunStateChangedEvent | TargetSnapshotEvent | DropAlertEvent | HostStatsEvent
+    )
 
 
 class EventBus:

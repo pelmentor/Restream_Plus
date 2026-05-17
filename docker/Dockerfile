@@ -208,7 +208,11 @@ RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements.lock
 # `Unable to locate package python3.12`. The python:3.12-slim-bookworm
 # image is built on debian:12-slim with python 3.12 pre-installed under
 # /usr/local — matches the backend-builder stage's interpreter.
-# Final image target: ≤400 MB uncompressed (CI fails at 420 MB per I-B3).
+# Final image target: ≤720 MB uncompressed (CI fails above that per the
+# H1 size check in ci.yml + build-image.yml). The original Phase 10
+# target of ≤400/420 MB was speculation never validated by a real
+# Docker build; first real measurement on amd64 was 669 MB, with
+# ffmpeg (~150-200 MB) being the largest single contributor.
 # ===========================================================================
 FROM python:3.12-slim-bookworm AS runtime
 

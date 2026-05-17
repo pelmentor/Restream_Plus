@@ -45,6 +45,7 @@ from typing import Annotated, Final
 
 import structlog
 from fastapi import APIRouter, Header, Request, Response, status
+from fastapi.responses import JSONResponse
 
 from app.api.errors import ErrorCode, http_exception
 from app.api.schemas import (
@@ -171,11 +172,23 @@ async def rotate_passphrase(
         # consistent on the client. Constant-time comparison on the
         # unwrapped values (reviewer H-1 follow-up): `SecretStr.__eq__`
         # is constant-time but the explicit call makes the intent legible.
+        #
+        # NOTE: returns JSONResponse(422) directly rather than
+        # `raise http_exception(..., 422)`. fastapi 0.129's HTTPException
+        # handler treats status 422 as a RequestValidationError shape
+        # (expects list-typed `detail`); raising HTTPException(422,
+        # detail="<string>") triggers an internal "string is not list"
+        # error and the client sees 500 instead of 422. JSONResponse
+        # bypasses that special-case handler. Other early raises in
+        # this function (401, 403, 409) are unaffected — only 422.
         if _stdlib_secrets.compare_digest(
             body.old_passphrase.get_secret_value().encode("utf-8"),
             body.new_passphrase.get_secret_value().encode("utf-8"),
         ):
-            raise http_exception(ErrorCode.SAME_PASSPHRASE, status.HTTP_422_UNPROCESSABLE_ENTITY)
+            return JSONResponse(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                content={"detail": ErrorCode.SAME_PASSPHRASE.value},
+            )
 
         # Single process-wide lock guards step 9 + 10 against a second
         # concurrent rotate. `start_run` checks the same flag (run.py)

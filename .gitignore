@@ -1,20 +1,25 @@
-# Python
+# Python — Python's standard ignore list is anchored to root (leading /)
+# because these names (lib/, var/, build/, dist/, etc.) ALSO appear in
+# legitimate frontend paths (e.g., web/src/lib/, web/dist/). Without the
+# anchor, `lib/` would silently swallow the entire web/src/lib/ source
+# tree — discovered in Phase 11 first-push fallout. Path-specific
+# overrides for the frontend appear below.
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-build/
+/build/
 develop-eggs/
-dist/
+/dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
-sdist/
-var/
+/sdist/
+/var/
 wheels/
 *.egg-info/
 .installed.cfg

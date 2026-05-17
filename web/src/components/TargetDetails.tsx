@@ -11,6 +11,7 @@ import { Sparkline } from "./Sparkline";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { TARGETS_QUERY_KEY } from "@/hooks/useTargets";
+import { useLiveMetrics } from "@/hooks/useLiveMetrics";
 import { t } from "@/messages";
 
 import type { TargetWithSnapshot } from "@/hooks/useTargets";
@@ -37,6 +38,9 @@ export interface TargetDetailsProps {
 export function TargetDetails({ target, onClose, triggerRef }: TargetDetailsProps): ReactNode {
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const queryClient = useQueryClient();
+  const { egressByTarget } = useLiveMetrics();
+  const targetSamples =
+    target !== null ? (egressByTarget.get(target.id) ?? []) : [];
 
   const resetMutation = useMutation({
     mutationFn: (targetId: string) =>
@@ -119,11 +123,18 @@ export function TargetDetails({ target, onClose, triggerRef }: TargetDetailsProp
                   </div>
                 }
               >
-                <Sparkline
-                  samples={[]}
-                  ariaLabel={t("targetDetails.sparklineAria")}
-                  srSummary={t("targetDetails.sparklineEmptyAria")}
-                />
+                {targetSamples.length === 0 ? (
+                  <Sparkline
+                    samples={targetSamples}
+                    ariaLabel={t("targetDetails.sparklineAria")}
+                    srSummary={t("targetDetails.sparklineEmptyAria")}
+                  />
+                ) : (
+                  <Sparkline
+                    samples={targetSamples}
+                    ariaLabel={t("targetDetails.sparklineAria")}
+                  />
+                )}
               </ErrorBoundary>
               <MetricGrid metrics={detailMetricsFor(target)} columns={4} />
               {target.snapshot?.snapshots_by_role[0]?.last_error !== undefined &&
@@ -166,19 +177,28 @@ function detailMetricsFor(target: TargetWithSnapshot): readonly Metric[] {
   const primary = target.snapshot?.snapshots_by_role[0] ?? null;
   if (primary === null) {
     return [
+      { label: t("tile.metricBitrate"), value: "—" },
+      { label: t("tile.metricDrops"), value: "—" },
       { label: t("tile.metricWorker"), value: "—" },
       { label: t("tile.metricBreaker"), value: "—" },
-      { label: t("targetDetails.metricLastEvent"), value: "—" },
-      { label: t("targetDetails.metricRole"), value: "—" },
     ];
   }
+  const progress = primary.last_progress;
+  const bitrateMetric: Metric =
+    progress != null
+      ? {
+          label: t("tile.metricBitrate"),
+          value: (progress.bitrate_kbps / 1000).toFixed(1),
+          unit: "Mbps",
+        }
+      : { label: t("tile.metricBitrate"), value: "—" };
   return [
+    bitrateMetric,
+    {
+      label: t("tile.metricDrops"),
+      value: progress != null ? String(progress.drop_frames) : "—",
+    },
     { label: t("tile.metricWorker"), value: primary.state.toUpperCase() },
     { label: t("tile.metricBreaker"), value: String(primary.breaker_failures_in_window) },
-    {
-      label: t("targetDetails.metricLastEvent"),
-      value: new Date(primary.last_event_at).toLocaleTimeString(),
-    },
-    { label: t("targetDetails.metricRole"), value: primary.role.toUpperCase() },
   ];
 }

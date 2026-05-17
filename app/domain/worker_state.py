@@ -103,6 +103,22 @@ def legal_actions(state: WorkerState) -> frozenset[WorkerAction]:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkerProgressSnapshot:
+    """Last-known ffmpeg progress frame surfaced through the snapshot.
+
+    Populated by the Worker each time it emits a `WorkerProgressEvent`.
+    `None` on the carrying `WorkerSnapshot` means "no progress observed
+    yet for this worker" — fresh boot, post-reconnect, between sessions.
+    """
+
+    bitrate_kbps: float
+    fps: float
+    drop_frames: int
+    speed: float
+    at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class WorkerSnapshot:
     """Domain-layer view of a Worker's current state.
 
@@ -114,6 +130,11 @@ class WorkerSnapshot:
     `breaker_failures_in_window` is the count from `CircuitBreaker.
     failure_count_in_window(now)` at the moment the snapshot was built;
     it's a UI-surface number, not authoritative for routing decisions.
+
+    `last_progress` is the most recent ffmpeg progress frame (egress
+    bitrate, fps, dropped-frame counter, speed multiplier). `None` until
+    a progress event has been observed. Domain logic MUST NOT branch on
+    its presence — it's a UI-surface convenience only.
     """
 
     role: WorkerRole
@@ -121,3 +142,4 @@ class WorkerSnapshot:
     last_event_at: datetime
     last_error: str | None
     breaker_failures_in_window: int
+    last_progress: WorkerProgressSnapshot | None = None

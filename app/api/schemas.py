@@ -141,13 +141,31 @@ class CredentialSummary(BaseModel):
 # ----------------------------------------------------------------------
 
 
+class WorkerProgressView(BaseModel):
+    """JSON-friendly projection of the last ffmpeg progress frame.
+
+    Surfaced through `WorkerSnapshot.last_progress` so the dashboard can
+    render per-target outbound bitrate and drop counters without a
+    separate event channel. `None` on the parent means no progress
+    observed yet (fresh boot / pre-handshake).
+    """
+
+    model_config = ConfigDict(frozen=True)
+    bitrate_kbps: float
+    fps: float
+    drop_frames: int
+    speed: float
+    at: AwareDatetime
+
+
 class WorkerSnapshotView(BaseModel):
     """JSON-friendly projection of `domain.worker_state.WorkerSnapshot`.
 
-    Mirrors the five fields the domain emits — see
+    Mirrors the domain fields one-for-one — see
     `app/domain/worker_state.py::WorkerSnapshot`. `last_error` arrives
     already redacted by Phase 5's `RedactionSink`, so it's safe to
-    forward over the wire.
+    forward over the wire. `last_progress` carries the most recent ffmpeg
+    progress frame for UI rendering (per-target bitrate / drops).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -156,6 +174,7 @@ class WorkerSnapshotView(BaseModel):
     last_event_at: AwareDatetime
     last_error: str | None
     breaker_failures_in_window: int
+    last_progress: WorkerProgressView | None = None
 
 
 class TargetSnapshot(BaseModel):
@@ -200,6 +219,45 @@ class RunActionAcceptedResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
     accepted: Literal[True] = True
     previous_state: RunState
+
+
+class HostCpuByTargetEntry(BaseModel):
+    """One row of per-target ffmpeg CPU% inside `HostStatsView`.
+
+    Serialized as a list of `{target_id, role, cpu_pct}` records rather
+    than a nested object so order is stable on the wire and consumers can
+    iterate without a key-by-key dance. Mirrors `WorkerId` shape.
+    """
+
+    model_config = ConfigDict(frozen=True)
+    target_id: str
+    role: WorkerRole
+    cpu_pct: float
+
+
+class HostStatsView(BaseModel):
+    """Per-tick host-process stats: CPU% (control plane + ffmpeg tree),
+    RSS, and the ingest-side bitrate from nginx-rtmp.
+
+    `cpu_total_pct` is the sum across the control-plane process and all
+    live ffmpeg workers, normalized to 0-100% of one host (i.e. divided
+    by `os.cpu_count()` so a fully-saturated 4-core box reads 100, not
+    400). The UI shows this as a single header chip.
+
+    `ingest_kbps` is None when nginx-rtmp's stat endpoint is unreachable
+    or no publisher is currently connected. The UI renders "—" in that
+    case rather than implying zero.
+
+    `rss_bytes` is the control-plane process resident set; useful
+    forensic data but not exposed prominently in the v1 UI.
+    """
+
+    model_config = ConfigDict(frozen=True)
+    cpu_total_pct: float
+    cpu_by_target: tuple[HostCpuByTargetEntry, ...]
+    rss_bytes: int
+    ingest_kbps: float | None
+    at: AwareDatetime
 
 
 # ----------------------------------------------------------------------
@@ -436,8 +494,16 @@ class HealthResponse(BaseModel):
 
 
 WS_PROTOCOL_VERSION: int = 1
-"""Wire-protocol version. Phase 7 frontend pins to v1; future shape
-changes bump this and the frontend must handle both."""
+"""Wire-protocol version. Phase 7 frontend pins to v1.
+
+ADDITIVE changes (new optional fields on existing event payloads, new
+event names that older clients can safely ignore via the
+discriminated-union `safeParse` drop-on-unknown path) do NOT require a
+bump. Old clients gracefully degrade by not rendering the new shape.
+
+BREAKING changes (renamed or removed fields, changed field types,
+changed envelope shell) MUST bump the version and the frontend MUST
+handle both."""
 
 
 class WsEnvelope(BaseModel):

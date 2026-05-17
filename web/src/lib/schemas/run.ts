@@ -37,12 +37,25 @@ export type WorkerStateT = z.infer<typeof WorkerState>;
 export const WorkerRole = z.enum(["primary", "backup"]);
 export type WorkerRoleT = z.infer<typeof WorkerRole>;
 
+export const WorkerProgressView = z.object({
+  bitrate_kbps: z.number(),
+  fps: z.number(),
+  drop_frames: z.number().int(),
+  speed: z.number(),
+  at: AwareDatetime,
+});
+export type WorkerProgressViewT = z.infer<typeof WorkerProgressView>;
+
 export const WorkerSnapshotView = z.object({
   role: WorkerRole,
   state: WorkerState,
   last_event_at: AwareDatetime,
   last_error: z.string().nullable(),
   breaker_failures_in_window: z.number().int(),
+  // Optional: backend omits the key entirely when no progress yet (the
+  // Pydantic field defaults to None, model_dump excludes None defaults).
+  // Treat absent same as null.
+  last_progress: WorkerProgressView.nullable().optional(),
 });
 export type WorkerSnapshotViewT = z.infer<typeof WorkerSnapshotView>;
 

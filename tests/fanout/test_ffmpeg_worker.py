@@ -138,6 +138,71 @@ class TestHappyPath:
         assert snap.state is WorkerState.RUNNING
         await worker.stop(grace=timedelta(seconds=1))
 
+    async def test_snapshot_carries_last_progress_after_first_frame(
+        self,
+        fresh_credential_registry: None,
+    ) -> None:
+        # `WorkerSnapshot.last_progress` is the surface the supervisor +
+        # WS layer rely on for the per-target bitrate/drops in the
+        # dashboard. Pre-progress the field is None; after a frame the
+        # field carries the parsed values (bitrate kbits/s, drop_frames).
+        proc = FakeProcess(pid=4242)
+        spawner = FakeProcessSpawner([proc, FakeProcess()])
+        worker = FFmpegWorker(
+            spec=_spec(),
+            process_spawner=spawner,
+            stall_timeout=timedelta(seconds=10),
+            stall_check_interval=0.05,
+            rng=random.Random(0),
+        )
+        # `pid` is None before start() — there is no spawned process yet.
+        assert worker.pid is None
+        await worker.start()
+        await asyncio.sleep(0.05)
+        # Pre-progress: last_progress is None on the fresh snapshot.
+        pre = worker.snapshot()
+        assert pre.last_progress is None
+        # After a progress frame the snapshot carries the parsed numbers.
+        proc.feed_stdout(_progress_bytes(frame=42))
+        await asyncio.sleep(0.05)
+        post = worker.snapshot()
+        assert post.last_progress is not None
+        assert post.last_progress.bitrate_kbps == pytest.approx(5000.0)
+        assert post.last_progress.fps == pytest.approx(30.0)
+        assert post.last_progress.drop_frames == 0
+        # The Worker's public pid surface tracks the spawned process.
+        assert worker.pid == 4242
+        await worker.stop(grace=timedelta(seconds=1))
+
+    async def test_snapshot_last_progress_cleared_after_restart(
+        self,
+        fresh_credential_registry: None,
+    ) -> None:
+        # When `start()` is called on a fresh-but-previously-stopped
+        # worker, last_progress must be cleared so leftover values from
+        # the prior session don't bleed into the new one before the
+        # first frame arrives.
+        proc = FakeProcess()
+        spawner = FakeProcessSpawner([proc, FakeProcess(), FakeProcess()])
+        worker = FFmpegWorker(
+            spec=_spec(),
+            process_spawner=spawner,
+            stall_timeout=timedelta(seconds=10),
+            stall_check_interval=0.05,
+            rng=random.Random(0),
+        )
+        await worker.start()
+        await asyncio.sleep(0.05)
+        proc.feed_stdout(_progress_bytes(frame=1))
+        await asyncio.sleep(0.05)
+        assert worker.snapshot().last_progress is not None
+        await worker.stop(grace=timedelta(seconds=1))
+        # Restart — pre-first-frame should be back to None.
+        await worker.start()
+        await asyncio.sleep(0.05)
+        assert worker.snapshot().last_progress is None
+        await worker.stop(grace=timedelta(seconds=1))
+
 
 class TestStop:
     async def test_sigterm_then_exit(

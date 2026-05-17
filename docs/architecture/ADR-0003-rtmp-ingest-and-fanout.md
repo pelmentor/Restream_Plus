@@ -366,3 +366,12 @@ not guarantee parent-death signals. We do it explicitly.
   for years; the `arut/nginx-rtmp-module` fork is the de facto
   maintained one), we migrate to MediaMTX. The webhook contract is
   similar enough that the control plane changes are local.
+- The `EventBus` is single-drainer by design (one consumer = `ws_broadcaster`).
+  When/if a `/metrics` endpoint lands (see ADR-0011 §"Open questions"),
+  this becomes the real blocker — a second drainer would race the
+  broadcaster on the deque. The cheap fix is to introduce a fan-in
+  layer (the bus drains once, broadcasts to N internal subscribers),
+  or to push `HostStatsEvent` to both via a tee. Capture the
+  ADR-amend at that point so the next architect doesn't rediscover
+  the single-drainer invariant. (Added 2026-05-17 after the live-stats
+  feature review surfaced it.)

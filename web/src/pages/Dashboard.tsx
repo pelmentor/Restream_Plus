@@ -11,6 +11,7 @@ import { TargetDetails } from "@/components/TargetDetails";
 import { TargetTile } from "@/components/TargetTile";
 import { apiFetch } from "@/lib/api";
 import { SettingsView, type SettingsViewT } from "@/lib/schemas/settings";
+import { useLiveMetrics } from "@/hooks/useLiveMetrics";
 import { useRunState } from "@/hooks/useRunState";
 import { useTargets } from "@/hooks/useTargets";
 import { t } from "@/messages";
@@ -25,6 +26,7 @@ import { t } from "@/messages";
 export function Dashboard(): ReactNode {
   const { runState, isPending: runPending } = useRunState();
   const { targets, isPending: targetsPending } = useTargets();
+  const liveMetrics = useLiveMetrics();
 
   const { data: settings, isPending: settingsPending } = useQuery<SettingsViewT>({
     queryKey: ["settings"],
@@ -52,19 +54,25 @@ export function Dashboard(): ReactNode {
     [enabledTargets],
   );
 
+  // totalDrops: sum of ffmpeg drop_frames across enabled targets'
+  // primary worker. This is the operator-honest "drops" — the number
+  // ffmpeg actually couldn't push. Falls back to 0 when no progress
+  // frame has arrived yet for a target.
   const totalDrops = useMemo(
     () =>
-      enabledTargets.reduce(
-        (acc, tt) =>
-          acc +
-          (tt.snapshot?.snapshots_by_role.reduce(
-            (a, w) => a + w.breaker_failures_in_window,
-            0,
-          ) ?? 0),
-        0,
-      ),
+      enabledTargets.reduce((acc, tt) => {
+        const primary = tt.snapshot?.snapshots_by_role.find((s) => s.role === "primary");
+        return acc + (primary?.last_progress?.drop_frames ?? 0);
+      }, 0),
     [enabledTargets],
   );
+
+  // Latest aggregate Mbps from the rolling buffer (sum of per-target
+  // primaries' last_progress.bitrate_kbps). Null when no samples yet.
+  const aggregateBitrate = useMemo(() => {
+    const latest = liveMetrics.aggregateBuffer[liveMetrics.aggregateBuffer.length - 1];
+    return latest === undefined ? null : latest.bitrate / 1000;
+  }, [liveMetrics.aggregateBuffer]);
 
   if (runPending || targetsPending || settingsPending) {
     return (
@@ -113,7 +121,9 @@ export function Dashboard(): ReactNode {
           enabledTargets={enabledTargets}
           firstRunComplete={settings?.first_run_complete ?? true}
           ingestKeyLast4={settings?.ingest_key_last4 ?? null}
-          aggregateBitrate={null}
+          aggregateBitrate={aggregateBitrate}
+          aggregateSamples={liveMetrics.aggregateBuffer}
+          ingestKbps={liveMetrics.hostStats?.ingest_kbps ?? null}
           runningCount={runningCount}
           totalEnabled={enabledTargets.length}
           totalDrops={totalDrops}

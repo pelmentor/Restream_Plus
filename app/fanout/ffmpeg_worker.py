@@ -55,6 +55,7 @@ from app.domain.circuit_breaker import (
 from app.domain.errors import IllegalWorkerStateTransitionError
 from app.domain.worker_state import (
     WorkerAction,
+    WorkerProgressSnapshot,
     WorkerSnapshot,
     WorkerState,
     transition,
@@ -143,6 +144,10 @@ class FFmpegWorker:
         self._last_event_at: datetime = clock()
         self._last_error: str | None = None
         self._last_progress_at_ns: int = monotonic_clock_ns()
+        # Most recent ffmpeg progress frame snapshot, surfaced via
+        # `snapshot().last_progress` for UI rendering. Cleared on each
+        # `start()` so reconnect leftovers don't bleed into a new session.
+        self._last_progress: WorkerProgressSnapshot | None = None
         self._log_ring: deque[bytes] = deque(maxlen=LOG_RING_LINES)
         self._redaction = RedactionSink(worker_url=spec.output_url)
 
@@ -170,6 +175,19 @@ class FFmpegWorker:
     def spec(self) -> WorkerSpec:
         return self._spec
 
+    @property
+    def pid(self) -> int | None:
+        """Live OS pid of the current ffmpeg subprocess, or None.
+
+        Used by the host-stats sampler to read `/proc/<pid>/stat` for
+        per-worker CPU%. Returns None when no process is currently
+        spawned (idle, between reconnects, post-stop).
+        """
+        proc = self._process
+        if proc is None:
+            return None
+        return proc.pid
+
     def snapshot(self) -> WorkerSnapshot:
         """Build a fresh `WorkerSnapshot` from current internal state.
 
@@ -183,6 +201,7 @@ class FFmpegWorker:
             last_event_at=self._last_event_at,
             last_error=self._last_error,
             breaker_failures_in_window=self._breaker.failure_count_in_window(self._clock()),
+            last_progress=self._last_progress,
         )
 
     def events(self) -> AsyncIterator[WorkerEvent]:
@@ -206,6 +225,10 @@ class FFmpegWorker:
         self._stop_requested.clear()
         self._user_reset_event.clear()
         self._started_at = self._clock()
+        # Clear any leftover progress snapshot so a freshly-started
+        # session does not surface a previous run's last bitrate while
+        # the new ffmpeg is still negotiating.
+        self._last_progress = None
         self._lifecycle_task = asyncio.create_task(
             self._lifecycle_loop(),
             name=f"ffmpeg-worker-lifecycle:{self._spec.worker_id.target_id}:{self._spec.worker_id.role.value}",
@@ -591,6 +614,18 @@ class FFmpegWorker:
         )
 
     async def _emit_progress(self, frame: ProgressFrame) -> None:
+        now = self._clock()
+        # Snapshot the progress fields for `snapshot().last_progress`
+        # BEFORE awaiting `_emit` — the assignment is atomic, and a
+        # supervisor that calls `snapshot()` between the emit and the
+        # store would otherwise see a stale value.
+        self._last_progress = WorkerProgressSnapshot(
+            bitrate_kbps=frame.bitrate_kbps,
+            fps=frame.fps,
+            drop_frames=frame.drop_frames,
+            speed=frame.speed,
+            at=now,
+        )
         await self._emit(
             WorkerProgressEvent(
                 frame=frame.frame,

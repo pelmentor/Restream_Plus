@@ -53,11 +53,18 @@ from app.fanout.event_bus import (
     BusEvent,
     DropAlertEvent,
     EventBus,
+    HostCpuByTarget,
+    HostStatsEvent,
     RunStateChangedEvent,
     TargetSnapshotEvent,
 )
 from app.fanout.ffmpeg_urls import compose_out_url
 from app.fanout.ffmpeg_worker import FFmpegWorker
+from app.fanout.host_stats import (
+    HOST_STATS_TICK_SECONDS,
+    HostStatsSampler,
+    WorkerPidProvider,
+)
 from app.fanout.process import ProcessSpawner
 from app.fanout.worker import WorkerEvent, WorkerId, WorkerSpec, WorkerStateEvent
 from app.logging_setup import CredentialRegistry
@@ -114,6 +121,8 @@ class Supervisor:
         clock: Callable[[], datetime] = _utc_now,
         monotonic_clock_ns: Callable[[], int] = time.monotonic_ns,
         worker_factory: WorkerFactory | None = None,
+        host_stats_sampler_factory: (Callable[[WorkerPidProvider], HostStatsSampler] | None) = None,
+        host_stats_tick: float = HOST_STATS_TICK_SECONDS,
     ) -> None:
         self._sessionmaker = sessionmaker
         self._key_material = key_material
@@ -123,6 +132,17 @@ class Supervisor:
         self._clock = clock
         self._monotonic_clock_ns = monotonic_clock_ns
         self._worker_factory = worker_factory or self._default_worker_factory
+        # Optional — when None, the supervisor skips the host-stats loop
+        # entirely (used by tests that don't exercise host metrics).
+        # Factory receives `self` so the sampler can enumerate worker
+        # pids via the supervisor (which IS the natural `WorkerPidProvider`
+        # — it owns `_workers`). The factory pattern avoids the
+        # construction-order chicken-and-egg of "sampler needs supervisor,
+        # supervisor needs sampler."
+        self._host_stats_sampler: HostStatsSampler | None = (
+            host_stats_sampler_factory(self) if host_stats_sampler_factory is not None else None
+        )
+        self._host_stats_tick = host_stats_tick
 
         self._run_state: RunState = RunState.OFFLINE
         # Wall-clock timestamp of the most recent `_run_state` transition.
@@ -177,10 +197,18 @@ class Supervisor:
                 self._super_tg = tg
                 heartbeat = tg.create_task(self._heartbeat_loop(), name="supervisor-heartbeat")
                 drop_alert = tg.create_task(self._drop_alert_loop(), name="supervisor-drop-alerts")
+                host_stats: asyncio.Task[None] | None = None
+                if self._host_stats_sampler is not None:
+                    host_stats = tg.create_task(
+                        self._host_stats_loop(),
+                        name="supervisor-host-stats",
+                    )
                 self._ready_event.set()
                 await self._stop_event.wait()
                 heartbeat.cancel()
                 drop_alert.cancel()
+                if host_stats is not None:
+                    host_stats.cancel()
         finally:
             self._super_tg = None
 
@@ -800,6 +828,64 @@ class Supervisor:
                     self._notify_bus_soon()
         except asyncio.CancelledError:
             raise
+
+    async def _host_stats_loop(self) -> None:
+        """Periodic CPU% + ingest sample → HostStatsEvent → bus.
+
+        Skips publishing if the sampler raises (already logged inside).
+        A persistent sampler failure does NOT crash the supervisor; the
+        feature degrades silently and the UI renders "—" for missing
+        values.
+        """
+        sampler = self._host_stats_sampler
+        if sampler is None:
+            return
+        try:
+            while True:
+                await asyncio.sleep(self._host_stats_tick)
+                if self._bus is None:
+                    continue
+                try:
+                    sample = await sampler.sample()
+                except Exception:
+                    _logger.warning("host_stats_sample_failed", exc_info=True)
+                    continue
+                self._bus.put(
+                    BusEvent(
+                        at=self._clock(),
+                        monotonic_ns=self._monotonic_clock_ns(),
+                        target_id=None,
+                        payload=HostStatsEvent(
+                            cpu_total_pct=sample.cpu_total_pct,
+                            cpu_by_target=tuple(
+                                HostCpuByTarget(worker_id=wid, cpu_pct=pct)
+                                for wid, pct in sample.cpu_by_target
+                            ),
+                            rss_bytes=sample.rss_bytes,
+                            ingest_kbps=sample.ingest_kbps,
+                        ),
+                    )
+                )
+                self._notify_bus_soon()
+        except asyncio.CancelledError:
+            raise
+
+    def worker_pids(self) -> tuple[tuple[WorkerId, int], ...]:
+        """Enumerate live `(worker_id, pid)` pairs for the host-stats
+        sampler. Implements the `WorkerPidProvider` Protocol — supervisor
+        is the natural owner of this view because it owns `_workers`.
+
+        Workers without a live process (idle, between reconnects) are
+        skipped — `_read_and_account` would just record 0% for them
+        anyway, and dropping them keeps the per-target list tight.
+        """
+        out: list[tuple[WorkerId, int]] = []
+        for worker_id, worker in self._workers.items():
+            pid = worker.pid
+            if pid is None:
+                continue
+            out.append((worker_id, pid))
+        return tuple(out)
 
     def _update_heartbeat(self) -> None:
         # Atomic int assignment under the GIL.

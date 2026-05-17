@@ -38,6 +38,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final
 
+import httpx
 import structlog
 from fastapi import FastAPI
 
@@ -60,6 +61,12 @@ from app.auth.reprompts import RepromptStore
 from app.config import AppSettings
 from app.db import create_engine, initialize_schema, make_sessionmaker
 from app.fanout.event_bus import EventBus
+from app.fanout.host_stats import (
+    HostStatsSampler,
+    NginxRtmpStatFetcher,
+    ProcfsStatReader,
+    WorkerPidProvider,
+)
 from app.fanout.process import AsyncioProcessSpawner, ProcessSpawner
 from app.fanout.supervisor import Supervisor
 from app.logging_setup import configure_logging, get_credential_registry
@@ -254,6 +261,23 @@ def _make_lifespan(
             ingest_key = await _read_ingest_key_now(sessionmaker_)
             ingest_url = f"rtmp://127.0.0.1:1935/live/{ingest_key}"
             spawner = process_spawner if process_spawner is not None else AsyncioProcessSpawner()
+            # Host-stats sampler — owns one shared httpx client kept on
+            # `app.state` so the lifespan can close it on shutdown. The
+            # factory closure binds the just-constructed supervisor as
+            # the `WorkerPidProvider` (the supervisor owns `_workers`).
+            host_stats_client = httpx.AsyncClient()
+            app.state.host_stats_client = host_stats_client
+
+            def _make_host_stats_sampler(provider: WorkerPidProvider) -> HostStatsSampler:
+                return HostStatsSampler(
+                    proc_reader=ProcfsStatReader(),
+                    ingest_fetcher=NginxRtmpStatFetcher(
+                        url="http://127.0.0.1:8888/rtmp_stat",
+                        client=host_stats_client,
+                    ),
+                    pid_provider=provider,
+                )
+
             supervisor = Supervisor(
                 sessionmaker=sessionmaker_,
                 key_material=key_material,
@@ -261,6 +285,7 @@ def _make_lifespan(
                 credential_registry=get_credential_registry(),
                 ingest_loopback_url=ingest_url,
                 worker_factory=worker_factory,
+                host_stats_sampler_factory=_make_host_stats_sampler,
             )
         app.state.supervisor = supervisor
 
@@ -317,6 +342,15 @@ def _make_lifespan(
                             asyncio.gather(*pending, return_exceptions=True),
                             timeout=LIFESPAN_SHUTDOWN_GRACE.total_seconds(),
                         )
+        # Close the host-stats shared httpx client, if one was created
+        # (test path uses `supervisor_factory` and never attaches one).
+        host_stats_client_obj: httpx.AsyncClient | None = getattr(
+            app.state, "host_stats_client", None
+        )
+        if host_stats_client_obj is not None:
+            with contextlib.suppress(Exception):
+                await host_stats_client_obj.aclose()
+
         # Engine dispose AFTER the TG closes so background DB users have
         # exited. KeyMaterial holds derived keys; the GC will reclaim
         # them on process exit. No explicit zeroization here — ADR-0006

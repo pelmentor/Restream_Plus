@@ -188,7 +188,7 @@ function visualFor(state: TargetUiStateT): VisualState {
 
 function metricsFor(target: TargetWithSnapshot): readonly Metric[] {
   const snapshot = target.snapshot;
-  const dash = "— / —";
+  const dash = "—";
   if (snapshot === null) {
     return [
       { label: t("tile.metricBitrate"), value: dash },
@@ -202,12 +202,22 @@ function metricsFor(target: TargetWithSnapshot): readonly Metric[] {
       { label: t("tile.metricDrops"), value: dash },
     ];
   }
-  // Phase 8: backend snapshots carry state + breaker counters, not raw
-  // bitrate/drops (Phase 5 supervisor projects WorkerSnapshot from
-  // progress events but the wire shape exposes state-level fields
-  // only). Surface what we have meaningfully.
+  // last_progress is the parsed ffmpeg progress frame (Phase-12 stats).
+  // Absent → "—" rather than 0, because zero implies the worker is
+  // actively pushing 0 Mbps, which would mislead the operator.
+  const progress = primary.last_progress;
+  if (progress == null) {
+    return [
+      { label: t("tile.metricBitrate"), value: dash },
+      { label: t("tile.metricDrops"), value: dash },
+    ];
+  }
   return [
-    { label: t("tile.metricWorker"), value: primary.state.toUpperCase() },
-    { label: t("tile.metricBreaker"), value: String(primary.breaker_failures_in_window) },
+    {
+      label: t("tile.metricBitrate"),
+      value: (progress.bitrate_kbps / 1000).toFixed(1),
+      unit: "Mbps",
+    },
+    { label: t("tile.metricDrops"), value: String(progress.drop_frames) },
   ];
 }

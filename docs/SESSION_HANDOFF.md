@@ -95,15 +95,23 @@ deployments to migrate.
 
 - **Remote:** `origin → https://github.com/pelmentor/Restream_Plus.git`
 - **Default branch:** `main` (created with `git init -b main`)
-- **HEAD:** latest commit — confirm with `git log --oneline -1`. The
-  ADR-0005 reconciliation lands as a single feat+test+docs commit;
-  see `git log --oneline` for the chronology. Prior milestones:
-  `cab8ecf` (post-Rule-№5-audit drift fixes — docs-only),
-  `1e65923` (Phase-11-fix-iteration docs refresh), `d65bb2e` (the
-  4 reviewer-pass CI/Docker follow-ups).
-- **CI status:** every required check green. `ci` workflow (6/6) +
-  `build-image` workflow (6/6 including `merge + sign` which
-  publishes the cosign-signed multi-arch image to GHCR).
+- **HEAD:** `4f7eb17 feat(auth): implement ADR-0005 first-boot
+  admin-password autogen` (pushed 2026-05-17, all CI green at this
+  SHA — see below). Always re-verify the actual tip with
+  `git log --oneline -1` on resume in case later commits landed.
+  Prior milestones: `cab8ecf` (post-Rule-№5-audit drift fixes —
+  docs-only), `1e65923` (Phase-11-fix-iteration docs refresh),
+  `d65bb2e` (the 4 reviewer-pass CI/Docker follow-ups).
+- **CI status at 4f7eb17:** every required check green.
+  - `ci` workflow run `25991473782` — 6/6 (`workflow-pins`,
+    `frontend`, `backend-lint`, `backend-lockfile`, `backend-test`,
+    `pr-image-smoke`).
+  - `build-image` workflow run `25991473791` — 6/6 (`preflight`,
+    `build (amd64)`, `build (arm64)`, `runtime-smoke (amd64)`,
+    `scan (amd64)`, `merge + sign` — the cosign-signed multi-arch
+    GHCR publish).
+  Always re-confirm at resume with
+  `gh run list --branch main --limit 2`.
 - **Image published:** `ghcr.io/pelmentor/restream-plus@sha256:...`
   (uncertain tag — see `release.yml` flow for the `:vX.Y.Z` path
   exercised by the next v1.0.0 tag; today's manifest is the
@@ -212,9 +220,11 @@ GHA publishes to GHCR.
 
 ## Resume checklist (read in this order)
 
-1. **This file** (`docs/SESSION_HANDOFF.md`) — orientation. The §"Phase
-   11 — what landed" and §"Phase 12 — what landed" sections at the
-   bottom carry the most recent state.
+1. **This file** (`docs/SESSION_HANDOFF.md`) — orientation. The
+   §"ADR-0005 first-boot bootstrap reconciliation" section at the
+   tail carries the most recent state (2026-05-17 — the last
+   pre-v1.0.0 ADR-vs-code drift closed). §"Phase 11 — what landed"
+   and §"Phase 12 — what landed" cover the prior milestones.
 2. **`docs/CODE_PLAN.md`** — the phased implementation plan with file
    paths and acceptance criteria. All 12 phases are now ✅ COMPLETE.
    No "next phase"; next move is operator-facing (see TL;DR at top

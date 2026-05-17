@@ -153,18 +153,23 @@ jobs:
         # registry blips.
         run: npm audit --audit-level=high || true
 
-      # Diagnostic for the cross-OS lint divergence (Phase 11 first-push
-      # fallout). Captures what typescript-eslint's project service sees
-      # for App.tsx so we can compare CI vs local resolution. The `|| true`
-      # keeps this from masking a real lint failure on the next step.
-      - name: Diagnostic — eslint print-config for App.tsx
+      # Diagnostic for the cross-OS path-alias divergence (Phase 11
+      # first-push fallout). Captures (1) what TS thinks the resolved
+      # tsconfig.app.json is, and (2) how it resolves @/lib/api — the
+      # first import that fails with TS2307 in Docker. If `paths` is
+      # missing from showConfig or the trace doesn't show paths matching,
+      # we have a smoking gun for whichever tsconfig setting got dropped.
+      - name: Diagnostic — tsc --showConfig + traceResolution for @/lib/api
         run: |
           set +e
-          npx eslint --print-config src/App.tsx 2>&1 | head -80
-          echo "---"
-          DEBUG=typescript-eslint:project-service:tsserver:info npx eslint src/App.tsx 2>&1 \
-              | grep -E "(getConfigFileNameForFile|Creating Project|Config:|projectReferences)" \
-              | head -20
+          echo "::group::tsc --showConfig -p tsconfig.app.json"
+          npx tsc -p tsconfig.app.json --showConfig 2>&1 | head -60
+          echo "::endgroup::"
+          echo "::group::tsc --traceResolution (@/ matches only)"
+          npx tsc -p tsconfig.app.json --noEmit --traceResolution 2>&1 \
+              | grep -E "(@/lib/api|paths|baseUrl|matched pattern|substitution|was successfully resolved|TS2307)" \
+              | head -40
+          echo "::endgroup::"
         continue-on-error: true
 
       - run: npm run lint

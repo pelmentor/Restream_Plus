@@ -196,12 +196,16 @@ ENV PATH=/opt/venv/bin:$PATH
 
 # PB-1: --require-hashes enforces every package + every wheel SHA-256.
 # PB-17: no --no-deps (--require-hashes implies an exhaustive closure).
-# --no-compile: skip the .pyc bytecode generation pass that pip does by
-# default. PYTHONDONTWRITEBYTECODE=1 prevents the runtime from creating
-# new pyc files, but pip's install-time compile still produces
-# `__pycache__/*.pyc` under /opt/venv which the H5 smoke check flags.
+# --no-compile: skip pip's install-time .pyc bytecode generation pass
+# (PYTHONDONTWRITEBYTECODE=1 only prevents runtime .pyc creation, not
+# install-time). Some wheels (e.g., websockets, anyio) still ship
+# pre-compiled `__pycache__/*.pyc` inside the wheel itself though, so
+# we also `find -delete` any remaining __pycache__ dirs to satisfy the
+# H5 smoke check unconditionally.
 COPY docker/requirements.hashes.lock /tmp/requirements.lock
-RUN pip install --no-cache-dir --no-compile --require-hashes -r /tmp/requirements.lock
+RUN pip install --no-cache-dir --no-compile --require-hashes -r /tmp/requirements.lock \
+ && find /opt/venv -type d -name __pycache__ -prune -exec rm -rf {} + \
+ && find /opt/venv -type f -name '*.pyc' -delete
 
 # ===========================================================================
 # Stage 4 — runtime

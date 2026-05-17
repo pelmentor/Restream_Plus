@@ -9,11 +9,18 @@ authors = [{ name = "Restream_Plus contributors" }]
 
 dependencies = [
   # HTTP + WebSocket
-  "fastapi>=0.115,<0.116",
+  # fastapi >=0.118 to allow starlette >=0.47 (older fastapi 0.115.x
+  # caps starlette<0.47 which blocks the GHSA-7f5h-v6xp-fcq8 HIGH fix).
+  # `<1` on both keeps us off the 1.0 majors until we explicitly test
+  # against them.
+  "fastapi>=0.118,<1",
+  "starlette>=0.49.1,<1",
   "uvicorn[standard]>=0.32,<0.33",
   "websockets>=13,<14",
   # Required for FastAPI's `Form(...)` parameters (nginx-rtmp webhooks).
-  "python-multipart>=0.0.18,<0.0.20",
+  # 0.0.27 ships the fix for GHSA-pp6c-gr5w-3c5g (HIGH); the old
+  # 0.0.18/19 line is below that floor.
+  "python-multipart>=0.0.27,<1",
   # Models, settings, validation
   "pydantic>=2.9,<3",
   "pydantic-settings>=2.6,<3",

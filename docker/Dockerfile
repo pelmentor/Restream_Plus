@@ -243,7 +243,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # below), netcat-openbsd (nginx readiness poll wrapper §C), tini
 # (vestigial reaper — kept for `docker exec` debugging, ~100 KB),
 # Python 3.12 is provided by the python:3.12-slim-bookworm base image
-# (under /usr/local). Apt installs only the non-Python runtime deps.
+# (under /usr/local). Apt installs only the non-Python runtime deps,
+# then runs `apt-get upgrade` to pick up Debian point-release security
+# fixes (dpkg + libc6 + libsystemd in particular — surfaced by the
+# Phase 11 grype scan as HIGH+ fixable CVEs against the base image
+# snapshot we started with).
 # hadolint ignore=DL3008,DL3015
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -258,6 +262,7 @@ RUN apt-get update \
         tzdata \
         xz-utils \
         zlib1g \
+ && apt-get upgrade -y \
  && rm -rf /usr/share/doc/ffmpeg* /usr/share/man/*/ffmpeg* \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*

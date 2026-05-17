@@ -1,0 +1,101 @@
+# .github/workflows/ci-docs.yml — docs-only-change no-op mirror of ci.yml.
+#
+# Why this file exists:
+#   `ci.yml` uses `paths-ignore` so it does NOT trigger on docs-only PRs.
+#   Branch protection on `main` requires five checks to succeed:
+#     backend-test, backend-lint, frontend, backend-lockfile, workflow-pins
+#   When `ci.yml` doesn't trigger, those checks stay in "expected/pending"
+#   forever and docs-only PRs cannot be merged.
+#
+#   GitHub matches required-status-checks by job `name:` field (not workflow
+#   path). This file defines five no-op jobs whose `name:` strings mirror
+#   the required checks. On a docs-only PR, this workflow triggers
+#   (inverse `paths:` filter), produces five passing check runs with the
+#   required names, and branch protection is satisfied without spending
+#   runner minutes on the full test suite.
+#
+#   For mixed-file PRs (some code + some docs), BOTH workflows trigger and
+#   each name produces two passing check runs — GitHub treats this as
+#   "all conclusions for a name must pass" and the gate is satisfied.
+#
+# Invariants encoded here:
+#   PA-34: the five required-check job names below MUST match the canonical
+#          list enforced by ci.yml's `workflow-pins` job. Drift between
+#          ci.yml and ci-docs.yml is rejected at CI time.
+#   PA-23: explicit, default-deny permissions at workflow level.
+#   PA-7:  ubuntu-24.04 pin (no ubuntu-latest).
+#
+# Stillborn-incident reference: the v1.0.0 ship surfaced this gap when a
+# docs-only SESSION_HANDOFF.md update couldn't satisfy branch protection.
+# See docs/SESSION_HANDOFF.md §"v1.0.0 SHIPPED" for the chronology.
+#
+# Future refactor note (not worth doing now): an alternative design is to
+# switch branch protection to require a single `ci-gate` aggregator job
+# that `needs:` all five real checks. Then only one mirror job is needed
+# in this file. Cost = a branch-protection rule change; gain = fewer
+# moving parts. Deferred because the current 1:1 mirror keeps per-check
+# granularity in the PR UI and avoids touching branch-protection settings.
+
+name: ci-docs
+
+on:
+  pull_request:
+    paths:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+      - ".gitattributes"
+  push:
+    branches: [main]
+    paths:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+      - ".gitattributes"
+
+# Distinct concurrency group prefix vs ci.yml — a mixed-file PR triggers
+# BOTH workflows and the two must not cancel each other.
+concurrency:
+  group: ci-docs-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  backend-test:
+    name: backend-test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - run: echo "Docs-only change — no-op (real backend-test runs in ci.yml on code paths)."
+
+  backend-lint:
+    name: backend-lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - run: echo "Docs-only change — no-op (real backend-lint runs in ci.yml on code paths)."
+
+  frontend:
+    name: frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - run: echo "Docs-only change — no-op (real frontend runs in ci.yml on code paths)."
+
+  backend-lockfile:
+    name: backend-lockfile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - run: echo "Docs-only change — no-op (real backend-lockfile runs in ci.yml on code paths)."
+
+  workflow-pins:
+    name: workflow-pins
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - run: echo "Docs-only change — no-op (real workflow-pins runs in ci.yml on code paths)."

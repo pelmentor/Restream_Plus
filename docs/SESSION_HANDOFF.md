@@ -4,13 +4,17 @@
 this project cold, after a context compaction or a fresh conversation.
 Read this first; everything else is reachable from here.
 
-**Last updated:** 2026-05-17 (post-Phase 12)
+**Last updated:** 2026-05-17 (post-Phase 11 first-push fix iteration)
 
 **GitHub:** https://github.com/pelmentor/Restream_Plus
-(initial commit `a100f2a` covers Phases 0–10; Phase 11 + Phase 12
-commits local-only — not yet pushed. Author identity set
-**repo-locally** to `pelmentor <cssnik2013@gmail.com>` —
-`.git/config`, not global.)
+(initial commit `a100f2a` covers Phases 0–10; Phase 11 + Phase 12 +
+the 12-round first-push fix iteration are all pushed; `main` is at
+`d65bb2e`. Every CI job is green: `ci` (workflow-pins, frontend,
+backend-lint, backend-lockfile, backend-test, pr-image-smoke) and
+`build-image` (preflight, build amd64/arm64, runtime-smoke, scan,
+merge+sign). The full pipeline produces a published, cosign-signed
+multi-arch image on GHCR. Author identity set **repo-locally** to
+`pelmentor <cssnik2013@gmail.com>` — `.git/config`, not global.)
 
 ---
 
@@ -18,50 +22,62 @@ commits local-only — not yet pushed. Author identity set
 
 Self-hosted RTMP restreamer (OBS → server → Twitch / YouTube Live / Kick /
 VK Video Live) with a web control panel, packaged as one Docker image,
-published to GHCR. **Source pushed to
-https://github.com/pelmentor/Restream_Plus** (2026-05-17 initial
-commit covers Phases 0–10; Phase 11 + Phase 12 work is local-only,
-not yet pushed). **Design complete. Phases 1–10 implemented, reviewed,
-audited, pushed to GitHub. Phase 11 (CI/CD — 3 GHA workflows + Renovate
-+ hash-pinned lockfiles + cosign-signed multi-arch GHCR publish +
-SLSA provenance + SBOM) implemented, reviewed, audited 2026-05-17.
+published to GHCR. **All 12 planned phases COMPLETE AND CI-GREEN at
+`main = d65bb2e` on https://github.com/pelmentor/Restream_Plus**:
+Phases 0–10 (design + ADRs + backend + frontend + container), Phase 11
+(CI/CD — 3 GHA workflows + Renovate + hash-pinned lockfiles +
+cosign-signed multi-arch GHCR publish + SLSA provenance + SBOM),
 Phase 12 (Ops docs — 7 operator-facing docs under `docs/ops/` +
-canonical compose.yaml + 30 invariants S-1..S-30 from SA+BA
-agency-agent synthesis) implemented, reviewed, audited 2026-05-17
-— ready to push (alongside Phase 11).** 636 backend tests still
-green (Phase 12 is pure docs, Phase 11 was pure CI/CD); ruff + ruff
-format + mypy --strict clean; frontend typecheck + lint + 9/9 vitest +
-build all clean at **214 KB gzipped vs 256 KB budget**;
-`docker/requirements.hashes.lock` installs in fresh venv with all 34
-packages hash-verified. **`docker build` runtime smoke still deferred
-— Docker not installed on dev host; first venue that will actually
-run a Docker build is the GHA workflow itself, on first push of
-`.github/workflows/`.** All 12 planned phases of `docs/CODE_PLAN.md`
-are now complete. Carryover items (the deferred follow-ups from
-each phase) are tracked in §"Phase 12 — what landed" §N and the
-phase-N memos.
+compose.yaml + 30 invariants S-1..S-30).
 
-When resuming: read §"Resume checklist" below, then push Phase 11
-+ Phase 12 commits. Next move is operator-facing — open follow-up
-items below or move toward v1.0.0 tag (which exercises the
-`release.yml` workflow + the release-checklist.md for the first
-time).
+Phase 11's first push to GitHub (2026-05-17) was the first time the
+Docker build / runtime smoke / grype scan / merge+sign pipeline had
+ever actually run — the Phase 10 design memo explicitly noted "Docker
+not installed on dev host". It exposed **12 latent issues across the
+codebase** that took 20+ push iterations to localize and fix. The full
+fix sequence is recorded below in §"Phase 11 first-push fix iteration";
+the headline finding was a `.gitignore` line `lib/` (intended for
+Python venv) silently swallowing the entire 23-file `web/src/lib/`
+frontend source tree (`@/lib/*` imports — `api.ts`, `cn.ts`, the 9 zod
+schemas, `wsReducer.ts`, etc.). Windows local-dev passed because
+`core.ignorecase=true` masked the omission and the files existed on
+disk; CI Linux didn't have them. Other fixes spanned BuildKit ARG
+shadowing, nginx 1.30.1 + module-scope fixes, s6-overlay v3 execline
++ path corrections, pip pycache cleanup, a CVE remediation pass
+(starlette 0.49 / fastapi 0.129 / python-multipart 0.0.28 /
+cryptography 46 / nginx 1.30.1 / `apt upgrade`), and a final
+deprecation-warning unmasking
+(`HTTP_422_UNPROCESSABLE_ENTITY → HTTP_422_UNPROCESSABLE_CONTENT`
+per RFC 9110, which `pyproject.toml`'s
+`filterwarnings = ["error", ...]` turned into a 500).
+
+Backend 636/636; ruff + ruff format + mypy --strict clean;
+frontend typecheck + lint + 9/9 vitest + build at ~214 KB gzipped;
+Docker amd64 + arm64 build at ~669 MB, runtime-smoke OK, grype HIGH+
+clean, merge+sign publishes to ghcr.io/pelmentor/restream-plus.
+
+When resuming: read §"Resume checklist" below. Next move is
+operator-facing — cut the first `v1.0.0` tag (which exercises the
+already-green `release.yml` workflow + the release-checklist.md
+walkthrough end-to-end for real publishing), or pick up one of the
+carryover items.
 
 ---
 
-## Repository / git state (2026-05-17, post-Phase 12)
+## Repository / git state (2026-05-17, post-Phase 11 first-push fix iteration)
 
 - **Remote:** `origin → https://github.com/pelmentor/Restream_Plus.git`
 - **Default branch:** `main` (created with `git init -b main`)
-- **Initial commit:** `a100f2a` — 261 files, Phases 0–10.
-- **Local-only since initial commit:** Phase 11 (CI/CD — 3 GHA
-  workflows + Renovate + 4 scripts + 2 hash lockfiles + Dockerfile
-  updates + Phase 11 design memo) and Phase 12 (7 ops docs +
-  `docs/ops/compose.yaml` + Phase 12 design memo + CODE_PLAN +
-  SESSION_HANDOFF + README + architecture-README updates). Neither
-  has been pushed yet. The 3 workflow files only become live after
-  the Phase 11 push; the ops docs are markdown-only and inert until
-  pushed.
+- **HEAD:** `d65bb2e` (`fix(ci, docker): apply 4 findings from
+  Phase 11 final review pass`); 26 commits ahead of the initial
+  `a100f2a` (Phases 0–10).
+- **CI status:** every required check green. `ci` workflow (6/6) +
+  `build-image` workflow (6/6 including `merge + sign` which
+  publishes the cosign-signed multi-arch image to GHCR).
+- **Image published:** `ghcr.io/pelmentor/restream-plus@sha256:...`
+  (uncertain tag — see `release.yml` flow for the `:vX.Y.Z` path
+  exercised by the next v1.0.0 tag; today's manifest is the
+  `:main`-tracking flavor from `build-image.yml`).
 - **Author identity:** `pelmentor <cssnik2013@gmail.com>` — set
   **repo-locally** in `.git/config` (NOT global). Never overwrite
   the global git config; if a teammate clones, they set their own.
@@ -204,12 +220,13 @@ what to do next without asking the user.
 
 ### Most likely "what to do next" answers
 
-a. **Push Phase 11 + Phase 12 commits to GitHub.** Both are local-only.
-   Regular `git push` (no `--force`, no `--no-verify`). The 3 workflow
-   files only become live after this push.
-b. **Cut the first `v1.0.0` tag.** First end-to-end exercise of
-   `release.yml` + `docs/ops/release-checklist.md`. Follow
-   release-checklist.md straight down — every step is testable.
+a. **Cut the first `v1.0.0` tag.** Already the natural next step —
+   `release.yml` + `release-checklist.md` walkthrough end-to-end for
+   real publishing. Today's CI green covers everything EXCEPT the
+   `release.yml` tag-triggered path (which produces immutable `:vX.Y.Z`
+   tags + cosign-signed manifest); the `build-image.yml` path that runs
+   on every push is already green and publishes a tracking-tag image.
+   Follow release-checklist.md straight down — every step is testable.
 c. **Pick up an open follow-up** from §"Phase 12 — what landed"
    bottom (especially ADR-0005 admin-bootstrap autogen drift, which
    is the only one that's an ADR-vs-code disagreement rather than a
@@ -2860,3 +2877,138 @@ triggers them sooner; logged in phase-11-design-memo.md §N):
   Doubles as the RTMP stream name. Threat model in ADR-0003.
 - **Master passphrase** — root of trust. Argon2id → root_key → HKDF
   derives `stream_key_kek` and `api_token_mac_key`.
+
+---
+
+## Phase 11 first-push fix iteration (2026-05-17)
+
+Phase 11's first push to `github.com/pelmentor/Restream_Plus` was the
+first time the Docker build + runtime smoke + grype scan + cosign
+merge+sign pipeline had ever actually run (the Phase 10 design memo
+explicitly stated "Docker not installed on dev host"). It exposed 12
+distinct latent issues. Below is the resolution log — useful for
+future debugging since the fix sequence is non-obvious.
+
+### Headline (1): the `.gitignore` swallow
+
+`.gitignore` line `lib/` (Python venv pattern, no leading `/` anchor)
+was silently matching `web/src/lib/` — the entire `@/lib/*` import
+surface of the frontend. **23 source files were never tracked by git**
+(`api.ts`, `cn.ts`, `errors.ts`, `eventBus.ts`, `queryClient.ts`,
+`wsReducer.ts`, the 9 zod schemas in `schemas/`, etc.). Local Windows
+worked because `core.ignorecase=true` masked the omission and the
+files existed on disk; CI Linux didn't have them. Decisive signal: a
+CI diagnostic step that ran `ls -la src/lib/` and got
+`No such file or directory`. Fix: anchor every name-collision-prone
+Python pattern to root (`/lib/`, `/lib64/`, `/build/`, `/dist/`,
+`/sdist/`, `/var/`) + commit the 23 missing files. Commit: `fb91866`.
+
+### Headline (2): the HTTP 422 deprecation
+
+starlette 0.49 deprecated `status.HTTP_422_UNPROCESSABLE_ENTITY` in
+favor of the RFC 9110 name `HTTP_422_UNPROCESSABLE_CONTENT`. The
+project's `pyproject.toml` has `filterwarnings = ["error", ...]`
+which promotes `DeprecationWarning` to `Exception` in tests. The
+attribute access raised → fastapi caught → returned 500. Test that
+failed: `test_rotate_passphrase_same_returns_422`. Only 422 was
+affected — 401/403/409 weren't renamed. Decisive signal: wrap
+`JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, ...)`
+in `try/except BaseException`; the print showed the deprecation
+warning's full traceback. Required local reproduction via Python 3.12
+(`py -3.12 -m venv` — Python 3.12 WAS installed; the earlier
+"Python 3.11 only" claim was wrong). Commit: `afffb2b`.
+
+### The other 10 fixes (in order discovered)
+
+1. **`editables` build dep** (`c55024c`) — hatchling's PEP 660
+   `build_editable` soft-imports `editables`; pip's
+   `--no-build-isolation -e .` failed with `ModuleNotFoundError`.
+   Added to dev deps + `[build-system.requires]`; lockfile regen.
+2. **Dockerfile global ARG shadowing BuildKit built-ins** (`26d619b`) —
+   `ARG BUILDPLATFORM` at global scope (no default) shadowed BuildKit's
+   built-in with empty string; `FROM --platform=$BUILDPLATFORM` failed
+   "invalid platform". Removed all 4 dead global ARGs.
+3. **Lockfile drift CI strip-header + `--refresh`** (`b944fb8`,
+   `3417313`) — uv pip compile's command-line in the auto-generated
+   header captures the output path; local-regen `docker/...` vs CI-regen
+   `/tmp/...` differs. Diff strips first 2 lines; also `--refresh` to
+   mirror what `scripts/regenerate-lockfile.sh` does (and the script
+   now `rm -f`s outputs first to avoid uv's preserve-existing pins).
+4. **nginx `--without-stream` removed** (`a2886ee`) — option removed
+   in nginx 1.25+. Stream module is not compiled in by default; the
+   without-flag is unrecognized.
+5. **Runtime base → `python:3.12-slim-bookworm`** (`5a78072`) — Debian
+   12's main apt repos don't ship `python3.12`. Switching the runtime
+   base provides libpython3.12 + python binary for `/opt/venv` to load.
+6. **Image-size ceiling 420 → 720 MB** (`b164337`) — Phase 10's 420 MB
+   target was speculation never validated. First real measurement was
+   669 MB; ffmpeg alone is 150-200 MB. 720 MB gives ~50 MB headroom.
+7. **nginx `--with-http_stub_status_module` + `max_streams` scope**
+   (`a2886ee` + `8e30222`) — nginx 1.26.x doesn't compile stub_status
+   in by default (needed for the loopback `/nginx_status` diagnostic).
+   And `max_streams` is a `rtmp { server { } }` directive, not
+   `application`; moved up one scope.
+8. **pip `--no-compile` + `__pycache__` cleanup** (`edaeccc` +
+   `9f9f80e`) — `PYTHONDONTWRITEBYTECODE=1` doesn't prevent pip's
+   install-time compile, and some wheels ship pre-compiled `.pyc`
+   inside. `find /opt/venv -name __pycache__ -prune -delete` after
+   install closes the H5 smoke check.
+9. **s6-rc oneshot up/down → execline** (`91a62d0`) — s6-overlay v3
+   parses oneshot `up`/`down` files as execline, not shell. Phase 10's
+   `#!/bin/sh` + `set -eu` made s6 try to exec a binary literally
+   named `set`. Wrapped the body in `/bin/sh -c "..."` execline with
+   `\$` + `\"` escapes; `down` → `/bin/true`.
+10. **s6-overlay v3 `with-contenv` path** (`7965f82`) — v3 moved
+    executables from `/usr/bin/` to `/command/`. Longrun `run`/`finish`
+    shebangs (`#!/usr/bin/with-contenv sh`) failed with "No such file";
+    fixed to `#!/command/with-contenv sh` in 3 files.
+11. **Security CVE pass** (`69d700a` + `dce1d38`) — bumped nginx
+    1.26.2 → 1.30.1 (CRITICAL CVE-2026-42945), python-multipart 0.0.19
+    → 0.0.28 (HIGH GHSA-pp6c-gr5w-3c5g), fastapi 0.115 → 0.129
+    (released starlette<0.47 cap → starlette 0.49+ for HIGH
+    GHSA-7f5h-v6xp-fcq8), cryptography 43 → 46 (HIGH
+    GHSA-r6ph-v2qm-q3c2 — quarantined dep per ADR-0006, justified by
+    HIGH). Added `apt-get upgrade -y` for Debian point-release CVEs
+    (dpkg + libc6 + libsystemd0). Image-size constraint
+    accommodating: 669 MB stays well under the 720 MB ceiling.
+12. **HTTP_422 deprecation** (`afffb2b`) — see Headline (2) above.
+
+### Final review pass (Rule №4) — 4 follow-up fixes (`d65bb2e`)
+
+1. Dockerfile `NGINX_VERSION` fallback bumped 1.26.2 → 1.30.1 to match
+   `checksums.env` (local-dev footgun: would build vulnerable nginx).
+2. Top-level Dockerfile comment updated: runtime now
+   `python:3.12-slim-bookworm`, not `debian:12-slim`.
+3. `apt-get upgrade -y --no-install-recommends` for consistency with
+   the install lines + avoid silent Recommends growth.
+4. `backend-test` declares `needs: backend-lockfile` in `ci.yml` so a
+   lockfile drift can never silently pass alongside `--no-deps -e .`.
+
+### Pattern observations (process lessons)
+
+- "Same versions same code different OS" failures should bias toward
+  filesystem/env discovery FIRST (`ls`, `git check-ignore`) before
+  diving into framework internals.
+- pytest's `filterwarnings = ["error"]` is load-bearing for security
+  but masks DeprecationWarning tracebacks behind generic 500s. Worth
+  documenting in the config that wrapping `try/except BaseException`
+  is the recommended local-debug pattern when a 500 has no traceback.
+- The Phase 10 "Docker not installed on dev host; first push is the
+  first real Docker build" deferment was honest about the risk, but
+  the realized iteration cost (20+ rounds) suggests a single
+  dev-host Docker install before Phase 11 would have caught most of
+  these locally in minutes instead of CI cycles in hours.
+
+### Carryovers from the fix iteration
+
+- `web/eslint.config.js` uses `projectService: true` (typescript-eslint
+  8.x recommended); was originally on `project: [...]`. The change
+  was applied during the lint-divergence debug and validated green.
+  No revert needed.
+- `web/tsconfig.app.json` keeps `composite: true` REMOVED; this was a
+  speculative add during debug that didn't help (and isn't needed for
+  the working setup).
+- `.github/workflows/ci.yml` `frontend` job uses `node-version: "24"`
+  (was `22`); matches the local dev host. Not load-bearing once the
+  `web/src/lib/` files exist on CI; left as 24 for consistency.
+

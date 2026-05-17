@@ -73,8 +73,13 @@ Apache-2.0. See [LICENSE](LICENSE).
 v0 — in active development. All 12 planned phases of `docs/CODE_PLAN.md`
 are complete (design, scaffold, expert review, ADRs 0001–0011, backend
 Phases 1–6, frontend Phases 7–9, container Phase 10, CI/CD Phase 11,
-ops docs Phase 12). Source for Phases 0–10 is on GitHub; Phase 11 + 12
-local-only pending push. Next move is operator-facing — open
-follow-ups in `docs/SESSION_HANDOFF.md` or cut the first `v1.0.0`
-tag (which exercises `release.yml` + `docs/ops/release-checklist.md`
-for the first time).
+ops docs Phase 12). Everything is on GitHub and every CI job is green:
+`ci` (workflow-pins, frontend, backend-lint, backend-lockfile,
+backend-test, pr-image-smoke) and `build-image` (preflight, build
+amd64/arm64, runtime-smoke, scan, merge+sign — the publish step).
+Phase 11 first-push exposed 12 latent issues across the codebase
+(documented in `docs/SESSION_HANDOFF.md` §"Phase 11 first-push fix
+iteration"), all resolved. Next move is operator-facing — open
+follow-ups in `docs/SESSION_HANDOFF.md` or cut the first `v1.0.0` tag
+(which exercises the cosign-signed `release.yml` publish path through
+the same `release-checklist.md` walkthrough).

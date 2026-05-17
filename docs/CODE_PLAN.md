@@ -784,3 +784,53 @@ After completing each phase:
 Do **not** declare the work complete until reviewers have signed
 off. Do **not** skip the reviewer when a phase touches auth, crypto,
 or a network surface.
+
+---
+
+## Phase 11 first-push fix iteration — ✅ COMPLETE 2026-05-17
+
+**Not a planned phase.** Phase 11's first push to `origin/main` was
+the first time the Docker build + smoke + scan + merge+sign pipeline
+had ever actually run (Phase 10 design memo: "Docker not installed on
+dev host"). It exposed 12 distinct latent issues across the codebase
+plus 4 reviewer-flagged follow-ups in the final pass. Full per-issue
+record + commit references are in `docs/SESSION_HANDOFF.md`
+§"Phase 11 first-push fix iteration".
+
+**Headline finding:** `.gitignore` line `lib/` (Python-venv pattern,
+unanchored) was silently matching `web/src/lib/` — the entire 23-file
+`@/lib/*` import surface of the frontend was never tracked by git.
+Windows local-dev passed because `core.ignorecase=true` masked the
+omission and the files existed on disk; CI Linux didn't have them.
+
+**Other fixes (compressed list):**
+- editables build dep, BuildKit ARG shadowing, lockfile drift CI
+  strip-header + `--refresh`, nginx `--without-stream` removed,
+  runtime base → `python:3.12-slim-bookworm`, nginx
+  `--with-http_stub_status_module` + `max_streams` scope, pip
+  `--no-compile` + `__pycache__` cleanup, s6-rc oneshot up/down
+  execline format, s6-overlay v3 `with-contenv` path → `/command/`,
+  full CVE remediation (nginx 1.30.1, fastapi 0.129, starlette
+  0.49.3, python-multipart 0.0.28, cryptography 46.0.7,
+  `apt-get upgrade -y --no-install-recommends`), image-size ceiling
+  420 → 720 MB (Phase 10 number was speculation), and the actual
+  test-suite root cause: `HTTP_422_UNPROCESSABLE_ENTITY` deprecated
+  in starlette 0.49 → renamed to `HTTP_422_UNPROCESSABLE_CONTENT`
+  per RFC 9110; pyproject's `filterwarnings = ["error"]` promoted the
+  DeprecationWarning to a 500.
+
+**Final state at `main = d65bb2e`:**
+- CI workflow: 6/6 green (workflow-pins, frontend, backend-lint,
+  backend-lockfile, backend-test, pr-image-smoke).
+- build-image workflow: 6/6 green including `merge + sign` which
+  publishes the cosign-signed multi-arch image to GHCR.
+
+**Process lesson:** the Phase 10 "first venue that will actually run
+Docker is the GHA workflow" deferment was honest about the risk but
+realized iteration cost was 20+ rounds. Future projects: install
+Docker on the dev host before the CI phase.
+
+**Next:** the only thing the green CI does NOT yet exercise is the
+`release.yml` tag-triggered path (`:vX.Y.Z` immutable tags + cosign
+manifest). That happens on the first `v1.0.0` tag — walk
+`docs/ops/release-checklist.md` straight down.

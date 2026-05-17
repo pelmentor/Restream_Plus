@@ -198,10 +198,17 @@ RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements.lock
 
 # ===========================================================================
 # Stage 4 — runtime
-# debian:12-slim base + apt-only runtime deps + COPYed artifacts.
+# python:3.12-slim-bookworm (debian:12-slim + libpython3.12 already on
+# system) + apt-only runtime deps + COPYed artifacts. We need
+# libpython3.12.so.1.0 for the /opt/venv binaries to load — Debian 12's
+# main apt repos do NOT ship a `python3.12` package (only 3.11), so using
+# debian:12-slim and `apt-get install python3.12` would fail with
+# `Unable to locate package python3.12`. The python:3.12-slim-bookworm
+# image is built on debian:12-slim with python 3.12 pre-installed under
+# /usr/local — matches the backend-builder stage's interpreter.
 # Final image target: ≤400 MB uncompressed (CI fails at 420 MB per I-B3).
 # ===========================================================================
-FROM debian:12-slim AS runtime
+FROM python:3.12-slim-bookworm AS runtime
 
 ARG S6_OVERLAY_VERSION
 ARG S6_OVERLAY_NOARCH_SHA256
@@ -220,7 +227,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # (Python tz-aware datetime in /api/about), libcap2-bin (setcap step
 # below), netcat-openbsd (nginx readiness poll wrapper §C), tini
 # (vestigial reaper — kept for `docker exec` debugging, ~100 KB),
-# Python 3.12 runtime (matches the backend-builder's interpreter).
+# Python 3.12 is provided by the python:3.12-slim-bookworm base image
+# (under /usr/local). Apt installs only the non-Python runtime deps.
 # hadolint ignore=DL3008,DL3015
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -231,7 +239,6 @@ RUN apt-get update \
         libpcre3 \
         libssl3 \
         netcat-openbsd \
-        python3.12 \
         tini \
         tzdata \
         xz-utils \

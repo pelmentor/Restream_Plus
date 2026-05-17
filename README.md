@@ -70,5 +70,11 @@ Apache-2.0. See [LICENSE](LICENSE).
 
 ## Status
 
-v0 — in active development. The architecture documents are stable;
-the code is being written against them.
+v0 — in active development. All 12 planned phases of `docs/CODE_PLAN.md`
+are complete (design, scaffold, expert review, ADRs 0001–0011, backend
+Phases 1–6, frontend Phases 7–9, container Phase 10, CI/CD Phase 11,
+ops docs Phase 12). Source for Phases 0–10 is on GitHub; Phase 11 + 12
+local-only pending push. Next move is operator-facing — open
+follow-ups in `docs/SESSION_HANDOFF.md` or cut the first `v1.0.0`
+tag (which exercises `release.yml` + `docs/ops/release-checklist.md`
+for the first time).

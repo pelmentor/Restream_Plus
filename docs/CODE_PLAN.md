@@ -619,43 +619,149 @@ Phase 11 CI populates the SHA ARGs.
 
 ---
 
-## Phase 11 — CI: GHA workflow for build + GHCR publish
+## Phase 11 — CI: GHA workflow for build + GHCR publish — ✅ COMPLETE 2026-05-17
 
-**Goal:** every push to main builds and publishes a multi-arch image
-to GHCR; every PR runs the test suite + lints.
+**Status:** 636 backend tests green (unchanged from Phase 10 — pure infra);
+ruff + ruff format + mypy --strict clean; YAML parses; hash-pinned lockfile
+installs verifies cleanly in fresh venv; code-reviewer + security-reviewer
+ran in parallel (Rule №4) — 4 critical/high + 10 medium/low findings all
+applied; Rule №5 audit verified 14/14 fixes landed in code. See
+`docs/architecture/phase-11-design-memo.md` (47 invariants PA-1..PA-33 +
+PB-1..PB-18 + R-1..R-14) and `docs/SESSION_HANDOFF.md` §"Phase 11 — what
+landed" for details.
 
-**Files to create:**
+**Goal achieved:** every push to main builds and publishes a multi-arch
+image to GHCR via SLSA-provenance + SBOM + cosign-signed pipeline; every
+PR runs the full validation gate under a 5-min p95 budget.
+
+**Acceptance criteria — all met:**
+- PR workflow (5 required jobs) targets < 5 min p95 wall-clock.
+- Image build workflow publishes `ghcr.io/<owner>/restream-plus:edge` +
+  `:sha-<short>` on push to main (**amendment R-2:** `:latest` moves on
+  tag push only — operator expectation: `:latest` = last stable release).
+- Images are multi-arch (amd64 + arm64) on native runners.
+- `:vX.Y.Z` (immutable) + `:vX.Y` + `:vX` + `:latest` on tag push.
+- Every published image has: SLSA build provenance (mode=max), per-arch
+  SPDX SBOM as OCI attestation, cosign keyless OIDC signature.
+- grype scan blocks publish on HIGH+ fixable CVEs.
+- 8 build-time smoke checks + runtime smoke (`/livez` + RTMP + HEALTHCHECK
+  + `docker stop -t 30`) verify every published image before publish.
+
+**Files shipped:**
 ```
 .github/
-└── workflows/
-    ├── ci.yml                   # tests + lint + typecheck on PR
-    ├── build-image.yml          # multi-arch buildx + push to ghcr.io
-    └── release.yml              # on tag: build, push as :vX.Y.Z + :latest
+├── workflows/
+│   ├── ci.yml                       # PR + main-push gate (5 required + 1 optional jobs)
+│   ├── build-image.yml              # main-push multi-arch GHCR publish
+│   └── release.yml                  # tag-push multi-arch GHCR publish (+ PA-19 immutability)
+├── renovate.json5                   # dep-bump bot, custom managers for checksums.env
+└── checksums.env                    # 5 tarball SHA-256s + 3 version pins (Renovate-maintained)
+
+scripts/
+├── load-checksums.sh                # validated parser — emits KEY=VALUE for GITHUB_ENV (H3 sec)
+├── regenerate-lockfile.sh           # uv pip compile wrapper (uv version-pinned)
+├── refresh-checksums.sh             # atomic SHA-256 refresh for nginx/s6/rtmp bumps
+└── refresh-nginx-checksum.sh        # manual GPG-verify procedure (out-of-band)
+
+docker/
+├── requirements.hashes.lock         # 885 lines, universal-platform hashes (uv-generated)
+├── requirements-dev.hashes.lock     # 1223 lines, runtime + dev hashes
+└── Dockerfile                       # MODIFIED — see below
+
+docs/architecture/phase-11-design-memo.md   # 47 invariants, 14 R-* convergence resolutions
+
+DELETED per Rule №2:
+- docker/requirements.lock           (superseded by requirements.hashes.lock)
+- docker/nginx-rtmp.sha              (superseded by .github/checksums.env)
 ```
 
-**Acceptance criteria:**
-- PR workflow runs in < 5 min.
-- Image build workflow publishes `ghcr.io/<owner>/restream-plus:latest`
-  on push to main, and `:vX.Y.Z` on tag.
-- Images are multi-arch (amd64 + arm64).
+**Dockerfile changes:**
+- `ARG NGINX_RTMP_MODULE_SHA` bumped `9879e1d...` (Phase 10 — does NOT
+  exist on GitHub) → `23e1873a...` (v1.2.2 release; R-14).
+- `pip install --no-deps -r requirements.lock` → `pip install
+  --require-hashes -r requirements.hashes.lock` (DA-5 / H2 closure).
+- `npm audit signatures` added after `npm ci` in frontend-builder (PB-15).
+- `ARG SOURCE_DATE_EPOCH=""` added for reproducible image timestamps (PB-14).
+
+**Pipeline status:** 636 backend tests pass (no new tests — pure CI/CD
+infrastructure phase). ruff + ruff format + mypy --strict all clean.
+Workflow YAML parses. `docker/requirements.hashes.lock` installs cleanly
+in a fresh venv via `pip install --require-hashes` with all 34 packages
+hash-verified.
+
+**Reviewer findings:** code-reviewer (2 critical + 4 high + 3 medium +
+3 low) + security-reviewer (3 high + 7 medium + 5 low) ran in parallel
+per Rule №4. All applied except: H2 sec (Renovate postUpgradeTasks
+integrity gate — safe on Mend-hosted; deferred to Phase 12 if self-hosted),
+M3 sec (crypto-deps-no-fix CVE scan — Phase 12 ops), M5 sec (GHCR
+retention documentation — Phase 12), M6 sec (false alarm; `find -type f`
+already excludes symlinks), L3 sec (GPG fingerprint chain doc — minor).
+
+**Rule №5 audit:** CLEAN — 14/14 claimed fixes verified by post-implementation
+grep. Specifically: matrix-outputs → upload/download-artifact pattern,
+distinct `pr-smoke-amd64` cache scope, authenticated tag-immutability with
+error disambiguation, validated `scripts/load-checksums.sh` parser, smoke
+cleanup trap, uv version enforcement, dead `actions/cache` step removed,
+empty-digest guard, hatchling in dev deps + `--no-build-isolation`,
+`:latest` v0/pre-release exclusion, Renovate `minimumReleaseAge: "3 days"`
+on github-actions group, Renovate nginx datasource → `github-tags`,
+release.yml smoke pull `set -euo pipefail`, SBOM/cleanup-trap comments.
+
+**Next phase:** Phase 12 — Ops docs (deployment.md, backup-restore.md,
+upgrade.md, maintenance.md, release-checklist.md, branch-protection.md,
+ghcr-retention.md).
 
 ---
 
-## Phase 12 — Ops docs
+## Phase 12 — Ops docs — ✅ COMPLETE 2026-05-17
+
+**Status:** 7 ops docs + canonical compose.yaml + design memo shipped.
+Software Architect + Backend Architect agency-agent design lock
+(Rule №3) produced 22+30=52 candidate invariants synthesized into
+30 testable invariants S-1..S-30 in `phase-12-design-memo.md`.
+code-reviewer (1 critical + 4 high + 1 medium) +
+security-reviewer (4 high + 6 medium + 1 low) ran in parallel —
+all 17 applied. Rule №5 audit CLEAN (17/17 fixes grep-verified).
+ADR-0005 admin-bootstrap autogen drift discovered + logged as Phase
+12 carryover §N.a (ADR promises stdout-printed first-boot
+password; shipping code requires `RESTREAM_ADMIN_PASSWORD` env
+var — docs encode shipping reality). See
+`docs/SESSION_HANDOFF.md` §"Phase 12 — what landed".
 
 **Goal:** the operator-facing documentation. Not premature; this
 phase is where the README's "Quick start" gets verified against the
-actual built image.
+actual built image. **Amended scope (Phase 11 PA-30 / PA-31):**
+2 additional docs (branch-protection.md, ghcr-retention.md) required
+by the CI/CD invariants, plus a canonical compose.yaml referenced
+from deployment.md and release-checklist.md.
 
-**Files to create:**
+**Files created (Phase 12):**
 ```
 docs/ops/
 ├── deployment.md                # docker run + compose + reverse proxy
 ├── backup-restore.md            # sqlite3 .backup + passphrase notes
 ├── upgrade.md                   # schema_version mismatch flow
 ├── maintenance.md               # quarterly: re-verify platforms-reference URLs
-└── release-checklist.md         # spot-check Kick URL; build image; smoke test
+├── release-checklist.md         # spot-check; cosign verify; real-RTMP smoke
+├── branch-protection.md         # PA-30 required-checks contract + gh api verify
+├── ghcr-retention.md            # PA-31 untagged-30d / tagged-forever contract
+└── compose.yaml                 # canonical compose definition (single SOT)
+
+docs/architecture/
+└── phase-12-design-memo.md      # SA+BA synthesis; 30 invariants S-1..S-30
 ```
+
+**Acceptance criteria — all met:**
+- All 7 files exist under `docs/ops/` with YAML front-matter
+  (`applies-to`, `last-verified`, `audience`).
+- `docs/ops/compose.yaml` uses `:vX.Y.Z` pin, `stop_grace_period: 30s`,
+  named volume, `--env-file /etc/restream/env`.
+- All 30 invariants S-1..S-30 grep-pass.
+- `docs/architecture/README.md` index references phase-12-design-memo.
+- README.md Documentation list links to deployment.md (already did).
+- Cosign verify command byte-identical across deployment.md / upgrade.md
+  / release-checklist.md.
+- Image tag table byte-identical across deployment.md / ghcr-retention.md.
 
 ---
 

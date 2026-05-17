@@ -63,6 +63,23 @@ phase's surface.
   notification-fd contract, uid 10001, CAP_NET_BIND_SERVICE, and the
   app/main.py + app/config.py tweaks for s6 readiness + production
   healthz_check_nginx default).
+- [phase-11-design-memo.md](phase-11-design-memo.md) — CI/CD
+  (3 GHA workflows + Renovate + hash-pinned pip lockfiles + cosign
+  + SLSA provenance + SBOM; 47 locked invariants PA-1..PA-33 +
+  PB-1..PB-18 + 14 R-* convergence resolutions covering workflow
+  topology, multi-arch native arm64 runners, tag immutability,
+  shell-injection-safe checksum loading, `pip --require-hashes`,
+  Renovate cross-file atomic bumps for `.github/checksums.env`,
+  `:latest` = last stable release semantic).
+- [phase-12-design-memo.md](phase-12-design-memo.md) — Ops docs
+  (7 operator-facing files under `docs/ops/` plus a canonical
+  `compose.yaml`; 30 locked invariants S-1..S-30 covering doc
+  front-matter, single-source-of-truth tripwires, `docker stop -t 30`
+  enforcement, cosign-verify byte-identity across docs, secret-handling
+  rules, backup primitive choice, schema-version contract, log-sharing
+  redaction, tag-pinning policy, branch protection + GHCR retention
+  contracts; documents the ADR-0005 admin-bootstrap autogen drift as
+  Phase 12 carryover §N.a).
 
 ## Rules of engagement for adding ADRs
 

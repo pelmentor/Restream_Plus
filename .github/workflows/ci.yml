@@ -16,6 +16,11 @@
 #   PA-23: explicit, default-deny permissions at workflow level.
 #   PA-24: all third-party actions pinned by 40-char commit SHA.
 #   PA-33: 5-min PR critical-path budget.
+#   PA-34: ci.yml and ci-docs.yml MUST mirror the same required-check job
+#          names (backend-test, backend-lint, frontend, backend-lockfile,
+#          workflow-pins). Drift fails workflow-pins immediately. Motivation:
+#          the v1.0.0 ship surfaced that docs-only PRs cannot satisfy
+#          branch protection when only ci.yml exists with `paths-ignore`.
 #   PB-1:  --require-hashes is the only pip install mode for runtime+dev.
 #   PB-7:  backend-lockfile fails on drift between pyproject.toml and lockfiles.
 #   L5 sec: `pip install -e .` uses --no-build-isolation so hatchling
@@ -260,6 +265,67 @@ jobs:
           set -euo pipefail
           if grep -rEn 'runs-on:[[:space:]]*ubuntu-latest' .github/workflows/; then
               echo "::error::Use ubuntu-24.04 (or ubuntu-24.04-arm), not ubuntu-latest"
+              exit 1
+          fi
+
+      - name: PA-34 — required-check name parity between ci.yml and ci-docs.yml
+        # Branch protection on `main` requires a fixed set of status checks
+        # whose names must match jobs in BOTH workflow files. ci.yml runs
+        # the real work on code paths; ci-docs.yml emits no-op successes
+        # on docs-only paths so docs PRs still satisfy branch protection.
+        #
+        # This check derives the required-check set from the workflow files
+        # themselves (NOT a hardcoded list — that was an earlier draft and
+        # introduced its own silent-drift surface). It extracts every
+        # job-level `name:` value from each workflow, removes the known
+        # informational jobs in ci.yml (currently just pr-image-smoke,
+        # which is explicitly NOT a required status check per its header
+        # comment), and asserts the two sets are identical.
+        #
+        # Two failure modes this catches:
+        #   1. Rename a required check in one file, forget the other → set
+        #      diff fires, docs-only PRs cannot silently break.
+        #   2. Add a NEW required-check job to ci.yml + branch protection
+        #      but forget ci-docs.yml → set diff fires on the same PR.
+        #
+        # Adding a non-required informational job to ci.yml: extend
+        # INFO_ONLY_JOBS below. The branch protection rule itself (third
+        # leg) remains a human concern — drift between branch protection
+        # and the workflow files is NOT auto-detected. See PA-30 docs
+        # (docs/ops/branch-protection.md) for the authoritative list.
+        run: |
+          set -euo pipefail
+
+          # Job names in ci.yml that are NOT required status checks and so
+          # have no docs-only mirror. Currently just pr-image-smoke (per
+          # the "INFORMATIONAL — not a required status check" header on
+          # that job above). One name per line.
+          INFO_ONLY_JOBS=$'pr-image-smoke'
+
+          # Extract job-level `name:` values. Convention in both workflows
+          # is 4-space indent for job-level fields. Workflow-level `name:`
+          # is column 0; step-level uses `      - name:` (6sp + dash);
+          # nested keys like `with: { name: ... }` are at ≥10sp. The
+          # `^    name: <token>$` anchor selects only job-level entries.
+          extract_job_names() {
+              grep -E '^    name: [A-Za-z][A-Za-z0-9-]*[[:space:]]*$' "$1" \
+                  | awk '{print $2}' \
+                  | sort -u
+          }
+
+          ci_names=$(extract_job_names .github/workflows/ci.yml \
+              | grep -vxF -- "${INFO_ONLY_JOBS}")
+          docs_names=$(extract_job_names .github/workflows/ci-docs.yml)
+
+          if [ "${ci_names}" != "${docs_names}" ]; then
+              echo "::error::PA-34: required-check job-name sets differ between ci.yml and ci-docs.yml"
+              echo "::error::ci.yml required-check names (excluding INFO_ONLY_JOBS):"
+              echo "${ci_names}" | sed 's/^/::error::  /'
+              echo "::error::ci-docs.yml job names:"
+              echo "${docs_names}" | sed 's/^/::error::  /'
+              echo "::error::Either add the missing job to the other file, or"
+              echo "::error::extend INFO_ONLY_JOBS in this step (ci.yml) for new"
+              echo "::error::informational-only jobs."
               exit 1
           fi
 

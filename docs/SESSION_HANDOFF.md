@@ -4,7 +4,7 @@
 this project cold, after a context compaction or a fresh conversation.
 Read this first; everything else is reachable from here.
 
-**Last updated:** 2026-05-17 (v1.0.0 tag-push attempted — STILLBORN on a latent release.yml preflight bug; tag still in place but no GHCR artifact published, recoverable. See §"v1.0.0 tag-push attempt" tail section.)
+**Last updated:** 2026-05-17 — **v1.0.0 SHIPPED.** Image at `ghcr.io/pelmentor/restream-plus:v1.0.0` (digest `sha256:8e80d783…`), cosign-verified, GitHub Release at https://github.com/pelmentor/Restream_Plus/releases/tag/v1.0.0. Took 3 stillborn iterations to surface latent `release.yml` drift; PRs #2/#3/#4 fixed each in turn. HEAD = `5399fb5`. The stillborn tail section §"v1.0.0 tag-push attempt" is preserved as historical record of the diagnosis; for current state see the post-ship tail section §"v1.0.0 SHIPPED" appended after it. Remaining items are user-actions, no code work: orphan `:1.0.0`/`:1.0`/`:1`/`:sha-ffb1398` GHCR tag cleanup, GHCR retention via UI, Kick browser spot-check, real-RTMP smoke, announce.
 
 **GitHub:** https://github.com/pelmentor/Restream_Plus
 (initial commit `a100f2a` covers Phases 0–10; Phase 11 + Phase 12 +
@@ -78,45 +78,67 @@ frontend typecheck + lint + 9/9 vitest + build at ~214 KB gzipped;
 Docker amd64 + arm64 build at ~669 MB, runtime-smoke OK, grype HIGH+
 clean, merge+sign publishes to ghcr.io/pelmentor/restream-plus.
 
-When resuming: read §"Resume checklist" below. The v1.0.0 cut
-was ATTEMPTED on 2026-05-17 — release-prep PR #1 merged, branch
-protection applied, `git tag v1.0.0` + `git push origin v1.0.0`
-fired — and `release.yml` run `25992247118` FAILED at the
-preflight job. Root cause is a latent shell-rc-capture bug in
-`.github/workflows/release.yml` lines 107–114 (the `|| true` on
-the `docker manifest inspect` command substitution makes the
-subshell always exit 0; `inspect_rc=$?` then captures the
-ASSIGNMENT's exit code (always 0); the `[ "${inspect_rc}" -eq 0 ]`
-check is therefore ALWAYS true — preflight reports "tag exists
-on GHCR" regardless of reality). Never exercised before today
-because no `vX.Y.Z` had ever been cut. GHCR has NO `:v1.0.0`
-artifact (preflight failed before build/scan/smoke/sign).
-GitHub release was NEVER created (`gh release create` never ran).
-The release is recoverable. See §"v1.0.0 tag-push attempt
-(2026-05-17 — STILLBORN; preflight bug)" tail section for the
-exact bug location, the patch shape, and the post-fix decision
-(tag-delete-and-recut vs cut-v1.0.1). Release notes draft sits
-at `docs/releases/v1.0.0.md` (correct + ships verbatim once the
-preflight fix lands and tag is re-cut).
+When resuming: **v1.0.0 IS LIVE — DO NOT RE-SHIP.**
+Image at `ghcr.io/pelmentor/restream-plus:v1.0.0` (digest
+`sha256:8e80d783592344be2a05a892568d4ee4ceace577b13b2c4688ff7eb1d918d44c`),
+cosign-keyless-signed, multi-arch (amd64 + arm64); GitHub Release
+published at https://github.com/pelmentor/Restream_Plus/releases/tag/v1.0.0;
+main HEAD = `5399fb5`. The ship took THREE stillborn-and-recut
+iterations to surface latent `release.yml` drift items (the workflow
+had never been end-to-end exercised before today). PRs #2 (`961b8f5`
+— preflight rc-capture), #3 (`ffb1398` — H1 image-size + 4 reviewer
+drifts), and #4 (`5399fb5` — metadata-action v-prefix + 2 reviewer
+drifts) fixed each in turn. Tail section §"v1.0.0 SHIPPED" has the
+full chronology, lessons learned, and the remaining USER-action
+items (orphan GHCR tag cleanup, GHCR retention via UI, Kick browser
+spot-check, real-RTMP smoke, announce — none block v1.0.0 being
+live). The earlier tail section §"v1.0.0 tag-push attempt
+(2026-05-17 — STILLBORN; preflight bug)" is preserved as historical
+record of the diagnosis only; do NOT act on its "DECISION REQUIRED"
+prompts — they were resolved.
+
+**Branch-protection-vs-docs-only structural gap — fix in flight as
+PR #5 on branch `fix/ci-docs-only-required-checks`.** Adds
+`.github/workflows/ci-docs.yml` (no-op mirror of the 5 required-check
+job names, triggered on the inverse `paths:` filter) and a new PA-34
+invariant in `ci.yml`'s `workflow-pins` job that asserts both
+workflow files declare the same required-check job-name set (sorted
+set-diff, not hardcoded list — the hardcoded variant was discarded
+on architect feedback because adding a 6th required check would
+silently break ci-docs.yml mirroring). PA-34 also added to
+`docs/architecture/phase-11-design-memo.md` canonical invariants
+list. This PR's own diff is mixed-path (workflow file + handoff
+doc), so both ci.yml and ci-docs.yml will trigger on the PR and all
+5 required checks pass cleanly the first time. Once merged, future
+docs-only PRs satisfy branch protection via ci-docs.yml's no-op
+echos without spending real CI minutes on the full test suite.
+See the PR description for design rationale and the two architect
+consults that drove it.
 
 ---
 
-## Repository / git state (2026-05-17, post-v1.0.0-tag-push-attempt)
+## Repository / git state (2026-05-17, post-v1.0.0-SHIPPED)
 
 - **Remote:** `origin → https://github.com/pelmentor/Restream_Plus.git`
 - **Default branch:** `main` (created with `git init -b main`)
-- **HEAD:** `2ef1b06 docs(release): prep v1.0.0 — release notes +
-  applies-to bumps (#1)` (pushed 2026-05-17 as a squash-merge of
-  release-prep PR #1). Always re-verify with
+- **HEAD:** `5399fb5 fix(ci, docs): release.yml metadata-action —
+  restore v-prefix on semver tags (#4)` (pushed 2026-05-17 as a
+  squash-merge of PR #4). Always re-verify with
   `git log --oneline -1` on resume.
-  Prior milestones: `4f7eb17` (ADR-0005 first-boot autogen),
-  `0f692d5` (handoff doc pin), `cab8ecf` (post-Rule-№5-audit drift
-  fixes), `1e65923` (Phase-11-fix-iteration docs refresh).
-- **Tags:** `v1.0.0` exists at `2ef1b06`. **STILLBORN — release.yml
-  failed at preflight; no GHCR artifact published; no GitHub release
-  created.** Decision pending: tag-delete-and-recut after preflight
-  bug fix (Rule №1) vs cut-v1.0.1. See §"v1.0.0 tag-push attempt"
-  tail section.
+  Recent milestones:
+  - `5399fb5` — PR #4 (metadata-action v-prefix + design-memo +
+    release-notes alignment) — current HEAD
+  - `ffb1398` — PR #3 (H1 720 MB + H2/H6/H7 annotations +
+    scan empty-digest guard)
+  - `961b8f5` — PR #2 (release.yml preflight rc-capture fix)
+  - `2ef1b06` — PR #1 (release-prep — release notes, applies-to bumps)
+  - `4f7eb17` — ADR-0005 first-boot autogen
+- **Tags:** `v1.0.0` exists at `5399fb5` and is **LIVE** — image
+  published, signed, GitHub Release created. `release.yml` run
+  `25993208395` ran fully green: preflight → build amd64+arm64 →
+  runtime-smoke → scan → merge+sign. (Earlier failed runs at
+  `2ef1b06`/`961b8f5`/`ffb1398` are historical; tag was deleted
+  and recut at each fix.) Do NOT re-cut.
 - **Branch protection on `main`:** APPLIED on 2026-05-17 per
   `docs/ops/branch-protection.md`. Verified state:
   `required_status_checks.contexts` = `[backend-test, backend-lint,
@@ -134,33 +156,42 @@ preflight fix lands and tag is re-cut).
   docs-only paths, (ii) admin-bypass docs PRs via UI (requires
   toggling enforce_admins temporarily), or (iii) bundle the
   SESSION_HANDOFF.md update inside the next non-docs PR's diff.
-- **CI status at 4f7eb17 (parent of `2ef1b06`):** every required check green.
-  - `ci` workflow run `25991473782` — 6/6 (`workflow-pins`,
-    `frontend`, `backend-lint`, `backend-lockfile`, `backend-test`,
-    `pr-image-smoke`).
-  - `build-image` workflow run `25991473791` — 6/6 (`preflight`,
-    `build (amd64)`, `build (arm64)`, `runtime-smoke (amd64)`,
-    `scan (amd64)`, `merge + sign` — the cosign-signed multi-arch
-    GHCR publish).
-- **CI status at `2ef1b06` (current HEAD):** `build-image` run
-  `25991606666` — 6/6 success (no code change vs `4f7eb17`, image is
-  byte-identical). `ci` workflow did NOT trigger on `2ef1b06` (docs-only
-  squash merge — paths-ignore correctly skipped it).
-- **release.yml run at `2ef1b06` tag-push:** run `25992247118` —
-  FAILED at preflight (bug, see tail section); all downstream jobs
-  skipped. **NOTHING was published to GHCR.**
-  Always re-confirm at resume with
-  `gh run list --repo pelmentor/Restream_Plus --branch main --limit 3`
-  and `gh run list --repo pelmentor/Restream_Plus --workflow release.yml --limit 2`.
+- **CI status at current HEAD `5399fb5`:** every required check green
+  on PR #4 (`backend-test`, `backend-lint`, `frontend`,
+  `backend-lockfile`, `workflow-pins` + informational `pr-image-smoke`).
+  Re-confirm at resume with
+  `gh run list --repo pelmentor/Restream_Plus --branch main --limit 5`.
+- **release.yml runs (chronological):**
+  - `25992247118` at `2ef1b06` — FAILED at preflight (stillborn #1
+    — rc-capture bug). Historical.
+  - `25992695313` at `961b8f5` — FAILED at build-time smoke H1
+    (stillborn #2 — stale 420 MB ceiling). Historical.
+  - `25992875522` at `ffb1398` — went FULLY GREEN but published
+    wrong-named tags `:1.0.0`/`:1.0`/`:1`/`:sha-ffb1398` instead of
+    `:vX.Y.Z` (stillborn #3 — metadata-action v-prefix bug).
+    Orphan tag versions still on GHCR — see remaining USER-actions
+    in §"v1.0.0 SHIPPED" tail.
+  - `25993208395` at `5399fb5` — fully green AND published canonical
+    `:v1.0.0` / `:v1.0` / `:v1` / `:latest` / `:sha-5399fb5`.
+    **This is the live release.**
 - **Local tooling:** cosign 3.0.6 installed via winget on 2026-05-17,
-  alias `cosign-windows-amd64.exe`. Use this when running
-  release-checklist step 11 (cosign verify against local clock).
-  Verify with `cosign-windows-amd64 version`.
-- **Image published:** at `4f7eb17` head, build-image.yml previously
-  published `ghcr.io/pelmentor/restream-plus@sha256:...` tagged
-  `:edge` + `:sha-<short>`. At `2ef1b06`, build-image.yml re-published
-  the same byte-identical image with updated `:edge`/`:sha-2ef1b06`.
-  No `:vX.Y.Z` tag exists on GHCR (release.yml never got past preflight).
+  alias `cosign-windows-amd64.exe`. Use this for release-checklist
+  step 11. NOTE: on Windows dev hosts with `~/.docker/config.json`
+  declaring a credential helper that isn't on PATH (Docker Desktop
+  not running), set `DOCKER_CONFIG=/tmp/empty-docker-config` (any
+  empty writable dir) when running cosign against public GHCR images
+  to bypass the helper. For private/authenticated reads, point
+  `DOCKER_CONFIG` at a writable scratch dir and run
+  `cosign-windows-amd64 login ghcr.io -u pelmentor -p "$(gh auth token)"`
+  first.
+- **Image published:** `ghcr.io/pelmentor/restream-plus:v1.0.0`
+  (digest `sha256:8e80d783592344be2a05a892568d4ee4ceace577b13b2c4688ff7eb1d918d44c`),
+  cosign-keyless-signed, multi-arch (amd64 + arm64). Aliases:
+  `:v1.0`, `:v1`, `:latest`, `:sha-5399fb5`. `:edge` is the rolling
+  main-branch tag (separate, from `build-image.yml`). Orphan
+  wrong-named tags from stillborn #3 (`:1.0.0`, `:1.0`, `:1`,
+  `:sha-ffb1398`) still exist on GHCR and need user cleanup via UI
+  (see §"v1.0.0 SHIPPED").
 - **Author identity:** `pelmentor <cssnik2013@gmail.com>` — set
   **repo-locally** in `.git/config` (NOT global). Never overwrite
   the global git config; if a teammate clones, they set their own.
@@ -266,13 +297,15 @@ GHA publishes to GHCR.
 ## Resume checklist (read in this order)
 
 1. **This file** (`docs/SESSION_HANDOFF.md`) — orientation. The
-   §"v1.0.0 tag-push attempt (2026-05-17 — STILLBORN; preflight
-   bug)" section at the very tail carries the MOST recent state
-   (the v1.0.0 cut attempted, bug discovered, decision pending).
-   §"ADR-0005 first-boot bootstrap reconciliation" precedes it
-   (the last pre-v1.0.0 ADR-vs-code drift closed). §"Phase 11 —
-   what landed" and §"Phase 12 — what landed" cover earlier
-   milestones.
+   §"v1.0.0 SHIPPED (2026-05-17 — after 3 stillborn iterations)"
+   section at the very tail carries the MOST recent state and the
+   remaining USER-action items. The earlier §"v1.0.0 tag-push
+   attempt (2026-05-17 — STILLBORN; preflight bug)" section above
+   it is historical-record-only (its "DECISION REQUIRED" prompts
+   were resolved on resume — DO NOT act on them). §"ADR-0005
+   first-boot bootstrap reconciliation" precedes those (the last
+   pre-v1.0.0 ADR-vs-code drift closed). §"Phase 11 — what landed"
+   and §"Phase 12 — what landed" cover earlier milestones.
 2. **`docs/CODE_PLAN.md`** — the phased implementation plan with file
    paths and acceptance criteria. All 12 phases are now ✅ COMPLETE.
    No "next phase"; next move is operator-facing (see TL;DR at top
@@ -308,25 +341,31 @@ what to do next without asking the user.
 
 ### Most likely "what to do next" answers
 
-a. **Cut the first `v1.0.0` tag.** Natural next step now that
-   ADR-0005 bootstrap is reconciled — `release.yml` +
-   `release-checklist.md` walkthrough end-to-end for real publishing.
-   Today's CI green covers everything EXCEPT the `release.yml`
-   tag-triggered path (which produces immutable `:vX.Y.Z` tags +
-   cosign-signed manifest); the `build-image.yml` path that runs on
-   every push is already green and publishes a tracking-tag image.
-   Follow release-checklist.md straight down — every step is testable.
-   **Important**: v1.0.0 bumps `SCHEMA_VERSION` (1 → 2), so the
-   release body MUST carry `[schema-bump]` per §release-checklist.md.
-   For v0.x → v1.0 there are no production deployments to migrate;
-   the export → reimport procedure is documented for the future.
-b. **Pick up an open follow-up** from the remaining carryovers
+a. **Confirm remaining USER-action items from the v1.0.0 ship.**
+   Per the §"v1.0.0 SHIPPED" tail: (i) delete orphan GHCR tag
+   versions `:1.0.0`/`:1.0`/`:1`/`:sha-ffb1398` via the GitHub web
+   UI or with elevated `gh` scopes; (ii) set GHCR retention via the
+   package settings UI per `docs/ops/ghcr-retention.md`;
+   (iii) Kick browser spot-check (release-checklist step 3 — Kick
+   blocks non-browser clients, must be done in a real browser);
+   (iv) real-RTMP smoke (release-checklist step 12 — OBS →
+   `:v1.0.0` → at least one platform end-to-end); (v) announce
+   (release-checklist step 14). None of these block v1.0.0 being
+   live; they're hygiene + verification.
+b. **Close the branch-protection-vs-docs-only structural gap.**
+   Widen `ci.yml` to emit success on docs-only paths so docs PRs
+   can satisfy the 5 required checks. Today, this file's update is
+   uncommitted on local `main` for that reason. Proper Rule №1 fix
+   that closes the gap going forward; could bundle with this
+   uncommitted handoff diff.
+c. **Pick up an open follow-up** from the remaining carryovers
    (first-run-complete auto-flip, YouTube backup-ingest, AuthReprompt
-   grant-expired retry, HTTP sessions revoke reprompt). All are
-   smaller-scoped than ADR-0005 was; none gate v1.0.0.
-c. **Iterate on a specific operator-side concern** (a new reverse-proxy
-   variant, a backup-script variant, etc.) — the design-memo
-   invariants S-1..S-30 are the gates.
+   grant-expired retry, HTTP sessions revoke reprompt). None gate
+   anything; v0.x → v1.0 was the only hard transition.
+d. **Iterate on a specific operator-side concern** (a new
+   reverse-proxy variant, a backup-script variant, v1.0.1 patch
+   release, etc.) — the design-memo invariants S-1..S-30 are the
+   gates.
 
 ---
 
@@ -3504,4 +3543,127 @@ diff (recommended — one PR carries both code fix + handoff bump),
 admin-bypass for docs PRs (requires temporarily flipping
 `enforce_admins=false`). Per project Rule №1, option (i) avoids
 the whole gap.
+
+---
+
+## v1.0.0 SHIPPED (2026-05-17 — after 3 stillborn iterations)
+
+User approved both the `release.yml` preflight patch and the
+tag-delete-and-recut path on post-/compact resume. What happened
+next, in order:
+
+### Stillborn #2 — H1 image-size threshold drift
+
+PR #2 (preflight rc-capture fix) merged. v1.0.0 recut at `961b8f5`.
+release.yml run `25992695313` got past preflight cleanly but failed
+at the build-time smoke H1 check: amd64 645 MB / arm64 668 MB
+exceeded a stale 420 MB ceiling at `release.yml:237`. Sibling
+workflows `ci.yml:323` and `build-image.yml:181` had already been
+bumped to 720 MB in Phase 11 round-6 (first real measurement was
+669 MB amd64; comment block documents the rationale). `release.yml`
+was missed in that bump — pure drift, not an image regression.
+
+Reviewer audit on the H1 fix found four more drift items
+(H2/H6/H7 missing per-check `::error::H<N>` annotations present in
+both siblings, plus scan-job missing empty-digest guard already
+present in this file's own smoke job at line 280). All bundled into
+PR #3. Per Rule №1 — fix all known drift in one go rather than ship
+a workflow known to be weaker than its siblings.
+
+### Stillborn #3 — metadata-action `{{version}}` strips v prefix
+
+PR #3 merged. v1.0.0 recut at `ffb1398`. release.yml run
+`25992875522` ran fully green — preflight, build amd64+arm64,
+runtime-smoke, scan, merge+sign all ✓. BUT: the published tags were
+`:1.0.0`, `:1.0`, `:1`, `:latest`, `:sha-ffb1398`. Every operator
+doc (README, deployment.md, ghcr-retention.md, the release notes
+themselves) tells operators to pull `:vX.Y.Z`. cosign verify against
+`:v1.0.0` returned `manifest unknown`; cosign verify against `:1.0.0`
+passed. The image was correctly built + signed, just tag-named
+wrong.
+
+Root cause: `docker/metadata-action`'s `{{version}}` semver template
+strips the leading `v` from the input ref by design. Config at
+`release.yml:411-413` used the bare `pattern={{version}}` form. Fix
+in PR #4: `pattern=v{{version}}`, `pattern=v{{major}}.{{minor}}`,
+`pattern=v{{major}}` to compose the `v` back. Reviewer audit found
+two more bundled drifts: `phase-11-design-memo.md:309-312` showed
+the stale bare-template snippet (would mislead a future reviewer);
+`docs/releases/v1.0.0.md:73` had a loose "any current 2.x release"
+cosign-version claim that contradicted the "2.2+" floor stated in
+deployment.md / release-checklist.md.
+
+### Stillborn #3 → SHIPPED
+
+PR #4 merged. v1.0.0 recut at `5399fb5`. release.yml run
+`25993208395` ran fully green AND published `ghcr.io/pelmentor/restream-plus:v1.0.0`
++ `:v1.0`, `:v1`, `:latest`, `:sha-5399fb5`. Local cosign verify
+against the canonical `:v1.0.0` tag passed (digest
+`sha256:8e80d783592344be2a05a892568d4ee4ceace577b13b2c4688ff7eb1d918d44c`).
+GitHub Release created from `docs/releases/v1.0.0.md` notes file at
+https://github.com/pelmentor/Restream_Plus/releases/tag/v1.0.0.
+
+### Cosign on Windows dev host — quirk worth remembering
+
+`cosign-windows-amd64 verify` against a public GHCR image fails if
+`~/.docker/config.json` declares a credential helper that isn't on
+PATH (Docker Desktop not running). Workaround: `DOCKER_CONFIG=/tmp/empty
+cosign-windows-amd64 verify ...`. For private images, login first:
+`cosign-windows-amd64 login ghcr.io -u <user> -p "$(gh auth token)"`
+with the same `DOCKER_CONFIG` pointing at a writable scratch dir.
+
+### Remaining post-ship items (none block v1.0.0 being live)
+
+1. **USER-action** — delete orphan GHCR tag versions from stillborn
+   #3's green-but-wrong-named run: `:1.0.0`, `:1.0`, `:1`,
+   `:sha-ffb1398`. (`:latest` self-corrected when stillborn-#3-fix
+   re-cut overwrote it; `:sha-961b8f5` from stillborn #2 was never
+   published — run failed before merge+sign.) Reachable via
+   `https://github.com/users/pelmentor/packages/container/restream-plus`
+   → Manage versions → select + delete. Or `gh auth refresh -s read:packages,delete:packages`
+   then `gh api -X DELETE users/pelmentor/packages/container/restream-plus/versions/<id>`.
+2. **USER-action** — GHCR retention policy still needs to be SET via
+   the package settings UI per `docs/ops/ghcr-retention.md` (Retain
+   for: 30 days, Apply to: Untagged versions). The CLI verify command
+   needs `read:packages` scope.
+3. **USER-action (HUMAN-REQUIRED, release-checklist step 3)** — Kick
+   browser spot-check. WebFetch confirmed Kick blocks non-browser
+   clients. Open Kick help articles 7066931 / 7135578 in a real
+   browser and confirm ingest URL is still
+   `rtmps://fa723fc1b171.global-contribute.live-video.net:443/app`.
+4. **USER-action (HUMAN-REQUIRED, release-checklist step 12)** — Real
+   RTMP smoke. OBS → `:v1.0.0` container → at least one platform
+   (e.g., Twitch test stream key) end-to-end relay confirmation.
+5. **USER-action (release-checklist step 14)** — Announce wherever
+   you intend to.
+6. **Structural follow-up worth doing soon** — close the
+   branch-protection-vs-docs-only gap. Right now any pure docs PR
+   (paths under `docs/**` or `*.md`) skips `ci.yml` via `paths-ignore`,
+   so the 5 required checks never report, so the PR can't merge under
+   `enforce_admins=true`. Recommended fix per Rule №1: widen `ci.yml`
+   to emit success on docs-only paths.
+
+### Pattern observations from the THREE stillborn iterations
+
+- `release.yml` had never been end-to-end exercised before today.
+  Three latent drifts relative to siblings `ci.yml` + `build-image.yml`
+  accumulated silently. Post-fix the workflow has comment-block
+  cross-references at every threshold/pattern so the next maintainer
+  who touches one knows to touch all three.
+- The `set -e` + `|| true` + `$?` bash anti-pattern is silent and
+  only surfaces on the success path of the inverted condition. Worth
+  not writing again anywhere in CI scripts.
+- `docker/metadata-action`'s `{{version}}` semver template strips the
+  leading `v`. If a project commits to `:vX.Y.Z` operator-facing
+  tags, the pattern MUST be `v{{version}}` etc.
+- One ~3-hour debugging session can recover from three stacked
+  stillborn iterations on the first end-to-end exercise of a
+  shipping workflow, IF (a) the workflow fails closed at every gate,
+  (b) GHCR is the only mutable resource and PA-19 protects deliberate
+  overwrites, and (c) the maintainer is willing to delete + recut the
+  git tag rather than skip versions. Per Rule №1 (and confirmed by
+  the user explicitly): tag deletion was the right call here because
+  GHCR was either untouched (stillborn #1) or only had wrong-named
+  tags (stillborn #2 and #3 published nothing at `:v1.0.0` until the
+  fourth recut).
 

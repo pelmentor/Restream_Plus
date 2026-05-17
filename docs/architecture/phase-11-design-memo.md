@@ -581,6 +581,7 @@ The implementation MUST encode each. Listed as testable one-liners.
 - **PA-31** GHCR retention: untagged > 30 days deleted; tagged never auto-deleted.
 - **PA-32** Workflow paths + job IDs are public CI contract.
 - **PA-33** PR critical-path budget = 5 min p95.
+- **PA-34** `ci.yml` and `ci-docs.yml` MUST mirror the same five required-check job names so docs-only PRs (which `ci.yml`'s `paths-ignore` skips) still satisfy branch protection. Enforced by `workflow-pins` at CI time. Added 2026-05-17 after the v1.0.0 stillborn ship surfaced the gap when a docs-only `SESSION_HANDOFF.md` PR could not be merged. See `.github/workflows/ci-docs.yml` header.
 
 ### Phase 10 corrections
 

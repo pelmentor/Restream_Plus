@@ -340,12 +340,22 @@ jobs:
           output-file: sbom.spdx.json
 
       - name: Scan image via grype (HIGH+ fixable blocks)
+        id: scan
         uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
         with:
           image: scan:amd64
           fail-build: true
           severity-cutoff: high
           only-fixed: true
+
+      # Diagnostic: scan-action only emits SARIF; on failure we want the
+      # CVE list in plain text in the run log so we can triage without
+      # downloading the SARIF artifact every time. Temporary — drop once
+      # the HIGH+ fixable surface is steady-state empty (then this step
+      # would be a no-op anyway).
+      - name: Diagnostic — print HIGH+ fixable CVEs as table
+        if: failure() && steps.scan.outcome == 'failure'
+        run: grype scan:amd64 --fail-on high --only-fixed -o table || true
 
   # ---------------------------------------------------------------------------
   # Merge per-arch manifests into the human-readable tags. PA-10, PA-20, PA-21.

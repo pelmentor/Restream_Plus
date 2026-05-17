@@ -38,10 +38,19 @@ if [ "${actual_uv}" != "${UV_VERSION}" ]; then
     exit 1
 fi
 
+# Delete the existing output files BEFORE re-running uv. If the output
+# files exist, `uv pip compile` treats existing pins as preferred and
+# refuses to upgrade them even if a newer version is on PyPI — silently
+# producing a lockfile that doesn't match what CI generates from scratch.
+# `--refresh` additionally bypasses uv's metadata cache (which has been
+# observed to lag PyPI on Windows even after `uv cache clean`).
+rm -f docker/requirements.hashes.lock docker/requirements-dev.hashes.lock
+
 uv pip compile pyproject.toml \
     --generate-hashes \
     --python-version "${PYTHON_VERSION}" \
     --universal \
+    --refresh \
     --output-file docker/requirements.hashes.lock
 
 uv pip compile pyproject.toml \
@@ -49,6 +58,7 @@ uv pip compile pyproject.toml \
     --generate-hashes \
     --python-version "${PYTHON_VERSION}" \
     --universal \
+    --refresh \
     --output-file docker/requirements-dev.hashes.lock
 
 echo "OK: regenerated docker/requirements{,-dev}.hashes.lock"

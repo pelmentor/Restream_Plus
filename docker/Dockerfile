@@ -153,6 +153,7 @@ RUN ./configure \
         --http-log-path=/data/logs/nginx-access.log \
         --with-cc-opt='-O2 -fstack-protector-strong' \
         --add-module=/tmp/build/nginx-rtmp-module \
+        --with-http_stub_status_module \
         --without-http_rewrite_module \
         --without-http_proxy_module \
         --without-http_uwsgi_module \

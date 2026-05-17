@@ -44,13 +44,22 @@ dev = [
   # Hash-pinned in CI so `pip install --no-build-isolation -e .`
   # never network-resolves the PEP 517 build backend (security-reviewer L5).
   "hatchling>=1.25,<2",
+  # Required by hatchling's `build_editable` hook (PEP 660). Without it,
+  # CI's `pip install --no-build-isolation -e .` fails with
+  # `ModuleNotFoundError: No module named 'editables'` because hatchling
+  # only soft-imports `editables` at editable-install time.
+  "editables>=0.5,<1",
 ]
 
 [project.scripts]
 restream-plus = "app.main:run"
 
 [build-system]
-requires = ["hatchling>=1.25"]
+# `editables` is required by hatchling's PEP 660 `build_editable` hook.
+# Listed here so a non-isolated `pip install -e .` (i.e. without our CI's
+# `--no-build-isolation`) still works without ModuleNotFoundError. The dev
+# extra above hash-pins both for CI's `--no-build-isolation` flow.
+requires = ["hatchling>=1.25", "editables>=0.5"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

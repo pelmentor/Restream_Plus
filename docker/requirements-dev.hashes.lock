@@ -290,6 +290,10 @@ cryptography==43.0.3 \
     --hash=sha256:f46304d6f0c6ab8e52770addfa2fc41e6629495548862279641972b6215451cd \
     --hash=sha256:f7b178f11ed3664fd0e995a47ed2b5ff0a12d893e41dd0494f406d1cf555cab7
     # via restream-plus (pyproject.toml)
+editables==0.6 \
+    --hash=sha256:1163834902381c4613787951c5914800fdf155ae08848a373b8ea5006780977c \
+    --hash=sha256:d70e4698078a1d033e7786d9c64e5be070d058a67c21417024d38a58ac20aa43
+    # via restream-plus (pyproject.toml)
 execnet==2.1.2 \
     --hash=sha256:63d83bfdd9a23e35b9c6a3261412324f964c2ec8dcd8d3c6916ee9373e0befcd \
     --hash=sha256:67fba928dd5a544b783f6056f449e5e3931a5c378b128bc18501f7ea79e296ec

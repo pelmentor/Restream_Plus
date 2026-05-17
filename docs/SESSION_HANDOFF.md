@@ -4,7 +4,7 @@
 this project cold, after a context compaction or a fresh conversation.
 Read this first; everything else is reachable from here.
 
-**Last updated:** 2026-05-17 — **v1.0.0 SHIPPED.** Image at `ghcr.io/pelmentor/restream-plus:v1.0.0` (digest `sha256:8e80d783…`), cosign-verified, GitHub Release at https://github.com/pelmentor/Restream_Plus/releases/tag/v1.0.0. Took 3 stillborn iterations to surface latent `release.yml` drift; PRs #2/#3/#4 fixed each in turn. HEAD = `5399fb5`. The stillborn tail section §"v1.0.0 tag-push attempt" is preserved as historical record of the diagnosis; for current state see the post-ship tail section §"v1.0.0 SHIPPED" appended after it. Remaining items are user-actions, no code work: orphan `:1.0.0`/`:1.0`/`:1`/`:sha-ffb1398` GHCR tag cleanup, GHCR retention via UI, Kick browser spot-check, real-RTMP smoke, announce.
+**Last updated:** 2026-05-17 — **v1.0.0 SHIPPED + 3 post-ship PRs LANDED.** Image at `ghcr.io/pelmentor/restream-plus:v1.0.0` (digest `sha256:8e80d783…`), cosign-verified, GitHub Release at https://github.com/pelmentor/Restream_Plus/releases/tag/v1.0.0. Took 3 stillborn iterations to surface latent `release.yml` drift; PRs #2/#3/#4 fixed each in turn. **Post-ship PRs**: #5 (`5eb2421`) closed the branch-protection-vs-docs-only gap with new `ci-docs.yml` + PA-34 invariant; #6 (`4d1cd37`) handoff cleanup, validated PR #5 end-to-end (only ci-docs triggered, all 5 required checks passed via no-op echos); #7 (`93715bf`) `feat(stats)` live dashboard stats — per-target Mbps + drops, host CPU%, ingest bitrate, sparklines. **HEAD = `93715bf`**. The stillborn tail section §"v1.0.0 tag-push attempt" + §"This handoff doc note" are historical record only; do NOT act on their DECISION REQUIRED prompts (all resolved). Tail section §"v1.0.0 SHIPPED" is the post-ship chronology. Remaining items still USER-actions, no code work: orphan `:1.0.0`/`:1.0`/`:1`/`:sha-ffb1398` GHCR tag cleanup, GHCR retention via UI, Kick browser spot-check, real-RTMP smoke (now also exercises the new live-stats UI), announce. The live-stats feature rides `:edge` until the next operator-driven tag cut (v1.0.1 / v1.1.0 — operator's call when to bump).
 
 **GitHub:** https://github.com/pelmentor/Restream_Plus
 (initial commit `a100f2a` covers Phases 0–10; Phase 11 + Phase 12 +
@@ -83,19 +83,24 @@ Image at `ghcr.io/pelmentor/restream-plus:v1.0.0` (digest
 `sha256:8e80d783592344be2a05a892568d4ee4ceace577b13b2c4688ff7eb1d918d44c`),
 cosign-keyless-signed, multi-arch (amd64 + arm64); GitHub Release
 published at https://github.com/pelmentor/Restream_Plus/releases/tag/v1.0.0;
-main HEAD = `5399fb5`. The ship took THREE stillborn-and-recut
+main HEAD = `93715bf`. The ship took THREE stillborn-and-recut
 iterations to surface latent `release.yml` drift items (the workflow
 had never been end-to-end exercised before today). PRs #2 (`961b8f5`
 — preflight rc-capture), #3 (`ffb1398` — H1 image-size + 4 reviewer
 drifts), and #4 (`5399fb5` — metadata-action v-prefix + 2 reviewer
-drifts) fixed each in turn. Tail section §"v1.0.0 SHIPPED" has the
-full chronology, lessons learned, and the remaining USER-action
-items (orphan GHCR tag cleanup, GHCR retention via UI, Kick browser
-spot-check, real-RTMP smoke, announce — none block v1.0.0 being
-live). The earlier tail section §"v1.0.0 tag-push attempt
-(2026-05-17 — STILLBORN; preflight bug)" is preserved as historical
-record of the diagnosis only; do NOT act on its "DECISION REQUIRED"
-prompts — they were resolved.
+drifts) fixed each in turn. **Post-ship PRs**: #5 (`5eb2421`) closed
+the branch-protection-vs-docs-only gap with `.github/workflows/ci-docs.yml`
++ PA-34 invariant; #6 (`4d1cd37`) handoff cleanup, validated the gap-fix
+end-to-end; #7 (`93715bf`) `feat(stats)` live dashboard stats (per-target
+Mbps + drops, host CPU%, ingest, sparklines). Tail section §"v1.0.0
+SHIPPED" + the new tail section §"feat(stats) live dashboard stats"
+have the full chronology + remaining USER-action items (orphan GHCR
+tag cleanup, GHCR retention via UI, Kick browser spot-check, real-RTMP
+smoke — now also exercises live-stats — announce; none block v1.0.0
+being live). The earlier tail section §"v1.0.0 tag-push attempt
+(2026-05-17 — STILLBORN; preflight bug)" and §"This handoff doc note
+(HISTORICAL — gap RESOLVED)" are preserved as historical record only;
+do NOT act on their "DECISION REQUIRED" prompts — all resolved.
 
 **Branch-protection-vs-docs-only structural gap — RESOLVED. PR #5
 merged as `5eb2421` on 2026-05-17.** Added
@@ -119,17 +124,22 @@ consults that drove it.
 
 ---
 
-## Repository / git state (2026-05-17, post-v1.0.0-SHIPPED)
+## Repository / git state (2026-05-17, post-v1.0.0-SHIPPED + post-feat-stats)
 
 - **Remote:** `origin → https://github.com/pelmentor/Restream_Plus.git`
 - **Default branch:** `main` (created with `git init -b main`)
-- **HEAD:** `5399fb5 fix(ci, docs): release.yml metadata-action —
-  restore v-prefix on semver tags (#4)` (pushed 2026-05-17 as a
-  squash-merge of PR #4). Always re-verify with
+- **HEAD:** `93715bf feat(stats): live dashboard stats — per-target
+  bitrate/drops, host CPU, ingest (#7)` (pushed 2026-05-17 as a
+  squash-merge of PR #7). Always re-verify with
   `git log --oneline -1` on resume.
   Recent milestones:
+  - `93715bf` — PR #7 (`feat(stats)` live dashboard stats) — current HEAD
+  - `4d1cd37` — PR #6 (handoff cleanup post-PA-34; first real-world
+    docs-only PR validated by ci-docs.yml alone)
+  - `5eb2421` — PR #5 (PA-34 closes branch-protection-vs-docs-only
+    gap: new `.github/workflows/ci-docs.yml` + parity-check step)
   - `5399fb5` — PR #4 (metadata-action v-prefix + design-memo +
-    release-notes alignment) — current HEAD
+    release-notes alignment) — v1.0.0 ship-point
   - `ffb1398` — PR #3 (H1 720 MB + H2/H6/H7 annotations +
     scan empty-digest guard)
   - `961b8f5` — PR #2 (release.yml preflight rc-capture fix)
@@ -159,10 +169,11 @@ consults that drove it.
   workflow files declare the same job-name set via sorted set-diff.
   Docs-only PRs now satisfy branch protection without spending
   real CI minutes on the full suite.
-- **CI status at current HEAD `5399fb5`:** every required check green
-  on PR #4 (`backend-test`, `backend-lint`, `frontend`,
-  `backend-lockfile`, `workflow-pins` + informational `pr-image-smoke`).
-  Re-confirm at resume with
+- **CI status at current HEAD `93715bf`:** every required check green
+  on PR #7 (`backend-test`, `backend-lint`, `frontend`,
+  `backend-lockfile`, `workflow-pins` + informational `pr-image-smoke`,
+  each appearing TWICE — once from `ci`, once from the new `ci-docs`
+  no-op mirror introduced by PR #5). Re-confirm at resume with
   `gh run list --repo pelmentor/Restream_Plus --branch main --limit 5`.
 - **release.yml runs (chronological):**
   - `25992247118` at `2ef1b06` — FAILED at preflight (stillborn #1
@@ -352,18 +363,29 @@ a. **Confirm remaining USER-action items from the v1.0.0 ship.**
    (iii) Kick browser spot-check (release-checklist step 3 — Kick
    blocks non-browser clients, must be done in a real browser);
    (iv) real-RTMP smoke (release-checklist step 12 — OBS →
-   `:v1.0.0` → at least one platform end-to-end); (v) announce
+   `:v1.0.0` → at least one platform end-to-end). NOTE: the real-RTMP
+   smoke now also exercises the new live-stats UI shipped in PR #7 —
+   verify header CPU% + egress chips appear during STARTING, persist
+   through LIVE, hide on return to OFFLINE; verify per-target Mbps +
+   drops look realistic; verify yanking a target's egress turns its
+   tile pill red and the sparkline segment red. (v) announce
    (release-checklist step 14). None of these block v1.0.0 being
-   live; they're hygiene + verification.
-b. **(DONE — PR #5 merged as `5eb2421`.)** The branch-protection-
-   vs-docs-only gap is closed by `.github/workflows/ci-docs.yml` +
-   PA-34. Docs-only PRs now satisfy required checks via no-op
-   echos. No remaining action under this item.
-c. **Pick up an open follow-up** from the remaining carryovers
+   live; they're hygiene + verification. Live-stats rides `:edge`
+   until next operator-driven tag cut (v1.0.1 / v1.1.0).
+b. **(DONE — PR #5/#6/#7 merged.)** The branch-protection-vs-docs-only
+   gap is closed (PR #5 ci-docs.yml + PA-34, validated end-to-end by
+   PR #6). Live-stats feature is shipped (PR #7). No remaining code
+   action under these items.
+c. **Live-stats `/metrics` follow-up** (deferred, none-blocking) — if
+   an operator wires Grafana, ADR-0011 §"Open questions" + ADR-0003
+   §"Open questions" together name the work: add `/metrics` endpoint,
+   amend ADR-0003 single-drainer constraint (fan-in layer or
+   `HostStatsEvent` tee). Don't pre-build.
+d. **Pick up an open follow-up** from the remaining carryovers
    (first-run-complete auto-flip, YouTube backup-ingest, AuthReprompt
    grant-expired retry, HTTP sessions revoke reprompt). None gate
    anything; v0.x → v1.0 was the only hard transition.
-d. **Iterate on a specific operator-side concern** (a new
+e. **Iterate on a specific operator-side concern** (a new
    reverse-proxy variant, a backup-script variant, v1.0.1 patch
    release, etc.) — the design-memo invariants S-1..S-30 are the
    gates.
@@ -3666,4 +3688,204 @@ with the same `DOCKER_CONFIG` pointing at a writable scratch dir.
   GHCR was either untouched (stillborn #1) or only had wrong-named
   tags (stillborn #2 and #3 published nothing at `:v1.0.0` until the
   fourth recut).
+
+---
+
+## feat(stats) live dashboard stats (2026-05-17 — PR #7, `93715bf`)
+
+Operator-honest live readouts on the dashboard during a session.
+Shipped end-to-end after a full Rule №3 → Rule №4 → Rule №5 loop;
+669 → 660 net new tests in the suite, frontend bundle still 215 KB
+gzip (under the 256 KB budget).
+
+### What the operator sees now
+
+- **AppShell header chips** — `Egress N.N Mbps` + `CPU N%`. Hidden
+  when `run_state === "offline"`; appear on STARTING and persist
+  through LIVE; hide again on return to OFFLINE. CPU color-bands:
+  default <70%, `--color-warn` 70-90%, `--color-error` >90%.
+- **HeroCard LIVE-state body** — extends the existing live-summary
+  line with an `INGEST X.X Mbps  →  EGRESS Y.Y Mbps` pair, plus a
+  60-sample aggregate `<Sparkline>` (reuses the existing canvas
+  component; samples are `{bitrate, healthy}`). Ingest is `null`
+  when nginx-rtmp's `rtmp_stat` is unreachable or no publisher is
+  connected — UI renders "—", never `0` (which would lie about a
+  dark show).
+- **TargetTile** — `metricsFor()` now returns `{bitrate Mbps, drops}`
+  from `last_progress`, replacing the placeholder
+  `{worker_state, breaker_failures_in_window}` pair. Both fields
+  fall back to `—` when no progress sample has arrived yet.
+- **TargetDetails slide-out** — the `<Sparkline>` that was mounted
+  with `samples={[]}` since Phase 8 is now fed from the rolling
+  per-target buffer.
+
+### Backend (4 new files + 6 modified)
+
+- `app/fanout/host_stats.py` (NEW) — `HostStatsSampler` reads
+  `/proc/<pid>/stat` directly via `ProcfsStatReader` (no `psutil`
+  dep — matches the project's "minimal dep surface" pattern).
+  Process-tree CPU%: sum across the control-plane process + each
+  live ffmpeg pid, normalized to 0-100% of one host (divided by
+  `os.cpu_count()`). First-tick reads return 0% and seed baseline;
+  subsequent ticks compute `(d_ticks / d_wall_s) * (100 / cpus)`.
+  Defends against pid-reuse upward-bogons by capping at
+  `100 * logical_cpus` and dropping the baseline on overflow
+  (Rule №4 reviewer HIGH fix). `NginxRtmpStatFetcher` polls the new
+  loopback `/rtmp_stat` endpoint via `defusedxml.ElementTree` (NOT
+  stdlib `xml.etree` — defense-in-depth against XXE / billion-laughs
+  per architect Rule №4 REQUIRED fix). New runtime dep
+  `defusedxml>=0.7,<0.8` + dev `types-defusedxml`. `_sysconf_or`
+  helper dedupes `SC_CLK_TCK` + `SC_PAGESIZE` Windows-fallback
+  logic.
+- `HostStatsEvent` in `app/fanout/event_bus.py` — new tagged-union
+  payload member: `cpu_total_pct`, `cpu_by_target` (tuple of
+  `HostCpuByTarget(worker_id, cpu_pct)`), `rss_bytes`, `ingest_kbps`.
+- `_host_stats_loop` task in `Supervisor.run()`'s TaskGroup —
+  fires every 2s (per `HOST_STATS_TICK_SECONDS`), publishes
+  `HostStatsEvent`, swallows sampler exceptions (degrade silently
+  to `null` rather than crashing the loop). Sampler injected via
+  factory: `host_stats_sampler_factory: Callable[[WorkerPidProvider],
+  HostStatsSampler] | None`. Receives `self` (the supervisor IS the
+  natural `WorkerPidProvider` — owns `_workers`). Construction-order
+  chicken-and-egg resolved.
+- `Supervisor.worker_pids()` — public method enumerating live
+  `(WorkerId, pid)` pairs.
+- `FFmpegWorker.pid` — public property; `FFmpegWorker._last_progress:
+  WorkerProgressSnapshot | None` updated in `_emit_progress`,
+  cleared in `start()` (reconnect leftovers don't bleed into the
+  new session). Exposed via `WorkerSnapshot.last_progress`.
+- `WorkerSnapshot` (`app/domain/worker_state.py`) gets new optional
+  `last_progress: WorkerProgressSnapshot | None = None` field.
+- `WorkerSnapshotView` + new `WorkerProgressView` + new `HostStatsView`
+  + new `HostCpuByTargetEntry` in `app/api/schemas.py`.
+- `app/api/ws.py` — `_snapshot_to_view` helper (single source of
+  truth for the domain→view projection, used by both
+  `_event_to_envelope` and `_build_state_full`). New `host.stats`
+  envelope kind.
+- `app/main.py` — lifespan constructs the sampler factory, threads
+  through to `Supervisor(host_stats_sampler_factory=...)`, owns the
+  shared `httpx.AsyncClient` on `app.state.host_stats_client` and
+  closes it on shutdown.
+
+### Frontend (4 new files + 7 modified)
+
+- `web/src/lib/liveMetricsReducer.ts` (NEW, pure) — maintains
+  rolling 60-sample sparkline buffers per target + aggregate +
+  ingest, plus the last `host.stats` snapshot. Aggregate is recomputed
+  from the "head" of each per-target buffer (NOT a running sum —
+  same-target-ticks-twice case is correct). `egressByTarget` map
+  capped at 16 entries with FIFO eviction (Rule №4 reviewer HIGH
+  fix — defends against novel-target-id flood). `state.full` seeds
+  per-target buffers from `last_progress`; `run.state.changed →
+  offline` clears all buffers; other transitions preserve buffers
+  (operator may still be reading the chart during STOPPING).
+- `web/src/hooks/useLiveMetrics.ts` (NEW) — react-query read-only
+  hook against the `["live", "metrics"]` cache.
+- `web/src/components/LiveStatsStrip.tsx` (NEW) — header chips.
+- `web/src/components/StatusStreamHost.tsx` (MODIFIED) — dispatches
+  envelopes to BOTH `applyWsEventToCache` (run-state) AND
+  `applyLiveMetricsEvent` (live metrics) on every WS event.
+- `web/src/lib/schemas/run.ts` + `wsEnvelopes.ts` — new `WorkerProgressView`,
+  `HostCpuByTargetEntry`, `HostStatsData` Zod schemas; `host.stats`
+  added to the `WsKnownEvent` discriminated union; `WorkerSnapshotView`
+  extended with optional `last_progress`.
+- `web/src/components/HeroCard.tsx` (MODIFIED) — new `aggregateSamples`
+  and `ingestKbps` props; `HeroBody` for `case "live"` adds an
+  `IngestEgressPair` sub-component and conditionally renders
+  `<Sparkline>` when there are samples.
+- `web/src/components/TargetTile.tsx` (MODIFIED) — `metricsFor()`
+  returns real `{bitrate Mbps, drops}` from `primary.last_progress`.
+- `web/src/components/TargetDetails.tsx` (MODIFIED) — reads
+  `egressByTarget.get(target.id)` from `useLiveMetrics`; feeds the
+  Sparkline; updated `detailMetricsFor` to show bitrate + drops
+  instead of worker_state + last_event_at.
+- `web/src/components/AppShell.tsx` (MODIFIED) — `<LiveStatsStrip />`
+  mounted between `<RunStateBadge />` and `ml-auto` block.
+- `web/src/pages/Dashboard.tsx` (MODIFIED) — reads `useLiveMetrics`;
+  computes `aggregateBitrate` from the rolling buffer's tail; passes
+  through to `HeroCard`. `totalDrops` migrated from
+  `breaker_failures_in_window` to actual `last_progress.drop_frames`
+  sum — the operator-honest signal.
+- `web/src/messages.ts` — new `liveStats.*` keys (`egress`, `cpu`,
+  `ingest`, `sparklineAria`, `unitMbps`, `unitPct`).
+
+### Ops + docs
+
+- `docker/nginx.conf` — new `location /rtmp_stat { rtmp_stat all;
+  allow 127.0.0.1; deny all; }` on the loopback diagnostic server.
+- `docs/architecture/ADR-0011-health-liveness.md` §"Open questions /
+  revisit triggers" — paragraph appended with 3 specific reasons
+  for the WS-vs-`/metrics` choice (consumer count, auth posture,
+  source-of-truth duplication). Calls out the `/proc` direct read +
+  `defusedxml` choices.
+- `docs/architecture/ADR-0003-rtmp-ingest-and-fanout.md` §"Open
+  questions / revisit triggers" — note appended that the `EventBus`
+  is single-drainer by design; `/metrics` landing would be the real
+  blocker for that future amendment; lists the two fix options
+  (fan-in layer or `HostStatsEvent` tee). 2026-05-17.
+
+### Rule №1 / №3 / №4 / №5 receipts
+
+- **Rule №3 (pre-design, 3 parallel agents):** Backend Architect
+  (data sources + sampling cadence) + UX Architect (placement +
+  operator-honest scope expansion to ingest + drops) + Software
+  Architect (scope decision: Pole A minimal, not Pole B framework).
+  Converged on Pole A.
+- **Rule №4 (post-code, 2 parallel reviewers):** feature-dev:code-reviewer
+  found no CRITICAL but 4 HIGH/REQUIRED issues; Software Architect
+  2nd-opinion found 2 REQUIRED-before-merge changes + 2 follow-ups.
+  ALL 8 addressed in-commit:
+    1. CPU% positive-bogon cap at `100 * logical_cpus` with baseline drop.
+    2. `egressByTarget` 16-entry FIFO map cap.
+    3. `WS_PROTOCOL_VERSION` docstring clarifies additive-vs-breaking.
+    4. `defusedxml` swap + new dep + lockfile regen (no `S314` noqa,
+       no apologia comment).
+    5. ADR-0011 paragraph expanded with 3 specific reasons (no
+       "search the PR log" punt).
+    6. ADR-0003 single-drainer note added.
+    7. `_sysconf_or` helper extracted, dedupes both call sites.
+    8. Mixed-PR own-bootstrap verified — `ci.yml` real suite + `ci-docs.yml`
+       no-op both passed first try, each required check reported twice.
+- **Rule №5 (post-ship audit, independent reviewer):** all 7
+  claims verified TRUE on `main` HEAD `93715bf`. No blockers found
+  in the merged code. The one `noqa` present (`N817` on the
+  `defusedxml.ElementTree as ET` alias) is legitimate and unrelated
+  to the security suppression that was explicitly required absent.
+
+### Validation totals
+
+- Backend: 659/659 pytest, ruff clean, ruff format clean, mypy
+  --strict clean (was 636 — net +23 tests in `test_host_stats.py`,
+  `test_ws_envelope.py`, `test_ffmpeg_worker.py`).
+- Frontend: 19/19 vitest, eslint clean, tsc -b clean (was 9 — net
+  +10 tests in `liveMetricsReducer.test.ts`).
+- Bundle: 215 KB gzipped (under 256 KB budget, +5 KB vs pre-feature).
+- CI on PR #7: each of the 5 required checks passed TWICE (once
+  from `ci` real suite, once from `ci-docs` no-op mirror — PA-34
+  doing its job).
+
+### Architectural lock-ins (do not re-litigate)
+
+- **No `/metrics` endpoint.** Per ADR-0011's expanded paragraph,
+  add it ONLY when an operator wires Grafana, not speculatively.
+  Adding it without changing the bus first will race the broadcaster
+  (ADR-0003 single-drainer note).
+- **CPU is process-tree, NOT system-wide.** Sum FastAPI + each ffmpeg
+  pid; divide by `os.cpu_count()`. Operator wants "is Restream_Plus
+  eating my host," not "is my box busy."
+- **`ingest_kbps = None` is "unavailable," NOT "zero."** UI renders
+  "—". A 0 would lie about a dark show.
+- **`last_progress = None` is "no frame observed yet."** Cleared on
+  every `FFmpegWorker.start()`. Domain logic MUST NOT branch on its
+  presence — it's a UI-surface convenience.
+- **`HostStatsSample.cpu_by_target` is per-WorkerId, NOT per-pid on
+  the wire.** Pids are an internal handle; exposing them invites a
+  future `/api/debug/kill/<pid>` someone will regret.
+- **`_proc` direct read uses `_sysconf_or` for `SC_CLK_TCK` +
+  `SC_PAGESIZE`.** If a new reader is added, route it through the
+  helper (don't re-duplicate the Windows-fallback dance).
+- **Sampler is constructor-injected via factory.** `Supervisor` is
+  the `WorkerPidProvider` (owns `_workers`). If you need a different
+  pid source in tests, pass a different factory — don't reach into
+  the supervisor internals.
 

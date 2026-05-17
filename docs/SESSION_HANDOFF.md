@@ -9,7 +9,8 @@ Read this first; everything else is reachable from here.
 **GitHub:** https://github.com/pelmentor/Restream_Plus
 (initial commit `a100f2a` covers Phases 0–10; Phase 11 + Phase 12 +
 the 12-round first-push fix iteration are all pushed; `main` is at
-`d65bb2e`. Every CI job is green: `ci` (workflow-pins, frontend,
+`1e65923` — see `git log` for the latest commit. Every CI job is
+green: `ci` (workflow-pins, frontend,
 backend-lint, backend-lockfile, backend-test, pr-image-smoke) and
 `build-image` (preflight, build amd64/arm64, runtime-smoke, scan,
 merge+sign). The full pipeline produces a published, cosign-signed
@@ -23,7 +24,7 @@ multi-arch image on GHCR. Author identity set **repo-locally** to
 Self-hosted RTMP restreamer (OBS → server → Twitch / YouTube Live / Kick /
 VK Video Live) with a web control panel, packaged as one Docker image,
 published to GHCR. **All 12 planned phases COMPLETE AND CI-GREEN at
-`main = d65bb2e` on https://github.com/pelmentor/Restream_Plus**:
+`main = 1e65923` on https://github.com/pelmentor/Restream_Plus**:
 Phases 0–10 (design + ADRs + backend + frontend + container), Phase 11
 (CI/CD — 3 GHA workflows + Renovate + hash-pinned lockfiles +
 cosign-signed multi-arch GHCR publish + SLSA provenance + SBOM),
@@ -68,9 +69,11 @@ carryover items.
 
 - **Remote:** `origin → https://github.com/pelmentor/Restream_Plus.git`
 - **Default branch:** `main` (created with `git init -b main`)
-- **HEAD:** `d65bb2e` (`fix(ci, docker): apply 4 findings from
-  Phase 11 final review pass`); 26 commits ahead of the initial
-  `a100f2a` (Phases 0–10).
+- **HEAD:** `1e65923` (`docs: refresh README + SESSION_HANDOFF +
+  CODE_PLAN — Phase 11 fix iteration`); 27 commits ahead of the
+  initial `a100f2a` (Phases 0–10). The previous commit `d65bb2e`
+  was the last code/CI change (the 4 reviewer-pass follow-ups); `1e65923`
+  is docs-only.
 - **CI status:** every required check green. `ci` workflow (6/6) +
   `build-image` workflow (6/6 including `merge + sign` which
   publishes the cosign-signed multi-arch image to GHCR).
@@ -220,18 +223,19 @@ what to do next without asking the user.
 
 ### Most likely "what to do next" answers
 
-a. **Cut the first `v1.0.0` tag.** Already the natural next step —
+a. **Cut the first `v1.0.0` tag.** Natural next step —
    `release.yml` + `release-checklist.md` walkthrough end-to-end for
    real publishing. Today's CI green covers everything EXCEPT the
    `release.yml` tag-triggered path (which produces immutable `:vX.Y.Z`
    tags + cosign-signed manifest); the `build-image.yml` path that runs
    on every push is already green and publishes a tracking-tag image.
    Follow release-checklist.md straight down — every step is testable.
-c. **Pick up an open follow-up** from §"Phase 12 — what landed"
+b. **Pick up an open follow-up** from §"Phase 12 — what landed"
    bottom (especially ADR-0005 admin-bootstrap autogen drift, which
    is the only one that's an ADR-vs-code disagreement rather than a
-   pure feature gap).
-d. **Iterate on a specific operator-side concern** (a new reverse-proxy
+   pure feature gap). Or from the carryovers tail of §"Phase 11
+   first-push fix iteration".
+c. **Iterate on a specific operator-side concern** (a new reverse-proxy
    variant, a backup-script variant, etc.) — the design-memo
    invariants S-1..S-30 are the gates.
 
@@ -2973,7 +2977,11 @@ warning's full traceback. Required local reproduction via Python 3.12
     accommodating: 669 MB stays well under the 720 MB ceiling.
 12. **HTTP_422 deprecation** (`afffb2b`) — see Headline (2) above.
 
-### Final review pass (Rule №4) — 4 follow-up fixes (`d65bb2e`)
+### Final review pass (Rule №4 + Rule №5) — 4 follow-up fixes (`d65bb2e`)
+
+**Reviewers** (`feature-dev:code-reviewer` × 2 in parallel against the
+full `b8a0675..main` diff) returned 4 actionable findings:
+
 
 1. Dockerfile `NGINX_VERSION` fallback bumped 1.26.2 → 1.30.1 to match
    `checksums.env` (local-dev footgun: would build vulnerable nginx).
@@ -2983,6 +2991,15 @@ warning's full traceback. Required local reproduction via Python 3.12
    the install lines + avoid silent Recommends growth.
 4. `backend-test` declares `needs: backend-lockfile` in `ci.yml` so a
    lockfile drift can never silently pass alongside `--no-deps -e .`.
+
+**Rule №5 audit** (post-shipping): 5/5 grep-verified that the four
+reviewer fixes (+ the HTTP 422 constant change) actually landed in
+the working tree at `main = 1e65923`. Specifically:
+  - `grep "^ARG NGINX_VERSION" docker/Dockerfile` → `1.30.1` ✓
+  - top-level runtime comment lists `python:3.12-slim-bookworm` ✓
+  - `apt-get upgrade -y --no-install-recommends` ✓
+  - `needs: backend-lockfile` under `backend-test:` in ci.yml ✓
+  - `status.HTTP_422_UNPROCESSABLE_CONTENT` in security_api.py line 186 ✓
 
 ### Pattern observations (process lessons)
 

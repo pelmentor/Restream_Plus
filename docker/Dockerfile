@@ -137,8 +137,11 @@ RUN curl -fsSL "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" \
  && mv "nginx-rtmp-module-${NGINX_RTMP_MODULE_SHA}" nginx-rtmp-module
 
 # Configure with the modules we need; explicitly drop the ones we don't.
-# stream + stream_ssl are OFF for v1 (no RTMPS-from-OBS per ADR-0003
-# threat model + Phase 10 §H DA-1).
+# Stream module is not compiled in by default in nginx 1.26.x (would
+# require `--with-stream` to opt in) — we never pass that flag, so no
+# `--without-stream` toggle is needed (and 1.25+ removed it as an
+# `invalid option` anyway). v1 has no RTMPS-from-OBS path per ADR-0003
+# threat model + Phase 10 §H DA-1.
 WORKDIR /tmp/build/nginx-${NGINX_VERSION}
 # hadolint ignore=DL3003
 RUN ./configure \
@@ -156,7 +159,6 @@ RUN ./configure \
         --without-http_scgi_module \
         --without-http_fastcgi_module \
         --without-http_memcached_module \
-        --without-stream \
         --without-mail_pop3_module \
         --without-mail_imap_module \
         --without-mail_smtp_module \

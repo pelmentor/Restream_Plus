@@ -1,0 +1,491 @@
+---
+applies-to: v1.0.0+
+last-verified: 2026-05-17
+audience: operator
+---
+
+# Deployment
+
+How to get Restream_Plus running on your machine, today, in production.
+
+## TL;DR
+
+```bash
+# Create the env file. `sudoedit` opens an editor buffer so the
+# secret values are NOT typed into your shell history. See
+# *Generate a strong master passphrase* and *Protect the env file*
+# below for the values to enter.
+sudo install -d -m 0700 -o root -g root /etc/restream
+sudo install -m 0600 /dev/null /etc/restream/env
+sudoedit /etc/restream/env
+# In the editor, enter (substituting real values):
+#   RESTREAM_MASTER_PASSPHRASE=<your-64-hex-passphrase>
+#   RESTREAM_ADMIN_PASSWORD=<your-12+-char-admin-password>
+
+docker run -d \
+  --name restream-plus \
+  --restart unless-stopped \
+  --stop-timeout 30 \
+  --env-file /etc/restream/env \
+  -p 127.0.0.1:1935:1935 \
+  -p 127.0.0.1:8000:8000 \
+  -v restream-data:/data \
+  ghcr.io/<OWNER>/restream-plus:vX.Y.Z
+```
+
+Then: open `http://127.0.0.1:8000/`, log in as `admin` with the
+password you set, configure targets, click START. (The panel sets
+`Secure` cookies — major browsers exempt `http://127.0.0.1` from the
+Secure-cookie restriction, so first-boot login over loopback HTTP
+works. Anything other than loopback / non-`localhost` HTTP needs TLS
+via a reverse proxy; see *Reverse-proxy recipes* below. Do not
+disable the `Secure` flag.)
+
+For anything beyond this — reverse proxy, cosign verification, network
+exposure, troubleshooting — read on.
+
+## When to use this
+
+- First time setting up Restream_Plus on a host.
+- Moving an existing deployment to a new host (combine with
+  [backup-restore.md](backup-restore.md)).
+
+## Prerequisites
+
+- Docker Engine 24+ (or Podman 4+, see *Rootless podman* below).
+- Outbound HTTPS to `ghcr.io` for the image pull.
+- `openssl` for generating the master passphrase.
+- `cosign` 2.2+ for image verification (recommended; see *Verify the
+  image before you run it* below).
+- A host port for RTMP (default 1935) and a way to expose the web
+  panel (typically behind a reverse proxy on :80/:443).
+
+## Image tag policy
+
+| Tag | Moves on | Use for |
+| --- | --- | --- |
+| `:vX.Y.Z` | Never (immutable per PA-19) | **Production.** Pin this. |
+| `:vX.Y` | Each patch release | Auto-patching stage / non-prod. |
+| `:vX` | Each minor release | Non-prod. |
+| `:latest` | Each stable release tag (NOT main HEAD) | "Current stable" — moves silently on `docker pull`. Not recommended for production. |
+| `:edge` | Each push to `main` | Bleeding edge / development only. NEVER production. |
+| `:sha-<short>` | Never (matches a commit) | Debugging anchor. May be pruned after 30 days; do NOT pin production to `:sha-*`. |
+
+This table is the single source of truth; the same block appears
+byte-identical in [ghcr-retention.md](ghcr-retention.md) (S-5).
+See [ghcr-retention.md](ghcr-retention.md) for the 30-day prune
+detail on `:sha-<short>`.
+
+## Verify the image before you run it
+
+Always run cosign verify before the first pull, and again after every
+upgrade. The image is signed via Sigstore keyless OIDC at release
+time — verification proves it came from the project's own GitHub
+Actions workflow and nothing else has substituted a manifest.
+
+```bash
+cosign verify \
+  --certificate-identity-regexp "^https://github\.com/<OWNER>/Restream_Plus/\.github/workflows/release\.yml@refs/tags/v[0-9.]+$" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/<OWNER>/restream-plus:vX.Y.Z
+```
+
+**Expected output (success):**
+
+```
+Verification for ghcr.io/<OWNER>/restream-plus:vX.Y.Z --
+The following checks were performed on each of these signatures:
+  - The cosign claims were validated
+  - Existence of the claims in the transparency log was verified offline
+  - The code-signing certificate was verified using trusted certificate authority certificates
+[... more lines ...]
+```
+
+**If verification fails:** STOP. Do not deploy. Do not retry with
+`--insecure-skip-verify`. Confirm the registry hostname is `ghcr.io`
+(not a typosquat). [File an issue](https://github.com/<OWNER>/Restream_Plus/issues)
+with the exact error.
+
+The cosign verify command above is byte-identical in this doc,
+[upgrade.md](upgrade.md), and [release-checklist.md](release-checklist.md)
+(S-9). The cosign tool version tested at release time is recorded in
+the release notes.
+
+## Generate a strong master passphrase
+
+The master passphrase is the root of all on-disk encryption (ADR-0006).
+Lose it = stream keys are unrecoverable. Leak it + `/data` = the
+attacker has your stream keys.
+
+Generate without ever putting the value in your terminal scrollback
+or shell history. Pipe directly to your password manager:
+
+```bash
+# Bitwarden CLI example
+openssl rand -hex 32 | bw create item ...   # adapt to your tool
+
+# pass example
+openssl rand -hex 32 | pass insert -m restream/master
+
+# Pipe to clipboard, paste into the manager's UI, then clear:
+openssl rand -hex 32 | wl-copy        # Wayland
+openssl rand -hex 32 | xclip -sel c   # X11
+openssl rand -hex 32 | pbcopy         # macOS
+```
+
+That gives you 64 hex characters (256 bits of entropy). Anything less
+than `MIN_PASSPHRASE_LENGTH = 12` is rejected at boot, but a
+12-character `password1234` passes policy and fails security. Use
+`openssl rand -hex 32` or equivalent.
+
+If you must display the value in the terminal as a fallback, be
+aware: the value lives in your terminal's scrollback buffer, any
+tmux/screen session capture, and any screenshare for the rest of
+that session. Treat the shell window as compromised until you close
+it.
+
+Store the passphrase in your password manager BEFORE you put it on
+the host. If you lose it after deploying, `/data` becomes scrap.
+
+## Configuration
+
+Two ways to pass the master passphrase: `env` mode (recommended for
+unattended hosts) and `paste` mode (recommended for hosts where you
+accept manual unlock after each restart).
+
+### env mode (default, recommended)
+
+The master passphrase comes from `RESTREAM_MASTER_PASSPHRASE`. The
+container boots, opens the DB, and serves traffic without human
+intervention. Reboots / restarts are silent.
+
+Trade: anything that can read the container's environment can read the
+passphrase. That includes `docker inspect` output, any process with
+`/proc/<pid>/environ` access in the container's namespace, and any host
+user with rights on the Docker socket. Use the recommendations in
+*Protect the env file* below.
+
+### paste mode
+
+```
+RESTREAM_PASSPHRASE_SOURCE=paste
+# (Do not set RESTREAM_MASTER_PASSPHRASE — the validator rejects it.)
+```
+
+The container boots locked. The control plane runs, `/livez` returns
+200, but `/readyz` returns 503 with `passphrase.ok=false`. The
+operator opens the panel and pastes the passphrase to unlock; the
+service is then live until the next restart.
+
+Trade: in paste mode, your restreamer is offline after every restart
+until you log in (S-11). Pick this if you keep the passphrase out of
+host config (e.g., it lives only in an air-gapped keystore) and you
+accept the operational cost.
+
+### Protect the env file
+
+Inline `-e RESTREAM_MASTER_PASSPHRASE=...` exposes the value in
+`docker inspect` AND in shell history. Prefer a host file with
+restrictive permissions, written via an editor (`sudoedit`) rather
+than a heredoc — `sudo tee <<'EOF'` puts the secret lines into your
+shell history. Loaded via `--env-file` (S-15):
+
+```bash
+sudo install -d -m 0700 -o root -g root /etc/restream
+sudo install -m 0600 /dev/null /etc/restream/env
+sudoedit /etc/restream/env
+# Editor opens; type:
+#   RESTREAM_MASTER_PASSPHRASE=<your-64-hex-passphrase>
+#   RESTREAM_ADMIN_PASSWORD=<your-12+-char-admin-password>
+# Save and quit.
+```
+
+Then:
+
+```bash
+docker run --env-file /etc/restream/env ...
+```
+
+Always quote shell values; an unquoted `$ecret` interpolates to empty
+plus literal `cret` (see *Troubleshoot*).
+
+## First boot
+
+On first boot the control plane:
+
+1. Initializes the SQLite schema at `/data/restream.db`.
+2. Writes `/data/.kdf_salt` (16 bytes random, mode 0640).
+3. Seeds the `admin` user with the password hash of
+   `RESTREAM_ADMIN_PASSWORD` (you MUST set this on first boot; see
+   *Carryovers* in [phase-12-design-memo.md](../architecture/phase-12-design-memo.md)
+   §N.a).
+4. Generates the OBS ingest key (the stream key you paste into OBS).
+5. Reports ready on `/readyz` once the supervisor is up.
+
+Capture the panel's first-boot state once `/readyz` returns 200:
+
+```bash
+curl -fsS http://127.0.0.1:8000/livez
+# {"status":"alive"}
+
+curl -fsS http://127.0.0.1:8000/readyz | head -c 400
+# {"status":"ready","checks":{"db":{"ok":true,...},"schema":{"ok":true,...},
+#  "rtmp_ingest":{"ok":true,...},"supervisor":{"ok":true,...},
+#  "passphrase":{"ok":true,...}}}
+```
+
+Then open `http://127.0.0.1:8000/` and log in as `admin` with
+`RESTREAM_ADMIN_PASSWORD`. Find the OBS ingest key under
+**Settings → General**.
+
+## Network exposure
+
+This section is load-bearing. Read it before you map any ports.
+
+### `:1935/tcp` — RTMP ingest (OBS → Restream_Plus)
+
+Anyone who can reach `rtmp://<host>:1935/live/<ingest-key>` can
+publish in your stream's stead, and anyone who can sniff the URL has
+the ingest key in cleartext (RTMP is not TLS by default).
+
+**NEVER bind `:1935` to a public interface.** (S-12.) Acceptable
+bindings:
+
+- Loopback: `-p 127.0.0.1:1935:1935` — OBS runs on the same host.
+- LAN-only: `-p 192.168.1.10:1935:1935` — OBS runs on another machine on
+  the same trusted LAN.
+- VPN interface: `-p 10.8.0.1:1935:1935` — OBS reaches you over
+  WireGuard / OpenVPN / Tailscale.
+
+If you must expose RTMP across the public Internet, run a VPN or
+SSH-tunnel the port. Do not put `0.0.0.0` on the public side.
+
+### `:8000/tcp` — Web panel
+
+The control panel speaks HTTP inside the container. Session cookies
+are flagged `Secure`, so they will not be set over plain HTTP from a
+public origin — meaning *the panel does not work over public HTTP*.
+Acceptable options:
+
+- **Behind a reverse proxy with TLS** (recommended for any
+  public-facing deployment). See *Reverse-proxy recipes* below.
+- **Direct-bind on LAN only**: `-p 192.168.1.10:8000:8000` — accept
+  that browser warnings appear when the panel is opened from another
+  host, and that cookie security only fully engages with TLS.
+
+### `:8888/tcp` — nginx stub-status
+
+Loopback-only inside the container. **Never** add `-p 8888:8888`.
+
+### `RESTREAM_TRUSTED_PROXIES`
+
+If you put Restream_Plus behind a reverse proxy and forget this env
+var, every request rate-limits as if from `127.0.0.1` — annoying but
+safe (S-13).
+
+```
+RESTREAM_TRUSTED_PROXIES=127.0.0.1/32
+# Comma-separate multiple CIDRs:
+RESTREAM_TRUSTED_PROXIES=10.0.0.0/8,127.0.0.1/32
+```
+
+The setting is operator-visible per ADR-0005 and is parsed at boot;
+restart the container after changing it.
+
+## Reverse-proxy recipes
+
+Each recipe terminates TLS, sets `X-Forwarded-*` headers, forwards
+WebSocket upgrades (the panel's live status uses WS), and proxies
+the three health endpoints so the proxy itself can probe `/readyz`.
+
+### Caddy
+
+```caddy
+restream.example.com {
+    reverse_proxy 127.0.0.1:8000 {
+        header_up Host {host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}
+```
+
+Caddy auto-provisions Let's Encrypt and sets WS upgrade by default.
+Set `RESTREAM_TRUSTED_PROXIES=127.0.0.1/32` in the container env.
+
+### nginx
+
+```nginx
+upstream restream_plus {
+    server 127.0.0.1:8000;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name restream.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/restream.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/restream.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://restream_plus;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade           $http_upgrade;
+        proxy_set_header Connection        "upgrade";
+        proxy_read_timeout                 3600s;
+    }
+}
+```
+
+Set `RESTREAM_TRUSTED_PROXIES=127.0.0.1/32` in the container env.
+
+### Traefik (dynamic file provider)
+
+```yaml
+http:
+  routers:
+    restream-plus:
+      rule: "Host(`restream.example.com`)"
+      service: restream-plus
+      tls:
+        certResolver: letsencrypt
+  services:
+    restream-plus:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8000"
+```
+
+Set `RESTREAM_TRUSTED_PROXIES=<traefik-container-ip>/32` (or the
+docker bridge subnet) in the container env.
+
+## Rootless podman
+
+Restream_Plus runs as uid 10001 inside the container (Phase 10 §F).
+Two podman-specific notes:
+
+- **Privileged-port bind (I-G5).** The image sets
+  `cap_net_bind_service=+ep` on nginx at build time so it can bind
+  privileged ports. Rootless podman strips file capabilities via
+  user-namespace mapping. Restream_Plus's default ports (1935, 8000)
+  are > 1024 so this is inert by default. **If you bind the panel
+  directly on `:443`** (no reverse proxy), add
+  `--cap-add NET_BIND_SERVICE` on the `podman run` command.
+
+- **Volume ownership.** If you bind-mount a pre-existing host
+  directory, podman's uid mapping may refuse to chown it. Pre-chown
+  on the host:
+
+  ```bash
+  sudo chown -R 10001:10001 /srv/restream
+  sudo chmod 0750 /srv/restream
+  ```
+
+## Compose
+
+The canonical compose definition lives at
+[docs/ops/compose.yaml](compose.yaml). Copy it, substitute the four
+`<PLACEHOLDER>` values, and run:
+
+```bash
+docker compose -f compose.yaml up -d
+```
+
+Notable features it locks in: `stop_grace_period: 30s` (the compose
+equivalent of `docker stop -t 30` — S-8); `--env-file` for the
+passphrase; named volume `restream-data` for `/data`;
+`restart: unless-stopped`; image healthcheck inherited (do NOT
+override — see ADR-0011 + Phase 10 §H).
+
+## Backups, upgrades, maintenance
+
+These each have their own doc — read them before you need them, not
+after.
+
+- [backup-restore.md](backup-restore.md) — set up backups
+  immediately after first boot.
+- [upgrade.md](upgrade.md) — moving from `vA.B.C` to `vX.Y.Z`.
+- [maintenance.md](maintenance.md) — weekly / monthly / quarterly
+  tasks.
+
+## Verify
+
+After first boot, check each:
+
+```bash
+# 1. Container healthy?
+docker inspect --format '{{.State.Health.Status}}' restream-plus
+# Expected: healthy   (may take up to 90 s after start)
+
+# 2. /livez (unconditional liveness)
+curl -fsS http://127.0.0.1:8000/livez
+# Expected: {"status":"alive"}
+
+# 3. /readyz (all five sub-checks ok=true)
+curl -fsS http://127.0.0.1:8000/readyz
+# Expected: every "ok": true under "checks"
+
+# 4. Volume ownership inside container
+docker exec restream-plus stat -c '%U:%G %a' /data
+# Expected: restream:restream 750
+
+# 5. nginx-rtmp is listening inside the container
+docker exec restream-plus ss -ltn 2>/dev/null || \
+docker exec restream-plus netstat -ltn
+# Expected: a LISTEN row on 0.0.0.0:1935  (inside the container namespace;
+#           host-side exposure is restricted by the -p 127.0.0.1:1935:1935
+#           mapping on `docker run`, NOT by nginx's listen address)
+```
+
+## Troubleshoot
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| Container exits immediately; `docker logs` says "RESTREAM_MASTER_PASSPHRASE is empty" | env var unset, empty, or shell-interpolated to empty | Check the env file is loaded; quote shell values (`'value'`); regenerate with `openssl rand -hex 32`. |
+| Container starts but you cannot log in as `admin` | `RESTREAM_ADMIN_PASSWORD` was not set on first boot, OR the passphrase you set differs from what you remember (shell-mangled by unquoted `$`) | **STOP. Do NOT wipe `/data`.** Restart with `RESTREAM_RESET_ADMIN_PASSWORD=1` and a new `RESTREAM_ADMIN_PASSWORD`. If the master passphrase itself was shell-mangled, file an issue — your DB is encrypted under a passphrase you don't know. |
+| Reverse proxy returns 502 forever | Proxy probing `/readyz` while container is in paste mode (returns 503 until you unlock), OR proxy probing `/livez` when you wanted `/readyz` | Probe `/readyz` for traffic gating; probe `/livez` only for liveness. Docker HEALTHCHECK probes `/livez` by design (ADR-0011 + Phase 10 §H). |
+| Volume permission denied at first boot | SELinux / AppArmor blocks the `init-data` chown, OR the host dir is pre-owned by a different uid | `sudo chown -R 10001:10001 /srv/restream && sudo chmod 0750 /srv/restream` before `docker run`. |
+| Rootless podman: nginx fails to bind privileged port | Capabilities stripped by user-namespace mapping (I-G5) | `--cap-add NET_BIND_SERVICE` on `podman run`. Default ports (1935, 8000) are > 1024 and unaffected. |
+| "I lost my admin password." | n/a | Restart with `RESTREAM_RESET_ADMIN_PASSWORD=1` and `RESTREAM_ADMIN_PASSWORD=<new-12+-char>`. All existing sessions get revoked. |
+| Login form rate-limited and you can't get in | In-memory rate-limit counters (ADR-0005); see [maintenance.md](maintenance.md) "I'm locked out". | Restart the container — rate-limit state is in-memory and resets. |
+
+### Logs and sharing for support
+
+`/data/logs/nginx-error.log` and `/data/logs/nginx-access.log` can
+contain ingest-key fragments in upstream error context (Phase 10 §I).
+**Do not paste these files into public issues, chat threads, or support
+forms** (S-22). For support, share filtered `docker logs` instead —
+see [maintenance.md](maintenance.md) for the redaction recipe.
+
+## Configuration appendix — `RESTREAM_*` environment variables
+
+The exhaustive list, drawn from [app/config.py](../../app/config.py)
+(S-6).
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `RESTREAM_PASSPHRASE_SOURCE` | `env` | `env` (default) or `paste`. See ADR-0010. |
+| `RESTREAM_MASTER_PASSPHRASE` | (unset) | Required when `PASSPHRASE_SOURCE=env`; forbidden when `=paste`. Min 12 chars; recommend `openssl rand -hex 32`. |
+| `RESTREAM_ADMIN_PASSWORD` | (unset) | The admin login password. Required on first boot (see *Carryovers* in [phase-12-design-memo.md](../architecture/phase-12-design-memo.md) §N.a). Min 12 chars. |
+| `RESTREAM_RESET_ADMIN_PASSWORD` | `false` | Set to `1`/`true` together with a new `RESTREAM_ADMIN_PASSWORD` to reset on next boot. Revokes all sessions. |
+| `RESTREAM_DATA_DIR` | `/data` | Inside-container path. Match the volume mount. Operators rarely change. |
+| `RESTREAM_BIND_HOST` | `0.0.0.0` | Container binds inside its namespace; use Docker's `-p` to control host exposure. |
+| `RESTREAM_BIND_PORT` | `8000` | Same. |
+| `RESTREAM_LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL`. |
+| `RESTREAM_LOG_FORMAT` | `json` | `json` (structured) or `console` (human-readable). Production: leave as `json`. |
+| `RESTREAM_HEALTHZ_CHECK_NGINX` | `true` | Whether `/readyz` probes nginx-rtmp. **Leave true in production** (Phase 10 Q1); dev-without-nginx must set `false`. |
+| `RESTREAM_TRUSTED_PROXIES` | `()` (empty) | Comma-separated CIDR list of trusted reverse-proxy IPs. Required when behind a proxy (see *Network exposure*). |
+
+## See also
+
+- [backup-restore.md](backup-restore.md)
+- [upgrade.md](upgrade.md)
+- [maintenance.md](maintenance.md)
+- [ADR-0005](../architecture/ADR-0005-auth-model.md) — auth model.
+- [ADR-0006](../architecture/ADR-0006-secret-encryption.md) — passphrase, KDF, AEAD.
+- [ADR-0010](../architecture/ADR-0010-headless-restart.md) — passphrase source modes.
+- [ADR-0011](../architecture/ADR-0011-health-liveness.md) — `/livez`, `/readyz`, `/healthz`.
+- [phase-10-design-memo.md](../architecture/phase-10-design-memo.md) — container invariants (60).
+- [phase-12-design-memo.md](../architecture/phase-12-design-memo.md) — ops-docs design.

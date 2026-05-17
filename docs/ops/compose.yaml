@@ -1,0 +1,47 @@
+# Canonical Restream_Plus compose definition.
+#
+# Referenced from docs/ops/deployment.md and docs/ops/release-checklist.md.
+# This is the SINGLE source of truth for the recommended deployment shape;
+# do not maintain a second copy.
+#
+# Substitute the four <PLACEHOLDER> values for your deployment:
+#   - <OWNER>     : GHCR namespace, e.g. "pelmentor"
+#   - <VERSION>   : pinned semver tag, e.g. "v1.0.0" (NEVER ":latest" or ":edge" in production)
+#   - <HOST_IP>   : IP address OBS will reach, e.g. "127.0.0.1" (loopback only)
+#                                            or  "192.168.1.10" (LAN only)
+#                  NEVER bind :1935 to a public interface — see deployment.md "Network exposure".
+#   - <PANEL_IP>  : IP address the web panel binds to, typically "127.0.0.1" behind a reverse proxy,
+#                                                      or "0.0.0.0" if the panel is LAN-only and
+#                                                         you accept the trade-off.
+
+services:
+  restream-plus:
+    image: ghcr.io/<OWNER>/restream-plus:<VERSION>
+    container_name: restream-plus
+    restart: unless-stopped
+
+    # Phase 10 I-D4 / ADR-0010: control-plane needs ~25 s to flush the
+    # final session-end audit row and let nginx-rtmp drain. Default 10 s
+    # SIGKILLs mid-publish; do not lower.
+    stop_grace_period: 30s
+
+    # Load the master passphrase + admin password from a host file with
+    # mode 0600, root-owned. Inline `environment:` blocks leak in
+    # `docker inspect` output (Phase 10 DA-7) — prefer the env-file.
+    env_file:
+      - /etc/restream/env
+
+    ports:
+      # RTMP ingest. Bind to loopback or LAN only.
+      - "<HOST_IP>:1935:1935/tcp"
+      # Web panel. Behind a reverse proxy in production.
+      - "<PANEL_IP>:8000:8000/tcp"
+
+    volumes:
+      - restream-data:/data
+
+    # HEALTHCHECK is defined in the image (probes /livez per ADR-0011
+    # + Phase 10 §H). Do not override here.
+
+volumes:
+  restream-data:

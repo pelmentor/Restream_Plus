@@ -17,10 +17,19 @@
 # tightens via a Renovate/Dependabot bump flow (DEFER-OR-AMEND-4 of
 # the memo).
 
-ARG BUILDPLATFORM
-ARG TARGETPLATFORM
-ARG TARGETARCH
-ARG TARGETOS
+# BuildKit auto-injects BUILDPLATFORM, TARGETPLATFORM, TARGETARCH, TARGETOS
+# at the global scope when referenced from `FROM --platform=...`. They MUST
+# NOT be redeclared globally — an empty-default `ARG BUILDPLATFORM` shadows
+# the built-in, which makes `FROM --platform=$BUILDPLATFORM` resolve to
+# `--platform=` and fails the build with "failed to parse platform". Per
+# stage, redeclare with a plain `ARG TARGETARCH` inside the FROM block (see
+# runtime stage below) — that DOES inherit the built-in correctly.
+#
+# Only TARGETARCH is currently consumed inside a stage (runtime, s6-overlay
+# arch selection). TARGETPLATFORM and TARGETOS are not used anywhere — if a
+# future RUN needs them, redeclare them WITH A BARE `ARG TARGETPLATFORM`
+# (no default) INSIDE the stage; declaring them here would re-introduce the
+# empty-shadow bug.
 
 # Pin versions / SHAs in one place so release PRs touch a single block.
 # CI populates every value via --build-arg from .github/checksums.env

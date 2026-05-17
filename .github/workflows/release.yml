@@ -105,9 +105,17 @@ jobs:
           TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           set -euo pipefail
-          inspect_out=$(docker manifest inspect \
-              "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}" 2>&1 || true)
-          inspect_rc=$?
+          # NOTE: capture exit code via `if cmd; then ... else rc=$?; fi`.
+          # Do NOT use `var=$(cmd || true); rc=$?` — under `set -e`, the
+          # `|| true` makes the command substitution always succeed, so
+          # `$?` then reflects the assignment (always 0), defeating the
+          # preflight check. This was the bug that stillborn v1.0.0.
+          if inspect_out=$(docker manifest inspect \
+              "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}" 2>&1); then
+              inspect_rc=0
+          else
+              inspect_rc=$?
+          fi
           if [ "${inspect_rc}" -eq 0 ] || printf '%s' "${inspect_out}" | grep -q '"schemaVersion"'; then
               echo "::error::PA-19: tag :${TAG} already exists on GHCR — refusing to overwrite"
               exit 1
@@ -122,7 +130,7 @@ jobs:
               exit 1
           fi
           # Unknown error — fail closed.
-          echo "::error::PA-19: unexpected error from docker manifest inspect"
+          echo "::error::PA-19: unexpected error from docker manifest inspect (rc=${inspect_rc})"
           echo "${inspect_out}" >&2
           exit 1
 

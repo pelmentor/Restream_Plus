@@ -4,7 +4,7 @@
 this project cold, after a context compaction or a fresh conversation.
 Read this first; everything else is reachable from here.
 
-**Last updated:** 2026-05-17 (post-ADR-0005 bootstrap reconciliation — v1.0.0 candidate)
+**Last updated:** 2026-05-17 (v1.0.0 tag-push attempted — STILLBORN on a latent release.yml preflight bug; tag still in place but no GHCR artifact published, recoverable. See §"v1.0.0 tag-push attempt" tail section.)
 
 **GitHub:** https://github.com/pelmentor/Restream_Plus
 (initial commit `a100f2a` covers Phases 0–10; Phase 11 + Phase 12 +
@@ -78,31 +78,63 @@ frontend typecheck + lint + 9/9 vitest + build at ~214 KB gzipped;
 Docker amd64 + arm64 build at ~669 MB, runtime-smoke OK, grype HIGH+
 clean, merge+sign publishes to ghcr.io/pelmentor/restream-plus.
 
-When resuming: read §"Resume checklist" below. The pre-v1.0.0
-gating drift (ADR-0005 bootstrap) is now resolved; the next move
-is operator-facing — cut the first `v1.0.0` tag (which exercises
-the already-green `release.yml` workflow + the release-checklist.md
-walkthrough end-to-end for real publishing). A SCHEMA_VERSION bump
-is in this release; the release notes MUST carry `[schema-bump]`
-per `docs/ops/release-checklist.md:75-79`. The export → reimport
-path in `docs/ops/upgrade.md` is the upgrade procedure across
-SCHEMA_VERSION boundaries; for v0.x → v1.0 there are no production
-deployments to migrate.
+When resuming: read §"Resume checklist" below. The v1.0.0 cut
+was ATTEMPTED on 2026-05-17 — release-prep PR #1 merged, branch
+protection applied, `git tag v1.0.0` + `git push origin v1.0.0`
+fired — and `release.yml` run `25992247118` FAILED at the
+preflight job. Root cause is a latent shell-rc-capture bug in
+`.github/workflows/release.yml` lines 107–114 (the `|| true` on
+the `docker manifest inspect` command substitution makes the
+subshell always exit 0; `inspect_rc=$?` then captures the
+ASSIGNMENT's exit code (always 0); the `[ "${inspect_rc}" -eq 0 ]`
+check is therefore ALWAYS true — preflight reports "tag exists
+on GHCR" regardless of reality). Never exercised before today
+because no `vX.Y.Z` had ever been cut. GHCR has NO `:v1.0.0`
+artifact (preflight failed before build/scan/smoke/sign).
+GitHub release was NEVER created (`gh release create` never ran).
+The release is recoverable. See §"v1.0.0 tag-push attempt
+(2026-05-17 — STILLBORN; preflight bug)" tail section for the
+exact bug location, the patch shape, and the post-fix decision
+(tag-delete-and-recut vs cut-v1.0.1). Release notes draft sits
+at `docs/releases/v1.0.0.md` (correct + ships verbatim once the
+preflight fix lands and tag is re-cut).
 
 ---
 
-## Repository / git state (2026-05-17, post-ADR-0005 bootstrap reconciliation)
+## Repository / git state (2026-05-17, post-v1.0.0-tag-push-attempt)
 
 - **Remote:** `origin → https://github.com/pelmentor/Restream_Plus.git`
 - **Default branch:** `main` (created with `git init -b main`)
-- **HEAD:** `4f7eb17 feat(auth): implement ADR-0005 first-boot
-  admin-password autogen` (pushed 2026-05-17, all CI green at this
-  SHA — see below). Always re-verify the actual tip with
-  `git log --oneline -1` on resume in case later commits landed.
-  Prior milestones: `cab8ecf` (post-Rule-№5-audit drift fixes —
-  docs-only), `1e65923` (Phase-11-fix-iteration docs refresh),
-  `d65bb2e` (the 4 reviewer-pass CI/Docker follow-ups).
-- **CI status at 4f7eb17:** every required check green.
+- **HEAD:** `2ef1b06 docs(release): prep v1.0.0 — release notes +
+  applies-to bumps (#1)` (pushed 2026-05-17 as a squash-merge of
+  release-prep PR #1). Always re-verify with
+  `git log --oneline -1` on resume.
+  Prior milestones: `4f7eb17` (ADR-0005 first-boot autogen),
+  `0f692d5` (handoff doc pin), `cab8ecf` (post-Rule-№5-audit drift
+  fixes), `1e65923` (Phase-11-fix-iteration docs refresh).
+- **Tags:** `v1.0.0` exists at `2ef1b06`. **STILLBORN — release.yml
+  failed at preflight; no GHCR artifact published; no GitHub release
+  created.** Decision pending: tag-delete-and-recut after preflight
+  bug fix (Rule №1) vs cut-v1.0.1. See §"v1.0.0 tag-push attempt"
+  tail section.
+- **Branch protection on `main`:** APPLIED on 2026-05-17 per
+  `docs/ops/branch-protection.md`. Verified state:
+  `required_status_checks.contexts` = `[backend-test, backend-lint,
+  frontend, backend-lockfile, workflow-pins]`, `strict=true`,
+  `enforce_admins=true`, `required_linear_history=true`,
+  `allow_force_pushes=false`, `allow_deletions=false`. Verify with
+  `gh api repos/pelmentor/Restream_Plus/branches/main/protection --jq '...'`
+  per branch-protection.md §"How to verify".
+- **Known protection gap:** any docs-only PR (paths under `docs/**`
+  or `*.md`) does NOT trigger `ci.yml` (paths-ignore excludes them),
+  so the 5 required checks never report, blocking merge under
+  `enforce_admins=true`. THIS SESSION'S SESSION_HANDOFF.md UPDATE
+  IS UNCOMMITTED ON LOCAL `main` for this exact reason — see
+  `git status`. Mitigations: (i) widen `ci.yml` to emit success on
+  docs-only paths, (ii) admin-bypass docs PRs via UI (requires
+  toggling enforce_admins temporarily), or (iii) bundle the
+  SESSION_HANDOFF.md update inside the next non-docs PR's diff.
+- **CI status at 4f7eb17 (parent of `2ef1b06`):** every required check green.
   - `ci` workflow run `25991473782` — 6/6 (`workflow-pins`,
     `frontend`, `backend-lint`, `backend-lockfile`, `backend-test`,
     `pr-image-smoke`).
@@ -110,12 +142,25 @@ deployments to migrate.
     `build (amd64)`, `build (arm64)`, `runtime-smoke (amd64)`,
     `scan (amd64)`, `merge + sign` — the cosign-signed multi-arch
     GHCR publish).
+- **CI status at `2ef1b06` (current HEAD):** `build-image` run
+  `25991606666` — 6/6 success (no code change vs `4f7eb17`, image is
+  byte-identical). `ci` workflow did NOT trigger on `2ef1b06` (docs-only
+  squash merge — paths-ignore correctly skipped it).
+- **release.yml run at `2ef1b06` tag-push:** run `25992247118` —
+  FAILED at preflight (bug, see tail section); all downstream jobs
+  skipped. **NOTHING was published to GHCR.**
   Always re-confirm at resume with
-  `gh run list --branch main --limit 2`.
-- **Image published:** `ghcr.io/pelmentor/restream-plus@sha256:...`
-  (uncertain tag — see `release.yml` flow for the `:vX.Y.Z` path
-  exercised by the next v1.0.0 tag; today's manifest is the
-  `:main`-tracking flavor from `build-image.yml`).
+  `gh run list --repo pelmentor/Restream_Plus --branch main --limit 3`
+  and `gh run list --repo pelmentor/Restream_Plus --workflow release.yml --limit 2`.
+- **Local tooling:** cosign 3.0.6 installed via winget on 2026-05-17,
+  alias `cosign-windows-amd64.exe`. Use this when running
+  release-checklist step 11 (cosign verify against local clock).
+  Verify with `cosign-windows-amd64 version`.
+- **Image published:** at `4f7eb17` head, build-image.yml previously
+  published `ghcr.io/pelmentor/restream-plus@sha256:...` tagged
+  `:edge` + `:sha-<short>`. At `2ef1b06`, build-image.yml re-published
+  the same byte-identical image with updated `:edge`/`:sha-2ef1b06`.
+  No `:vX.Y.Z` tag exists on GHCR (release.yml never got past preflight).
 - **Author identity:** `pelmentor <cssnik2013@gmail.com>` — set
   **repo-locally** in `.git/config` (NOT global). Never overwrite
   the global git config; if a teammate clones, they set their own.
@@ -221,10 +266,13 @@ GHA publishes to GHCR.
 ## Resume checklist (read in this order)
 
 1. **This file** (`docs/SESSION_HANDOFF.md`) — orientation. The
-   §"ADR-0005 first-boot bootstrap reconciliation" section at the
-   tail carries the most recent state (2026-05-17 — the last
-   pre-v1.0.0 ADR-vs-code drift closed). §"Phase 11 — what landed"
-   and §"Phase 12 — what landed" cover the prior milestones.
+   §"v1.0.0 tag-push attempt (2026-05-17 — STILLBORN; preflight
+   bug)" section at the very tail carries the MOST recent state
+   (the v1.0.0 cut attempted, bug discovered, decision pending).
+   §"ADR-0005 first-boot bootstrap reconciliation" precedes it
+   (the last pre-v1.0.0 ADR-vs-code drift closed). §"Phase 11 —
+   what landed" and §"Phase 12 — what landed" cover earlier
+   milestones.
 2. **`docs/CODE_PLAN.md`** — the phased implementation plan with file
    paths and acceptance criteria. All 12 phases are now ✅ COMPLETE.
    No "next phase"; next move is operator-facing (see TL;DR at top
@@ -3259,11 +3307,201 @@ All 7 reviewer-claimed fixes confirmed landed:
 
 ### Remaining open items for v1.0.0+
 
-- Cut the `v1.0.0` tag (`docs/ops/release-checklist.md` straight
-  down; release body MUST carry `[schema-bump]` per the new SCHEMA
-  bump). The CI's `release.yml` tag-triggered path is the only thing
-  today's green-CI doesn't yet exercise end-to-end.
+- **PRIMARY**: fix the `release.yml` preflight rc-capture bug (see
+  next section §"v1.0.0 tag-push attempt"). Until this lands and a
+  release.yml run actually publishes a `:vX.Y.Z` image, v1.0.0 has
+  not shipped — the git tag exists but is stillborn.
 - The 3 other smaller carryovers (first-run-complete auto-flip,
   YouTube backup-ingest, AuthReprompt grant-expired retry) are
   scope-bounded follow-ups; none gate v1.0.
+
+---
+
+## v1.0.0 tag-push attempt (2026-05-17 — STILLBORN; preflight bug)
+
+> **RESOLVED 2026-05-17 (post-/compact resume)**: user authorized
+> both **patch option B** (`if cmd; then rc=0; else rc=$?; fi`) and
+> **tag-recut option (a)** (delete stillborn `v1.0.0`, re-cut at
+> post-fix HEAD). Fix bundled with this handoff update in PR
+> `fix/release-preflight-rc-capture`. Tag recut + post-tag verify
+> (release-checklist.md steps 8–14) proceeds after PR merges and the
+> new `release.yml` run goes green.
+
+The first end-to-end exercise of `release.yml` (`v1.0.0` tag pushed
+to origin at `2ef1b06`) FAILED at the preflight job before any
+artifact reached GHCR. Root cause is a latent shell-rc-capture bug
+in `.github/workflows/release.yml`. Tag remains in place; GHCR is
+untouched; the GitHub release was never created. Full state below.
+
+### What was done before the bug fired
+
+1. ✅ Release-prep PR #1 opened from `release-prep/v1.0.0` → `main`:
+   - New `docs/releases/v1.0.0.md` (canonical release notes — leads
+     with `[schema-bump]` per S-22/BA-22 since SCHEMA_VERSION bumps
+     1 → 2 in this release).
+   - `branch-protection.md` + `ghcr-retention.md`: `applies-to: edge`
+     → `v1.0.0+`.
+   - `platforms-reference.md`: two stale `(TBD)` refs replaced with
+     live links to `maintenance.md` + `release-checklist.md` step 3.
+   - PR squash-merged to `main` as `2ef1b06`.
+2. ✅ Branch protection applied on `main` per `branch-protection.md`
+   (see Repository state block above for the verified settings).
+3. ✅ Cosign 3.0.6 installed locally via winget
+   (`Sigstore.Cosign`, alias `cosign-windows-amd64.exe`).
+4. ✅ Annotated git tag `v1.0.0` created at `2ef1b06` with message
+   `v1.0.0 — initial release [schema-bump]` and pushed to origin.
+5. ⏳ `release.yml` run `25992247118` triggered on the tag push.
+6. ❌ **preflight job FAILED** with
+   `::error::PA-19: tag :v1.0.0 already exists on GHCR — refusing to overwrite`
+   even though no `:v1.0.0` image existed on GHCR.
+7. → All downstream jobs (`build (matrix)`, `runtime-smoke (amd64)`,
+   `scan (amd64)`, `merge + sign`) marked `skipped`.
+
+### Root cause — shell-rc-capture bug at `.github/workflows/release.yml:107-114`
+
+```bash
+set -euo pipefail
+inspect_out=$(docker manifest inspect \
+    "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}" 2>&1 || true)
+inspect_rc=$?
+if [ "${inspect_rc}" -eq 0 ] || printf '%s' "${inspect_out}" | grep -q '"schemaVersion"'; then
+    echo "::error::PA-19: tag :${TAG} already exists on GHCR — refusing to overwrite"
+    exit 1
+fi
+```
+
+The `|| true` on line 109 makes the command substitution always exit
+0 (the `|| true` is what the subshell terminates with). Line 110's
+`inspect_rc=$?` then captures the exit code of the **assignment
+expression**, which in bash is always 0 when the right-hand side
+doesn't fail. Result: `inspect_rc` is always `0`, so the
+`[ "${inspect_rc}" -eq 0 ]` check on line 111 is always true and
+preflight always reports "tag exists" regardless of GHCR reality.
+
+The comment block above the step (lines 91–103) describes the
+correct intended behaviour (rc=0 → exists; non-zero with "manifest
+unknown" → absent; non-zero with "unauthorized" → genuine error).
+Only the implementation is wrong. Never exercised before today
+because no `vX.Y.Z` had ever been cut — `build-image.yml`'s
+equivalent preflight on `:edge` doesn't suffer the same bug because
+`:edge` is allowed to overwrite (no PA-19 check there).
+
+### Patch shapes (pick one — both fix the root cause)
+
+**Option A — `set +e` / `set -e` bracket** (minimal diff, preserves
+existing structure):
+
+```bash
+set -euo pipefail
+set +e
+inspect_out=$(docker manifest inspect \
+    "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}" 2>&1)
+inspect_rc=$?
+set -e
+if [ "${inspect_rc}" -eq 0 ] || printf '%s' "${inspect_out}" | grep -q '"schemaVersion"'; then
+    ...
+```
+
+**Option B — `if cmd; then ... else ... fi`** (idiomatic, no
+set-toggling):
+
+```bash
+set -euo pipefail
+if inspect_out=$(docker manifest inspect \
+    "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}" 2>&1); then
+    inspect_rc=0
+else
+    inspect_rc=$?
+fi
+if [ "${inspect_rc}" -eq 0 ] || printf '%s' "${inspect_out}" | grep -q '"schemaVersion"'; then
+    ...
+```
+
+Option B is preferred (no set-flag toggling; the structure makes the
+exit-code semantics obvious to the next reader). Either way, the
+existing comment block (lines 91–103) needs no edit — it already
+describes the right behaviour.
+
+### Decision required before re-tagging
+
+After the fix lands on `main`, two paths forward:
+
+- **(a) Delete the stillborn `v1.0.0` git tag + re-cut at the
+  post-fix HEAD** — Rule №1 ("no quick fixes — make v1.0.0 actually
+  be v1.0.0"). Safe in this specific case because GHCR has NO
+  `:v1.0.0` artifact (preflight failed before publish), no GitHub
+  release was created, and the tag was pushed minutes ago — no
+  consumer has had time to pin to it. `git push origin :v1.0.0`
+  (remote delete) + `git tag -d v1.0.0` (local) + re-tag + re-push.
+  PA-19 immutability is preserved because that rule is about GHCR
+  tag overwrites, which never happened.
+
+- **(b) Skip v1.0.0 forever; cut v1.0.1 at the post-fix HEAD** —
+  avoids tag deletion (some shops treat git tags as immutable too)
+  but leaves `v1.0.0` as a permanent stillborn in `git log` /
+  `git tag --list` forever. Violates the spirit of Rule №2 ("no
+  migration baggage / greenfield design"). Operators would forever
+  wonder what happened to v1.0.0.
+
+Recommendation: **option (a)**, with the user's explicit
+authorization. Tag deletion is a shared-state action.
+
+### Fix-PR plumbing (this is automatable; the tag decision isn't)
+
+The `release.yml` patch touches `.github/workflows/`, which is NOT
+in `ci.yml`'s `paths-ignore` list — the fix PR will trigger all 5
+required checks normally and merge through branch protection
+without issue. The `workflow-pins` job will not flag the patch
+because no `uses:` pins change.
+
+### Re-tag plumbing (after option-a approval)
+
+```bash
+git push origin :v1.0.0          # remote delete (irreversible
+                                 # PA-19 spirit is about GHCR not git
+                                 # — safe here because GHCR untouched)
+git tag -d v1.0.0                # local delete
+git fetch origin --tags --prune  # sync local
+git checkout main && git pull --ff-only origin main
+git tag v1.0.0 -m "v1.0.0 — initial release [schema-bump]"
+git push origin v1.0.0           # re-triggers release.yml at fixed code
+```
+
+Then resume `docs/ops/release-checklist.md` at step 8 (verify
+release.yml succeeded) and continue through 14 (announce).
+
+### What is already in flight / verified
+
+- Release notes at `docs/releases/v1.0.0.md` — content is correct
+  for v1.0.0; ships verbatim once the preflight is fixed and tag
+  re-cut.
+- Branch protection on `main` — applied and verified.
+- Cosign 3.0.6 — installed locally; `cosign-windows-amd64 version`
+  prints the banner.
+- Kick browser spot-check (release-checklist.md step 3) — STILL
+  REQUIRED HUMAN ACTION before announce. WebFetch confirmed Kick
+  returns 403 to non-browser clients (matching what
+  platforms-reference.md says); the URL has been baked into the
+  codebase for months and the doc was last subagent-verified
+  May 2026. Open Kick help articles 7066931 / 7135578 in a real
+  browser and confirm the ingest URL still matches
+  `rtmps://fa723fc1b171.global-contribute.live-video.net:443/app`.
+- Real-RTMP smoke (release-checklist.md step 12) — HUMAN-REQUIRED
+  after the re-cut succeeds and the image is published.
+- `gh release create v1.0.0 --notes-file docs/releases/v1.0.0.md`
+  (release-checklist.md step 13) — DO LAST, after re-cut +
+  release.yml green + cosign verify + real-RTMP smoke.
+
+### This handoff doc note
+
+This SESSION_HANDOFF.md update is UNCOMMITTED on local `main`
+(`git status` shows the diff). Branch protection now applied on
+`main` blocks docs-only direct pushes (paths-ignore on `ci.yml`
+means the 5 required checks never report for docs-only PRs).
+Options: (i) include this update inside the `release.yml` fix PR's
+diff (recommended — one PR carries both code fix + handoff bump),
+(ii) widen ci.yml to emit success on docs paths, or (iii) accept
+admin-bypass for docs PRs (requires temporarily flipping
+`enforce_admins=false`). Per project Rule №1, option (i) avoids
+the whole gap.
 

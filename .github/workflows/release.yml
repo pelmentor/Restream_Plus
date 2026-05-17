@@ -232,19 +232,33 @@ jobs:
           IMAGE_REF: smoke:${{ matrix.arch_tag }}
         run: |
           set -euo pipefail
+          # H1 — image size ≤ 720 MB. The 420 MB target from Phase 10
+          # was speculation never validated by a real Docker build;
+          # ci.yml H1 (lines 323-337) documents the bump to 720 MB
+          # after first real measurement (Phase 11 round-6). Keep
+          # this threshold in lockstep with ci.yml + build-image.yml.
           size_bytes=$(docker image inspect "$IMAGE_REF" --format='{{.Size}}')
           size_mb=$(( size_bytes / 1024 / 1024 ))
-          [ "${size_mb}" -le 420 ] || { echo "::error::H1: ${size_mb} MB > 420 MB"; exit 1; }
-          docker run --rm --entrypoint='' "$IMAGE_REF" getcap /usr/sbin/nginx | grep -q cap_net_bind_service
+          echo "H1 image size: ${size_mb} MB"
+          [ "${size_mb}" -le 720 ] || { echo "::error::H1: ${size_mb} MB > 720 MB"; exit 1; }
+          # H2-H8 — keep ::error::H<N> annotations in lockstep with
+          # ci.yml:339-373 + build-image.yml:183-209. The bare grep
+          # forms would still fail-closed under `set -e`, but the
+          # named annotations are what surface in the Actions UI and
+          # make release-time triage instant.
+          docker run --rm --entrypoint='' "$IMAGE_REF" getcap /usr/sbin/nginx | grep -q cap_net_bind_service \
+              || { echo "::error::H2: nginx missing CAP_NET_BIND_SERVICE"; exit 1; }
           docker run --rm --entrypoint='' "$IMAGE_REF" nginx -t -c /etc/nginx/nginx.conf
           docker run --rm --entrypoint='' "$IMAGE_REF" /opt/venv/bin/python -c "import app.main"
           if docker run --rm --entrypoint='' "$IMAGE_REF" sh -c 'find /opt/venv -name __pycache__ -type d -print -quit' | grep -q .; then
-              echo "::error::H5 pycache present"; exit 1
+              echo "::error::H5: pycache directories present in /opt/venv"; exit 1
           fi
-          docker run --rm --entrypoint='' "$IMAGE_REF" id restream | grep -q 'uid=10001'
-          docker run --rm --entrypoint='' "$IMAGE_REF" stat -c '%U:%G' /data | grep -qx 'restream:restream'
+          docker run --rm --entrypoint='' "$IMAGE_REF" id restream | grep -q 'uid=10001' \
+              || { echo "::error::H6: restream user does not have uid=10001"; exit 1; }
+          docker run --rm --entrypoint='' "$IMAGE_REF" stat -c '%U:%G' /data | grep -qx 'restream:restream' \
+              || { echo "::error::H7: /data ownership is not restream:restream"; exit 1; }
           if docker run --rm "$IMAGE_REF" >/dev/null 2>&1; then
-              echo "::error::H8 entrypoint did not fail-fast"; exit 1
+              echo "::error::H8: entrypoint did not fail-fast on missing RESTREAM_MASTER_PASSPHRASE"; exit 1
           fi
 
   # ---------------------------------------------------------------------------
@@ -332,6 +346,7 @@ jobs:
         run: |
           set -euo pipefail
           digest_file=$(find "${RUNNER_TEMP}/digests" -maxdepth 1 -type f | head -n1)
+          [ -n "${digest_file}" ] || { echo "::error::no digest file"; exit 1; }
           digest="sha256:$(basename "${digest_file}")"
           docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${digest}"
           docker tag  "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${digest}" scan:amd64

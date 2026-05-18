@@ -155,7 +155,7 @@ def create_app(
 
     app = FastAPI(
         title="Restream_Plus",
-        version="0.1.0",
+        version=__version__,
         lifespan=_make_lifespan(
             settings=settings,
             key_material=key_material,

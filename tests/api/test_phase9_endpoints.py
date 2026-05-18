@@ -358,7 +358,11 @@ async def test_about_returns_version_and_uptime(
     r = await auth_client.get("/api/about")
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["version"] == "0.1.0"
+    # Track the project's canonical version string rather than a hardcoded
+    # literal — keeps this test in sync with `pyproject.toml` bumps.
+    from app.version import __version__ as _expected_version
+
+    assert body["version"] == _expected_version
     assert isinstance(body["build_sha"], str)
     assert isinstance(body["uptime_seconds"], int | float)
     assert body["uptime_seconds"] >= 0

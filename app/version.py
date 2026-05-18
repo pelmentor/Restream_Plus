@@ -12,6 +12,6 @@ from __future__ import annotations
 
 import os
 
-__version__: str = "0.1.0"
+__version__: str = "1.1.0"
 
 BUILD_SHA: str | None = os.environ.get("RESTREAM_BUILD_SHA") or None

@@ -104,6 +104,25 @@ class AppSettings(BaseSettings):
     `RESTREAM_HEALTHZ_CHECK_NGINX=false`. The test suite does this in
     `tests/api/conftest.py::_build_settings`."""
 
+    cookie_secure: bool = True
+    """Whether the session cookie is set with the `Secure` flag.
+
+    Default True (production-correct: the operator either runs behind
+    a TLS reverse proxy or accepts that browsers will reject the
+    cookie over plain HTTP). When True the cookie name is
+    `__Host-rp_session` (whose `__Host-` prefix REQUIRES `Secure`,
+    `Path=/`, and no `Domain` — strongest stock posture).
+
+    Set `RESTREAM_COOKIE_SECURE=false` for plain-HTTP setups (LAN-only
+    NAS deployments, dev). When False the cookie name drops the
+    `__Host-` prefix to `rp_session` (`__Host-` without Secure is
+    rejected by every modern browser; keeping the prefix would silently
+    break auth). The other defenses stay: `HttpOnly`, `SameSite=Lax`,
+    `Path=/`. v1.0.0 and v1.1.0 + v1.1.1 hardcoded `Secure=True`, which
+    made the web panel unreachable on HTTP-only deployments — login
+    succeeded server-side but the browser dropped the Set-Cookie,
+    every follow-up request 401'd, WS 403'd. v1.1.2 added this knob."""
+
     trusted_proxies: Annotated[tuple[IpNetwork, ...], NoDecode] = ()
     """Operator-supplied CIDR list of trusted reverse-proxy peers.
 

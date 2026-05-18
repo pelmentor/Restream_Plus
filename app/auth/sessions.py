@@ -82,12 +82,37 @@ if TYPE_CHECKING:  # pragma: no cover
 
 _logger = structlog.get_logger(__name__)
 
-SESSION_COOKIE_NAME: Final[str] = "__Host-rp_session"
-"""HTTP cookie name. The `__Host-` prefix is enforced by browsers:
-it requires `Secure`, `Path=/`, and no `Domain` attribute, refusing
-any Set-Cookie that violates these. Combined with `HttpOnly` and
-`SameSite=Lax`, this gives us the strongest stock cookie posture
-without needing a CSRF token (per Backend Architect Q3)."""
+SESSION_COOKIE_NAME_SECURE: Final[str] = "__Host-rp_session"
+"""HTTP cookie name in default (secure=True) mode. The `__Host-`
+prefix is enforced by browsers: it requires `Secure`, `Path=/`, and
+no `Domain` attribute, refusing any Set-Cookie that violates these.
+Combined with `HttpOnly` and `SameSite=Lax`, this gives us the
+strongest stock cookie posture without needing a CSRF token (per
+Backend Architect Q3)."""
+
+SESSION_COOKIE_NAME_INSECURE: Final[str] = "rp_session"
+"""HTTP cookie name when `cookie_secure=False` (HTTP-only deployments).
+`__Host-` prefix CANNOT be used without `Secure`; every modern browser
+rejects such cookies silently, leaving the operator with a broken
+login flow. We drop the prefix in insecure mode and keep the other
+defenses (`HttpOnly`, `SameSite=Lax`, `Path=/`)."""
+
+
+def session_cookie_name(*, secure: bool) -> str:
+    """Cookie name picked at request time from the runtime config.
+
+    Centralized here so the auth router, the WS handler, and any test
+    that needs to read the cookie all agree. Caller passes
+    `AppSettings.cookie_secure` (or a test-fixture override).
+    """
+    return SESSION_COOKIE_NAME_SECURE if secure else SESSION_COOKIE_NAME_INSECURE
+
+
+# Backwards-compatible alias kept for the v1.0.0/v1.1.x cookie name in
+# secure mode. Callers that USED the old constant directly should be
+# audited and switched to `session_cookie_name(secure=settings.cookie_secure)`
+# so the insecure path actually works. v1.1.2 audited every call site.
+SESSION_COOKIE_NAME: Final[str] = SESSION_COOKIE_NAME_SECURE
 
 SESSION_COOKIE_LIFETIME: Final[timedelta] = timedelta(days=30)
 """30-day cookie. Matches ADR-0005 §"Login flow"."""
@@ -213,27 +238,30 @@ def compute_session_token_hash(cookie_value: str, mac_key: bytes) -> bytes:
 def build_cookie_set_kwargs(
     cookie_value: str,
     *,
+    secure: bool,
     lifetime: timedelta = SESSION_COOKIE_LIFETIME,
 ) -> dict[str, object]:
     """Return the kwargs FastAPI/Starlette `response.set_cookie()` wants.
 
-    Centralized here so every Set-Cookie path has the same posture: the
-    `__Host-` prefix invariants (`Secure`, `Path=/`, no Domain),
-    `HttpOnly`, `SameSite=Lax`. Lifetime is in seconds for the
-    `Max-Age` attribute.
+    Centralized here so every Set-Cookie path has the same posture.
+    Caller passes `secure` from runtime config (`AppSettings.cookie_secure`)
+    — when True, cookie name carries the `__Host-` prefix and the
+    Secure flag (the prefix REQUIRES Secure; together they enforce
+    HTTPS-only). When False, both are dropped (HTTP-only LAN setups);
+    the other defenses stay (`HttpOnly`, `SameSite=Lax`, `Path=/`).
     """
     return {
-        "key": SESSION_COOKIE_NAME,
+        "key": session_cookie_name(secure=secure),
         "value": cookie_value,
         "max_age": int(lifetime.total_seconds()),
-        "secure": True,
+        "secure": secure,
         "httponly": True,
         "samesite": "lax",
         "path": "/",
     }
 
 
-def build_cookie_delete_kwargs() -> dict[str, object]:
+def build_cookie_delete_kwargs(*, secure: bool) -> dict[str, object]:
     """Kwargs for `response.delete_cookie()` mirroring `build_cookie_set_kwargs`.
 
     Same attributes the cookie was set with (otherwise some user
@@ -241,8 +269,8 @@ def build_cookie_delete_kwargs() -> dict[str, object]:
     delete_cookie emits `Max-Age=0` itself.
     """
     return {
-        "key": SESSION_COOKIE_NAME,
-        "secure": True,
+        "key": session_cookie_name(secure=secure),
+        "secure": secure,
         "httponly": True,
         "samesite": "lax",
         "path": "/",
@@ -454,10 +482,13 @@ __all__ = [
     "RateLimitedError",
     "SESSION_COOKIE_LIFETIME",
     "SESSION_COOKIE_NAME",
+    "SESSION_COOKIE_NAME_INSECURE",
+    "SESSION_COOKIE_NAME_SECURE",
     "SESSION_COOKIE_VALUE_RANDOM_BYTES",
     "SessionAuthService",
     "build_cookie_delete_kwargs",
     "build_cookie_set_kwargs",
     "compute_session_token_hash",
     "generate_session_cookie_value",
+    "session_cookie_name",
 ]

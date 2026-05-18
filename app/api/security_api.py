@@ -46,6 +46,7 @@ from typing import Annotated, Final
 import structlog
 from fastapi import APIRouter, Header, Request, Response, status
 
+from app.api.deps import SettingsDep
 from app.api.errors import ErrorCode, http_exception
 from app.api.schemas import (
     AboutView,
@@ -128,6 +129,7 @@ async def rotate_passphrase(
     keys: DerivedKeysDep,
     response: Response,
     request: Request,
+    settings: SettingsDep,
     x_reprompt_grant: Annotated[str | None, Header(alias="X-Reprompt-Grant")] = None,
 ) -> Response:
     """Re-key every credential under a new master passphrase. Revoke all
@@ -327,7 +329,7 @@ async def rotate_passphrase(
             },
         )
 
-        response.delete_cookie(**build_cookie_delete_kwargs())  # type: ignore[arg-type]
+        response.delete_cookie(**build_cookie_delete_kwargs(secure=settings.cookie_secure))  # type: ignore[arg-type]
         response.status_code = status.HTTP_204_NO_CONTENT
         return response
     finally:
@@ -389,6 +391,7 @@ async def revoke_http_session(
     state: AuthStateDep,
     session: SessionDep,
     response: Response,
+    settings: SettingsDep,
 ) -> Response:
     """Revoke a single HTTP session for the current user.
 
@@ -417,7 +420,7 @@ async def revoke_http_session(
         data={"fingerprint": id_fingerprint},
     )
     if auth.session is not None and match.token_hash == auth.session.token_hash:
-        response.delete_cookie(**build_cookie_delete_kwargs())  # type: ignore[arg-type]
+        response.delete_cookie(**build_cookie_delete_kwargs(secure=settings.cookie_secure))  # type: ignore[arg-type]
     response.status_code = status.HTTP_204_NO_CONTENT
     return response
 

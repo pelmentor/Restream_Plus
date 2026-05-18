@@ -14,10 +14,11 @@ import httpx
 import pytest
 from app.api.middleware import LockedModeMiddleware
 from app.auth.key_material import KeyMaterial
-from app.auth.sessions import SESSION_COOKIE_NAME
 from app.crypto.passwords import hash_password
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from tests.api.conftest import SESSION_COOKIE_NAME
 
 from .conftest import ADMIN_PASSWORD
 

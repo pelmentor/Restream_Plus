@@ -501,6 +501,7 @@ The exhaustive list, drawn from [app/config.py](../../app/config.py)
 | `RESTREAM_LOG_FORMAT` | `json` | `json` (structured) or `console` (human-readable). Production: leave as `json`. |
 | `RESTREAM_HEALTHZ_CHECK_NGINX` | `true` | Whether `/readyz` probes nginx-rtmp. **Leave true in production** (Phase 10 Q1); dev-without-nginx must set `false`. |
 | `RESTREAM_TRUSTED_PROXIES` | `()` (empty) | Comma-separated CIDR list of trusted reverse-proxy IPs. Required when behind a proxy (see *Network exposure*). |
+| `RESTREAM_COOKIE_SECURE` | `true` | When `true`: session cookie name is `__Host-rp_session` and carries the `Secure` flag (requires HTTPS — production-correct behind a TLS reverse proxy). When `false`: cookie name drops the `__Host-` prefix to `rp_session` and the `Secure` flag is omitted (required for plain-HTTP setups; browsers reject `__Host-` + Secure cookies on `http://`). Set to `false` for LAN-only NAS deployments without TLS in front. Added in v1.1.2 — v1.0.0 through v1.1.1 hardcoded `true` and the panel was unusable on plain HTTP. |
 
 ## See also
 

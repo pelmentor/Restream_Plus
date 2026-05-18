@@ -46,7 +46,8 @@ from app.api.schemas import (
     WsEnvelope,
 )
 from app.auth.key_material import KeyMaterialState
-from app.auth.sessions import SESSION_COOKIE_NAME
+from app.auth.sessions import session_cookie_name
+from app.config import AppSettings
 from app.domain.target import Target
 from app.domain.worker_state import WorkerSnapshot
 from app.fanout.event_bus import (
@@ -161,7 +162,12 @@ async def ws_endpoint(websocket: WebSocket) -> None:
          flag, close 1011. On client disconnect, propagate cleanly.
     """
     auth_state = websocket.app.state.auth
-    cookie_value = websocket.cookies.get(SESSION_COOKIE_NAME)
+    # WebSocket handlers can't use FastAPI Depends; pull settings directly
+    # off app.state. Cookie name varies by `cookie_secure` mode (per
+    # session_cookie_name docstring) so we must NOT hardcode it.
+    settings: AppSettings = websocket.app.state.settings
+    cookie_name = session_cookie_name(secure=settings.cookie_secure)
+    cookie_value = websocket.cookies.get(cookie_name)
     if not cookie_value:
         await websocket.close(code=WS_CLOSE_AUTH_FAIL)
         return

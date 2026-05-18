@@ -40,6 +40,7 @@ from fastapi import (
 )
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.api.deps import SettingsDep
 from app.api.errors import ErrorCode, http_exception
 from app.api.schemas import (
     ChangePasswordRequest,
@@ -62,11 +63,11 @@ from app.auth.key_material import KeyMaterial, KeyMaterialState
 from app.auth.rate_limit import LoginRateLimiter
 from app.auth.reprompts import REPROMPT_GRANT_TTL_SECONDS, RepromptScope
 from app.auth.sessions import (
-    SESSION_COOKIE_NAME,
     InvalidCredentialsError,
     RateLimitedError,
     build_cookie_delete_kwargs,
     build_cookie_set_kwargs,
+    session_cookie_name,
 )
 from app.crypto.passwords import hash_password, verify_password
 from app.repositories.audit_log import AuditLogRepository
@@ -106,6 +107,7 @@ async def login(
     session_service: SessionServiceDep,
     state: AuthStateDep,
     client_ip: ClientIpDep,
+    settings: SettingsDep,
     user_agent: Annotated[str | None, Header(alias="User-Agent")] = None,
 ) -> LoginResponse:
     try:
@@ -124,7 +126,9 @@ async def login(
     except InvalidCredentialsError as exc:
         raise http_exception(ErrorCode.INVALID_CREDENTIALS, status.HTTP_401_UNAUTHORIZED) from exc
 
-    response.set_cookie(**build_cookie_set_kwargs(outcome.cookie_value))  # type: ignore[arg-type]
+    response.set_cookie(
+        **build_cookie_set_kwargs(outcome.cookie_value, secure=settings.cookie_secure)  # type: ignore[arg-type]
+    )
 
     if outcome.needs_rehash:
         # Closes Phase-3 deferred gap per Phase 6 design memo §Q7.
@@ -203,11 +207,13 @@ async def logout(
     request: Request,
     response: Response,
     session_service: SessionServiceDep,
+    settings: SettingsDep,
 ) -> Response:
-    cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
+    cookie_name = session_cookie_name(secure=settings.cookie_secure)
+    cookie_value = request.cookies.get(cookie_name)
     if cookie_value:
         await session_service.revoke(cookie_value)
-    response.delete_cookie(**build_cookie_delete_kwargs())  # type: ignore[arg-type]
+    response.delete_cookie(**build_cookie_delete_kwargs(secure=settings.cookie_secure))  # type: ignore[arg-type]
     response.status_code = status.HTTP_204_NO_CONTENT
     return response
 
@@ -217,12 +223,13 @@ async def logout_all(
     auth: AuthenticatedRequestDep,
     response: Response,
     session_service: SessionServiceDep,
+    settings: SettingsDep,
 ) -> Response:
     """Revoke every cookie session for the user. The current cookie is
     among them; the client should treat the call as a forced logout
     everywhere."""
     await session_service.revoke_all_for_user(auth.user.id)
-    response.delete_cookie(**build_cookie_delete_kwargs())  # type: ignore[arg-type]
+    response.delete_cookie(**build_cookie_delete_kwargs(secure=settings.cookie_secure))  # type: ignore[arg-type]
     response.status_code = status.HTTP_204_NO_CONTENT
     return response
 
@@ -240,6 +247,7 @@ async def change_password(
     session: SessionDep,
     session_service: SessionServiceDep,
     response: Response,
+    settings: SettingsDep,
     x_reprompt_grant: Annotated[str | None, Header(alias="X-Reprompt-Grant")] = None,
 ) -> Response:
     """Reprompt-protected per ADR-0005. Revokes ALL sessions for the
@@ -277,7 +285,7 @@ async def change_password(
         # doesn't deadlock on the SQLite write lock.
         await session.commit()
 
-        response.delete_cookie(**build_cookie_delete_kwargs())  # type: ignore[arg-type]
+        response.delete_cookie(**build_cookie_delete_kwargs(secure=settings.cookie_secure))  # type: ignore[arg-type]
         response.status_code = status.HTTP_204_NO_CONTENT
 
         with contextlib.suppress(Exception):

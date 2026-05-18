@@ -20,7 +20,7 @@ docker run -d \
   -v restream-data:/data \
   --stop-timeout 30 \
   -e RESTREAM_MASTER_PASSPHRASE='change-me-to-something-long-and-random' \
-  ghcr.io/pelmentor/restream-plus:v1.1.1
+  ghcr.io/pelmentor/restream-plus:v1.1.2
 ```
 
 Notes on the flags:
@@ -38,8 +38,16 @@ Notes on the flags:
 - `RESTREAM_MASTER_PASSPHRASE` — derives the AES-256-GCM key that
   encrypts stream keys at rest. **Pick something long and random and
   keep it backed up out-of-band** — losing it loses every encrypted
-  stream key in the volume.
-- Pin `:v1.1.1` (immutable). `:latest` and `:v1` float to subsequent
+  stream key in the volume. **NOT the login password** — that's
+  generated on first boot and printed to `docker logs` (see below).
+- `RESTREAM_COOKIE_SECURE` (default `true`) — set to `false` if the
+  panel is reached over **plain HTTP** (LAN-only NAS, direct IP,
+  no TLS reverse proxy). Without this, browsers reject the session
+  cookie on HTTP and login appears to fail. Production setups with
+  TLS in front (Caddy / nginx / Traefik with a real cert) leave
+  this on the default. v1.0.0 – v1.1.1 hardcoded `true`; v1.1.2
+  added this knob.
+- Pin `:v1.1.2` (immutable). `:latest` and `:v1` float to subsequent
   releases; use only if you actively want to track those.
 
 ### Option 2 — Docker Compose (recommended for hosts you'll touch twice)
@@ -50,7 +58,7 @@ and the passphrase:
 
 ```bash
 curl -O https://raw.githubusercontent.com/pelmentor/Restream_Plus/main/docs/ops/compose.yaml
-# Edit compose.yaml: set image tag (:v1.1.1) and adjust the env-file path.
+# Edit compose.yaml: set image tag (:v1.1.2) and adjust the env-file path.
 echo "RESTREAM_MASTER_PASSPHRASE=$(openssl rand -hex 32)" | sudo tee /etc/restream/env > /dev/null
 sudo chmod 600 /etc/restream/env
 docker compose up -d
@@ -65,7 +73,7 @@ Confirms the image came from this repo's `release.yml`:
 cosign verify \
   --certificate-identity-regexp '^https://github\.com/pelmentor/Restream_Plus/\.github/workflows/release\.yml@refs/tags/v[0-9.]+$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/pelmentor/restream-plus:v1.1.1
+  ghcr.io/pelmentor/restream-plus:v1.1.2
 ```
 
 Requires `cosign` 2.2+.
@@ -134,17 +142,18 @@ Apache-2.0. See [LICENSE](LICENSE).
 
 ## Status
 
-**v1.1.1 — current release.** Image at
-`ghcr.io/pelmentor/restream-plus:v1.1.1`, cosign-keyless-signed,
+**v1.1.2 — current release.** Image at
+`ghcr.io/pelmentor/restream-plus:v1.1.2`, cosign-keyless-signed,
 multi-arch (amd64 + arm64), pulled from GitHub Container Registry.
 v1.0.0 shipped 2026-05-17 with all 12 planned phases of
 `docs/CODE_PLAN.md` complete; v1.1.0 (2026-05-18) added the live
 dashboard stats feature (per-target bitrate + drops, host CPU%,
-ingest, sparklines); v1.1.1 (2026-05-18) is a hotfix that adds the
-missing SPA static-file mount — the web panel was unreachable in a
-browser on v1.0.0 + v1.1.0 (JSON API responded; HTML did not).
-**Pull `:v1.1.1` or `:latest`, NOT `:v1.0.0` / `:v1.1.0`.** Release
-notes for each version live under
+ingest, sparklines); v1.1.1 (2026-05-18) added the missing SPA
+static-file mount (web panel was unreachable in a browser on v1.0.0
++ v1.1.0); v1.1.2 (2026-05-18) added `RESTREAM_COOKIE_SECURE` for
+plain-HTTP deployments and fixed the login form placeholder.
+**Pull `:v1.1.2` or `:latest`, NOT `:v1.0.0` / `:v1.1.0` / `:v1.1.1`.**
+Release notes for each version live under
 [docs/releases/](docs/releases/). For the full post-ship chronology
 including the three v1.0.0 stillborn-and-recut iterations that
 surfaced latent `release.yml` drift, see

@@ -198,13 +198,21 @@ the official release.
 On a scratch host (or your dev box), spin up the just-published image
 using [`docs/ops/compose.yaml`](compose.yaml) with the new tag.
 
-**Step 12a — Browser reachability.** BEFORE configuring anything,
-open `http://<host>:8000/` in a real browser. You MUST see the web
-panel (the React SPA) render, NOT a JSON `{"detail":"Not Found"}`
-response. v1.0.0 and v1.1.0 both shipped with a missing SPA mount
-and this check would have caught it; v1.1.1 fixed the mount and
-added `tests/api/test_spa_serving.py` to pin the contract. If you
-see JSON instead of HTML, do NOT announce — the panel is broken.
+**Step 12a — Browser reachability + login round-trip.** BEFORE
+configuring anything, open `http://<host>:8000/` (or your TLS
+hostname) in a real browser. You MUST see the web panel (the React
+SPA) render, NOT a JSON `{"detail":"Not Found"}` response.
+**Then actually log in** with the admin password from
+`docker logs <container> 2>&1 | grep -A 8 'FIRST BOOT'` (NOT your
+`RESTREAM_MASTER_PASSPHRASE` — that's the key-derivation passphrase,
+not a login credential) and confirm you reach the dashboard. v1.0.0
+and v1.1.0 both shipped with a missing SPA mount; v1.1.1 fixed the
+mount but the session cookie was unusable over plain HTTP (Secure
+flag + `__Host-` prefix → browser silently dropped it → login
+succeeded server-side but every follow-up request 401'd, WS 403'd).
+v1.1.2 added `RESTREAM_COOKIE_SECURE=false` for HTTP setups. If
+the login succeeds and the dashboard renders, both bugs are absent
+from this release; if not, do NOT announce.
 
 **Step 12b — RTMP data path.** Configure one target. Publish via OBS
 (preferred — OBS reads the key from a non-echoing field) or ffmpeg.

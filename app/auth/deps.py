@@ -48,7 +48,8 @@ from app.auth.key_material import (
 )
 from app.auth.rate_limit import LoginRateLimiter, extract_client_ip
 from app.auth.reprompts import RepromptScope, RepromptStore
-from app.auth.sessions import SESSION_COOKIE_NAME, SessionAuthService
+from app.auth.sessions import SessionAuthService, session_cookie_name
+from app.config import AppSettings
 from app.repositories.api_tokens import ApiTokensRepository
 from app.repositories.sessions import HttpSessionsRepository
 from app.repositories.users import UsersRepository
@@ -274,13 +275,28 @@ async def get_current_user_via_cookie(
     request: Request,
     session_service: SessionServiceDep,
 ) -> AuthenticatedRequest | None:
-    """Read the `__Host-rp_session` cookie and verify it.
+    """Read the session cookie and verify it.
+
+    The cookie name is dynamic — `__Host-rp_session` in secure mode
+    (the default), `rp_session` when `RESTREAM_COOKIE_SECURE=false`.
+    Pulled from `app.state.settings` rather than a Depends-injected
+    SettingsDep so this stays usable from places that don't have a
+    Depends context (and so a minimal test app without the full
+    lifespan can still mount this dep).
+
+    If `app.state.settings` isn't populated (minimal test apps,
+    legacy callers), we fall back to the secure (production) default
+    so we never silently accept a `rp_session` cookie when the
+    operator expected `__Host-` enforcement.
 
     Returns None when the cookie is absent or invalid; the caller
     decides whether that's a hard 401 (`require_authenticated`) or a
     soft "anonymous" (a public endpoint).
     """
-    cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
+    settings = getattr(request.app.state, "settings", None)
+    secure = settings.cookie_secure if isinstance(settings, AppSettings) else True
+    cookie_name = session_cookie_name(secure=secure)
+    cookie_value = request.cookies.get(cookie_name)
     if not cookie_value:
         return None
     result = await session_service.verify_cookie(cookie_value)

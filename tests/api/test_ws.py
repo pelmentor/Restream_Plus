@@ -12,11 +12,12 @@ from __future__ import annotations
 import httpx
 import pytest
 from app.auth.key_material import KeyMaterialState
-from app.auth.sessions import SESSION_COOKIE_NAME
 from app.domain.run_state import RunState
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
+
+from tests.api.conftest import SESSION_COOKIE_NAME
 
 
 def _ws_client_with_cookie(app: FastAPI, cookie_value: str | None) -> TestClient:

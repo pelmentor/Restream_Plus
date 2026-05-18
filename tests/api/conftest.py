@@ -40,7 +40,7 @@ from app.auth.deps import AuthState
 from app.auth.key_material import DerivedKeys, KeyMaterial, KeyMaterialState
 from app.auth.rate_limit import LoginRateLimiter
 from app.auth.reprompts import RepromptStore
-from app.auth.sessions import SESSION_COOKIE_NAME
+from app.auth.sessions import session_cookie_name
 from app.config import AppSettings
 from app.crypto.passwords import hash_password
 from app.db import create_engine, initialize_schema, make_sessionmaker
@@ -55,6 +55,11 @@ if TYPE_CHECKING:  # pragma: no cover
 
 ADMIN_PASSWORD = "admin-password-phase6-test"
 
+# Tests run with `cookie_secure=False` per _build_settings; use the
+# matching cookie name (`rp_session`, no `__Host-` prefix) everywhere
+# in the test suite so httpx persists the cookie naturally on http://.
+SESSION_COOKIE_NAME = session_cookie_name(secure=False)
+
 
 def _build_settings(tmp_path: Path, **overrides: object) -> AppSettings:
     base: dict[str, object] = {
@@ -65,6 +70,15 @@ def _build_settings(tmp_path: Path, **overrides: object) -> AppSettings:
         # nginx — opt out to keep /readyz green in the suite. Individual
         # tests that want to exercise the nginx probe override.
         "healthz_check_nginx": False,
+        # v1.1.2: the test client runs over http:// so the default
+        # secure cookie (`__Host-` prefix + Secure flag) would be
+        # dropped by httpx — every test before this added a manual
+        # cookie-injection workaround in conftest. By flipping
+        # cookie_secure=False the cookie name becomes `rp_session`
+        # (no `__Host-`), Secure flag is omitted, and httpx persists
+        # the cookie naturally on plain HTTP. Tests that want to
+        # exercise the secure cookie path explicitly override.
+        "cookie_secure": False,
     }
     base.update(overrides)
     return AppSettings(**base)  # type: ignore[arg-type]

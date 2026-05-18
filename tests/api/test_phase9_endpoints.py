@@ -36,7 +36,6 @@ from app.auth.deps import AuthState
 from app.auth.key_material import KeyMaterial, load_or_create_kdf_salt
 from app.auth.rate_limit import LoginRateLimiter
 from app.auth.reprompts import RepromptStore
-from app.auth.sessions import SESSION_COOKIE_NAME
 from app.config import AppSettings
 from app.crypto.aead import build_credential_aad, encrypt
 from app.crypto.passwords import hash_password
@@ -48,6 +47,8 @@ from app.repositories.credentials import CredentialsRepository
 from app.repositories.targets import TargetsRepository
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from tests.api.conftest import SESSION_COOKIE_NAME
 
 from .conftest import ADMIN_PASSWORD
 

@@ -101,9 +101,9 @@ class TestComputeSessionTokenHash:
 
 
 class TestCookieAttributes:
-    def test_set_kwargs_has_host_prefix_invariants(self) -> None:
-        kwargs = build_cookie_set_kwargs("some-cookie-value")
-        assert kwargs["key"] == SESSION_COOKIE_NAME
+    def test_secure_mode_uses_host_prefix_invariants(self) -> None:
+        kwargs = build_cookie_set_kwargs("some-cookie-value", secure=True)
+        assert kwargs["key"] == "__Host-rp_session"
         assert kwargs["value"] == "some-cookie-value"
         assert kwargs["secure"] is True
         assert kwargs["httponly"] is True
@@ -112,12 +112,26 @@ class TestCookieAttributes:
         # `__Host-` prefix forbids Domain; we never set it.
         assert "domain" not in kwargs
 
+    def test_insecure_mode_drops_host_prefix_and_secure_flag(self) -> None:
+        # v1.1.2: when `RESTREAM_COOKIE_SECURE=false` (HTTP-only LAN
+        # setups), the cookie name MUST drop `__Host-` and the Secure
+        # flag MUST be omitted — otherwise every modern browser silently
+        # rejects the cookie and login is broken.
+        kwargs = build_cookie_set_kwargs("some-cookie-value", secure=False)
+        assert kwargs["key"] == "rp_session"
+        assert kwargs["secure"] is False
+        # Other defenses still in place.
+        assert kwargs["httponly"] is True
+        assert kwargs["samesite"] == "lax"
+        assert kwargs["path"] == "/"
+        assert "domain" not in kwargs
+
     def test_set_kwargs_max_age_matches_lifetime(self) -> None:
-        kwargs = build_cookie_set_kwargs("value", lifetime=timedelta(seconds=60))
+        kwargs = build_cookie_set_kwargs("value", secure=True, lifetime=timedelta(seconds=60))
         assert kwargs["max_age"] == 60
 
-    def test_delete_kwargs_mirrors_attributes(self) -> None:
-        kwargs = build_cookie_delete_kwargs()
+    def test_delete_kwargs_mirrors_attributes_secure(self) -> None:
+        kwargs = build_cookie_delete_kwargs(secure=True)
         assert kwargs["key"] == SESSION_COOKIE_NAME
         assert kwargs["secure"] is True
         assert kwargs["httponly"] is True
@@ -125,6 +139,11 @@ class TestCookieAttributes:
         assert kwargs["path"] == "/"
         assert "value" not in kwargs
         assert "max_age" not in kwargs
+
+    def test_delete_kwargs_mirrors_attributes_insecure(self) -> None:
+        kwargs = build_cookie_delete_kwargs(secure=False)
+        assert kwargs["key"] == "rp_session"
+        assert kwargs["secure"] is False
 
 
 class TestLoginHappyPath:

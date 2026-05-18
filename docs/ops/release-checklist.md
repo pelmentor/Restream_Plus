@@ -197,8 +197,17 @@ the official release.
 
 On a scratch host (or your dev box), spin up the just-published image
 using [`docs/ops/compose.yaml`](compose.yaml) with the new tag.
-Configure one target. Publish via OBS (preferred — OBS reads the key
-from a non-echoing field) or ffmpeg.
+
+**Step 12a — Browser reachability.** BEFORE configuring anything,
+open `http://<host>:8000/` in a real browser. You MUST see the web
+panel (the React SPA) render, NOT a JSON `{"detail":"Not Found"}`
+response. v1.0.0 and v1.1.0 both shipped with a missing SPA mount
+and this check would have caught it; v1.1.1 fixed the mount and
+added `tests/api/test_spa_serving.py` to pin the contract. If you
+see JSON instead of HTML, do NOT announce — the panel is broken.
+
+**Step 12b — RTMP data path.** Configure one target. Publish via OBS
+(preferred — OBS reads the key from a non-echoing field) or ffmpeg.
 
 ffmpeg path: read the ingest key into an unexported shell variable
 via `read -rs` so it does NOT land in shell history or process argv:

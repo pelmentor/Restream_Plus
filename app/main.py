@@ -36,11 +36,13 @@ import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 import httpx
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
 
 from app.api import LockedModeMiddleware, install_exception_handlers
 from app.api.api_tokens_api import router as api_tokens_router
@@ -188,7 +190,67 @@ def create_app(
     app.include_router(about_router)
     app.include_router(ws_router)
     app.include_router(health_router)
+
+    # Serve the bundled React SPA from /app/web/dist/ (built into the
+    # container image by docker/Dockerfile's frontend-builder stage).
+    # When the directory is missing — typical for `pytest` runs out of
+    # a source checkout where the frontend hasn't been built — we skip
+    # the mount entirely so the API surface stays intact for tests.
+    spa_dir = Path("/app/web/dist")
+    if not spa_dir.is_dir():
+        # Fallback: in-tree dev path so `npm run build && python -m app.main`
+        # works without copying files into /app.
+        candidate = Path(__file__).resolve().parent.parent / "web" / "dist"
+        if candidate.is_dir():
+            spa_dir = candidate
+    if spa_dir.is_dir():
+        _mount_spa(app, spa_dir)
     return app
+
+
+def _mount_spa(app: FastAPI, spa_dir: Path) -> None:
+    """Serve the React SPA + history-API fallback.
+
+    A single catch-all GET handler reachable only after all API routers
+    have had their chance:
+      - `/` and any path that matches an on-disk file under `spa_dir`
+        (index.html, /assets/*, /favicon.ico) → serve that file.
+      - Any other path that doesn't collide with the API surface
+        (anything NOT starting with `api/`, `internal/`, `ws`,
+        `livez`, `readyz`) → serve index.html so React Router can
+        resolve the deep link client-side.
+      - Paths in the API surface that didn't match a router above
+        → real 404. We do NOT silently serve the SPA shell on those
+        because that would hide frontend fetch typos behind an HTML
+        response.
+
+    The mount lives AFTER all `app.include_router(...)` calls so the
+    catch-all never shadows a real API endpoint.
+    """
+    index_html = spa_dir / "index.html"
+    api_prefixes: tuple[str, ...] = (
+        "api/",
+        "internal/",
+        "ws",
+        "livez",
+        "readyz",
+    )
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def _spa_fallback(request: Request, full_path: str) -> FileResponse:
+        if any(full_path.startswith(p) for p in api_prefixes):
+            raise HTTPException(status_code=404)
+        # Real on-disk file → serve it (handles /assets/*, favicon, etc.).
+        # `resolve()` collapses `..` segments to defend against path
+        # traversal attempting to read files outside spa_dir.
+        candidate = (spa_dir / full_path).resolve()
+        try:
+            candidate.relative_to(spa_dir.resolve())
+        except ValueError:
+            raise HTTPException(status_code=404) from None
+        if candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(index_html)
 
 
 def _make_lifespan(

@@ -20,21 +20,29 @@ export default function SettingsRoutes(): ReactNode {
   return (
     <Routes>
       <Route element={<SettingsShell />}>
-        <Route index element={<Navigate to="general" replace />} />
+        <Route index element={<Navigate to="/settings/general" replace />} />
         <Route path="general" element={<GeneralTab />} />
         <Route path="security" element={<SecurityTab />} />
         <Route path="sessions" element={<SessionsTab />} />
         <Route path="about" element={<AboutTab />} />
         <Route
           path="targets"
-          element={<Navigate to="twitch" replace />}
+          element={<Navigate to="/settings/targets/twitch" replace />}
         />
         <Route path="targets/twitch" element={<TwitchTab />} />
         <Route path="targets/youtube" element={<YouTubeTab />} />
         <Route path="targets/kick" element={<KickTab />} />
         <Route path="targets/vk" element={<VKTab />} />
         <Route path="targets/custom" element={<CustomTab />} />
-        <Route path="*" element={<Navigate to="general" replace />} />
+        {/* Absolute target prevents infinite redirect loops: relative
+         * `to="general"` would resolve against the splat-matched URL
+         * (e.g. `/settings/foo` → `/settings/foo/general`), and that
+         * path re-triggers the splat → `/settings/foo/general/general`
+         * → compounds until the browser/OS path-length limit crashes
+         * the SPA fallback. Same reasoning for the other Navigate
+         * elements above and for the sidebar NavLinks.
+         */}
+        <Route path="*" element={<Navigate to="/settings/general" replace />} />
       </Route>
     </Routes>
   );

@@ -4,7 +4,7 @@
 this project cold, after a context compaction or a fresh conversation.
 Read this first; everything else is reachable from here.
 
-**Last updated:** 2026-05-17 — **v1.0.0 SHIPPED + 3 post-ship PRs LANDED.** Image at `ghcr.io/pelmentor/restream-plus:v1.0.0` (digest `sha256:8e80d783…`), cosign-verified, GitHub Release at https://github.com/pelmentor/Restream_Plus/releases/tag/v1.0.0. Took 3 stillborn iterations to surface latent `release.yml` drift; PRs #2/#3/#4 fixed each in turn. **Post-ship PRs**: #5 (`5eb2421`) closed the branch-protection-vs-docs-only gap with new `ci-docs.yml` + PA-34 invariant; #6 (`4d1cd37`) handoff cleanup, validated PR #5 end-to-end (only ci-docs triggered, all 5 required checks passed via no-op echos); #7 (`93715bf`) `feat(stats)` live dashboard stats — per-target Mbps + drops, host CPU%, ingest bitrate, sparklines. **HEAD = `93715bf`**. The stillborn tail section §"v1.0.0 tag-push attempt" + §"This handoff doc note" are historical record only; do NOT act on their DECISION REQUIRED prompts (all resolved). Tail section §"v1.0.0 SHIPPED" is the post-ship chronology. Remaining items still USER-actions, no code work: orphan `:1.0.0`/`:1.0`/`:1`/`:sha-ffb1398` GHCR tag cleanup, GHCR retention via UI, Kick browser spot-check, real-RTMP smoke (now also exercises the new live-stats UI), announce. The live-stats feature rides `:edge` until the next operator-driven tag cut (v1.0.1 / v1.1.0 — operator's call when to bump).
+**Last updated:** 2026-05-18 — **v1.1.2 LIVE as current release.** Image at `ghcr.io/pelmentor/restream-plus:v1.1.2` (digest `sha256:7b5ff13e8d49ee6267aefd86e355c3c5a246b0cb0fd621129c70d17c2fbafb94`), cosign-verified, GitHub Release at https://github.com/pelmentor/Restream_Plus/releases/tag/v1.1.2. **HEAD is the v1.1.2 PR #11 squash-merge** (re-verify with `git log --oneline -1`). **OPERATOR IS CURRENTLY RUNNING `:v1.1.2` on Unraid** (10.10.0.2:8000, plain HTTP, `RESTREAM_COOKIE_SECURE=false`, `/mnt/user/appdata/restream-plus` bind-mount). Four releases shipped today: v1.0.0 (2026-05-17, 3 stillborn iterations to surface release.yml drift); v1.1.0 (2026-05-18, `feat(stats)` live dashboard); v1.1.1 (2026-05-18, SPA-mount hotfix — v1.0.0/v1.1.0 panel returned JSON 404 in browser); v1.1.2 (2026-05-18, `RESTREAM_COOKIE_SECURE` env var + login form label fix — v1.1.1 cookie was unusable on plain HTTP, login form said "Master password" instead of "Admin password"). **OPERATORS MUST PULL `:v1.1.2` or `:latest`, NOT `:v1.0.0` / `:v1.1.0` / `:v1.1.1`** — all earlier releases have at least one broken-in-browser bug. Tail sections §"v1.0.0 SHIPPED", §"feat(stats) live dashboard stats", §"v1.1.1 SPA-mount hotfix", §"v1.1.2 RESTREAM_COOKIE_SECURE + login label hotfix" have the chronology per release. Remaining USER-actions, no code work: orphan GHCR tag cleanup (PLUS deprecation labels on `:v1.0.0` / `:v1.1.0` / `:v1.1.1` — all browser-broken), GHCR retention via UI, Kick browser spot-check, real-RTMP step 12b (12a now passing on v1.1.2 since operator IS using the panel), announce v1.1.2. Earlier tail sections §"v1.0.0 tag-push attempt (HISTORICAL)" + §"This handoff doc note (HISTORICAL)" are historical-only; do NOT act on their DECISION REQUIRED prompts.
 
 **GitHub:** https://github.com/pelmentor/Restream_Plus
 (initial commit `a100f2a` covers Phases 0–10; Phase 11 + Phase 12 +
@@ -78,29 +78,51 @@ frontend typecheck + lint + 9/9 vitest + build at ~214 KB gzipped;
 Docker amd64 + arm64 build at ~669 MB, runtime-smoke OK, grype HIGH+
 clean, merge+sign publishes to ghcr.io/pelmentor/restream-plus.
 
-When resuming: **v1.0.0 IS LIVE — DO NOT RE-SHIP.**
-Image at `ghcr.io/pelmentor/restream-plus:v1.0.0` (digest
-`sha256:8e80d783592344be2a05a892568d4ee4ceace577b13b2c4688ff7eb1d918d44c`),
+When resuming: **v1.1.2 IS THE CURRENT RELEASE — DO NOT PULL ANY EARLIER VERSION.**
+Image at `ghcr.io/pelmentor/restream-plus:v1.1.2` (digest
+`sha256:7b5ff13e8d49ee6267aefd86e355c3c5a246b0cb0fd621129c70d17c2fbafb94`),
 cosign-keyless-signed, multi-arch (amd64 + arm64); GitHub Release
-published at https://github.com/pelmentor/Restream_Plus/releases/tag/v1.0.0;
-main HEAD = `93715bf`. The ship took THREE stillborn-and-recut
-iterations to surface latent `release.yml` drift items (the workflow
-had never been end-to-end exercised before today). PRs #2 (`961b8f5`
-— preflight rc-capture), #3 (`ffb1398` — H1 image-size + 4 reviewer
-drifts), and #4 (`5399fb5` — metadata-action v-prefix + 2 reviewer
-drifts) fixed each in turn. **Post-ship PRs**: #5 (`5eb2421`) closed
-the branch-protection-vs-docs-only gap with `.github/workflows/ci-docs.yml`
-+ PA-34 invariant; #6 (`4d1cd37`) handoff cleanup, validated the gap-fix
-end-to-end; #7 (`93715bf`) `feat(stats)` live dashboard stats (per-target
-Mbps + drops, host CPU%, ingest, sparklines). Tail section §"v1.0.0
-SHIPPED" + the new tail section §"feat(stats) live dashboard stats"
-have the full chronology + remaining USER-action items (orphan GHCR
-tag cleanup, GHCR retention via UI, Kick browser spot-check, real-RTMP
-smoke — now also exercises live-stats — announce; none block v1.0.0
-being live). The earlier tail section §"v1.0.0 tag-push attempt
-(2026-05-17 — STILLBORN; preflight bug)" and §"This handoff doc note
-(HISTORICAL — gap RESOLVED)" are preserved as historical record only;
-do NOT act on their "DECISION REQUIRED" prompts — all resolved.
+at https://github.com/pelmentor/Restream_Plus/releases/tag/v1.1.2;
+main HEAD = `1726cd1` (PR #11 squash-merge). Four releases shipped:
+
+- **v1.0.0** (2026-05-17, 3 stillborn iterations to surface latent
+  `release.yml` drift — PRs #2/#3/#4). Initial stable.
+- **v1.1.0** (2026-05-18, PR #9 release-prep on top of PR #7
+  `feat(stats)` live dashboard). **BROKEN: SPA mount missing → browser
+  panel returns JSON 404.**
+- **v1.1.1** (2026-05-18, PR #10 SPA-mount hotfix). **BROKEN on plain
+  HTTP: session cookie has `Secure` + `__Host-` prefix, browser
+  silently drops it on http://, login appears to fail despite
+  server-side success.**
+- **v1.1.2** (2026-05-18, PR #11 cookie + login-label hotfix). Adds
+  `RESTREAM_COOKIE_SECURE` env var (default `true`; set `false` for
+  plain-HTTP setups) and fixes login form placeholder ("Master
+  password" → "Admin password" — v1.1.1 wording confused operators
+  who tried master passphrase instead of admin password from first-
+  boot logs). **Current release — this works in a browser.**
+
+**OPERATOR IS RUNNING `:v1.1.2` ON UNRAID** (10.10.0.2:8000, plain
+HTTP, `-e RESTREAM_COOKIE_SECURE=false`, `/mnt/user/appdata/restream-plus`
+bind-mount). They successfully logged in to the panel on 2026-05-18
+with the admin password from v1.1.1's first-boot logs (database
+persisted across the v1.1.2 upgrade — no new FIRST BOOT banner;
+that's expected behavior).
+
+Tail sections per release: §"v1.0.0 SHIPPED", §"feat(stats) live
+dashboard stats" (v1.1.0), §"v1.1.1 SPA-mount hotfix",
+§"v1.1.2 RESTREAM_COOKIE_SECURE + login label hotfix". The earlier
+tail sections §"v1.0.0 tag-push attempt (HISTORICAL)" + §"This
+handoff doc note (HISTORICAL — gap RESOLVED)" are historical record
+only; do NOT act on their "DECISION REQUIRED" prompts — all resolved.
+
+**Pattern across v1.1.1 + v1.1.2**: each release surfaced exactly
+one operator-actionable bug that automated tests had not caught,
+found within minutes of the next operator browser-test attempt.
+Lesson: humans-only checks in `release-checklist.md` step 12 get
+skipped; step 12a now mandates "open `/` in browser AND complete an
+actual login round-trip with the admin password" (added v1.1.2),
+and tests in `test_spa_serving.py` + `test_sessions.py` pin the
+contracts in CI.
 
 **Branch-protection-vs-docs-only structural gap — RESOLVED. PR #5
 merged as `5eb2421` on 2026-05-17.** Added
@@ -133,24 +155,29 @@ consults that drove it.
   squash-merge of PR #7). Always re-verify with
   `git log --oneline -1` on resume.
   Recent milestones:
-  - `93715bf` — PR #7 (`feat(stats)` live dashboard stats) — current HEAD
-  - `4d1cd37` — PR #6 (handoff cleanup post-PA-34; first real-world
-    docs-only PR validated by ci-docs.yml alone)
+  - `1726cd1` — PR #11 (v1.1.2 hotfix: `RESTREAM_COOKIE_SECURE` env
+    var + login form "Master password" → "Admin password") — **current HEAD**
+  - `7d2878a` — PR #10 (v1.1.1 hotfix: SPA static-file mount in
+    `app/main.py::_mount_spa` + 8 tests in `test_spa_serving.py`)
+  - `f67b65a` — PR #9 (v1.1.0 release-prep: version bumps 0.1.0→1.1.0,
+    release notes, README quickstart expansion, 7 ops-doc
+    last-verified bumps, lockfile refresh for `python-multipart` +
+    `watchfiles` transitive drift)
+  - `ffe4f76` — PR #8 (handoff refresh post-PR-7)
+  - `93715bf` — PR #7 (`feat(stats)` live dashboard stats)
+  - `4d1cd37` — PR #6 (handoff cleanup post-PA-34)
   - `5eb2421` — PR #5 (PA-34 closes branch-protection-vs-docs-only
     gap: new `.github/workflows/ci-docs.yml` + parity-check step)
-  - `5399fb5` — PR #4 (metadata-action v-prefix + design-memo +
-    release-notes alignment) — v1.0.0 ship-point
-  - `ffb1398` — PR #3 (H1 720 MB + H2/H6/H7 annotations +
-    scan empty-digest guard)
+  - `5399fb5` — PR #4 (v1.0.0 ship-point: metadata-action v-prefix)
+  - `ffb1398` — PR #3 (H1 720 MB + H2/H6/H7 annotations)
   - `961b8f5` — PR #2 (release.yml preflight rc-capture fix)
-  - `2ef1b06` — PR #1 (release-prep — release notes, applies-to bumps)
-  - `4f7eb17` — ADR-0005 first-boot autogen
-- **Tags:** `v1.0.0` exists at `5399fb5` and is **LIVE** — image
-  published, signed, GitHub Release created. `release.yml` run
-  `25993208395` ran fully green: preflight → build amd64+arm64 →
-  runtime-smoke → scan → merge+sign. (Earlier failed runs at
-  `2ef1b06`/`961b8f5`/`ffb1398` are historical; tag was deleted
-  and recut at each fix.) Do NOT re-cut.
+  - `2ef1b06` — PR #1 (release-prep)
+- **Tags:** `v1.0.0`, `v1.1.0`, `v1.1.1`, `v1.1.2` all exist and
+  are signed. **`v1.1.2` is the only one that works end-to-end in a
+  browser** (v1.0.0 + v1.1.0 have no SPA mount → browser 404;
+  v1.1.1 has SPA but cookie is unusable on HTTP). All four
+  release.yml runs went fully green on first try (no stillborns
+  since v1.0.0). Do NOT re-cut any existing tag (PA-19 immutability).
 - **Branch protection on `main`:** APPLIED on 2026-05-17 per
   `docs/ops/branch-protection.md`. Verified state:
   `required_status_checks.contexts` = `[backend-test, backend-lint,
@@ -169,10 +196,10 @@ consults that drove it.
   workflow files declare the same job-name set via sorted set-diff.
   Docs-only PRs now satisfy branch protection without spending
   real CI minutes on the full suite.
-- **CI status at current HEAD `93715bf`:** every required check green
-  on PR #7 (`backend-test`, `backend-lint`, `frontend`,
+- **CI status at current HEAD `1726cd1`:** every required check green
+  on PR #11 (`backend-test`, `backend-lint`, `frontend`,
   `backend-lockfile`, `workflow-pins` + informational `pr-image-smoke`,
-  each appearing TWICE — once from `ci`, once from the new `ci-docs`
+  each appearing TWICE — once from `ci`, once from the `ci-docs`
   no-op mirror introduced by PR #5). Re-confirm at resume with
   `gh run list --repo pelmentor/Restream_Plus --branch main --limit 5`.
 - **release.yml runs (chronological):**
@@ -198,14 +225,17 @@ consults that drove it.
   `DOCKER_CONFIG` at a writable scratch dir and run
   `cosign-windows-amd64 login ghcr.io -u pelmentor -p "$(gh auth token)"`
   first.
-- **Image published:** `ghcr.io/pelmentor/restream-plus:v1.0.0`
-  (digest `sha256:8e80d783592344be2a05a892568d4ee4ceace577b13b2c4688ff7eb1d918d44c`),
+- **Image published:** `ghcr.io/pelmentor/restream-plus:v1.1.2`
+  (digest `sha256:7b5ff13e8d49ee6267aefd86e355c3c5a246b0cb0fd621129c70d17c2fbafb94`),
   cosign-keyless-signed, multi-arch (amd64 + arm64). Aliases:
-  `:v1.0`, `:v1`, `:latest`, `:sha-5399fb5`. `:edge` is the rolling
-  main-branch tag (separate, from `build-image.yml`). Orphan
-  wrong-named tags from stillborn #3 (`:1.0.0`, `:1.0`, `:1`,
-  `:sha-ffb1398`) still exist on GHCR and need user cleanup via UI
-  (see §"v1.0.0 SHIPPED").
+  `:v1.1`, `:v1`, `:latest`, `:sha-1726cd1`. `:edge` is the rolling
+  main-branch tag (separate, from `build-image.yml`). Earlier signed
+  releases still on GHCR: `:v1.0.0` (browser-broken — no SPA mount),
+  `:v1.1.0` (browser-broken — no SPA mount), `:v1.1.1` (browser-broken
+  on HTTP — Secure cookie). All three should get deprecation labels.
+  Orphan wrong-named tags from v1.0.0 stillborn-#3 (`:1.0.0`, `:1.0`,
+  `:1`, `:sha-ffb1398`) also still exist on GHCR and need user
+  cleanup via UI (see §"v1.0.0 SHIPPED").
 - **Author identity:** `pelmentor <cssnik2013@gmail.com>` — set
   **repo-locally** in `.git/config` (NOT global). Never overwrite
   the global git config; if a teammate clones, they set their own.
@@ -355,40 +385,42 @@ what to do next without asking the user.
 
 ### Most likely "what to do next" answers
 
-a. **Confirm remaining USER-action items from the v1.0.0 ship.**
-   Per the §"v1.0.0 SHIPPED" tail: (i) delete orphan GHCR tag
-   versions `:1.0.0`/`:1.0`/`:1`/`:sha-ffb1398` via the GitHub web
-   UI or with elevated `gh` scopes; (ii) set GHCR retention via the
-   package settings UI per `docs/ops/ghcr-retention.md`;
-   (iii) Kick browser spot-check (release-checklist step 3 — Kick
-   blocks non-browser clients, must be done in a real browser);
-   (iv) real-RTMP smoke (release-checklist step 12 — OBS →
-   `:v1.0.0` → at least one platform end-to-end). NOTE: the real-RTMP
-   smoke now also exercises the new live-stats UI shipped in PR #7 —
-   verify header CPU% + egress chips appear during STARTING, persist
-   through LIVE, hide on return to OFFLINE; verify per-target Mbps +
-   drops look realistic; verify yanking a target's egress turns its
-   tile pill red and the sparkline segment red. (v) announce
-   (release-checklist step 14). None of these block v1.0.0 being
-   live; they're hygiene + verification. Live-stats rides `:edge`
-   until next operator-driven tag cut (v1.0.1 / v1.1.0).
-b. **(DONE — PR #5/#6/#7 merged.)** The branch-protection-vs-docs-only
-   gap is closed (PR #5 ci-docs.yml + PA-34, validated end-to-end by
-   PR #6). Live-stats feature is shipped (PR #7). No remaining code
-   action under these items.
-c. **Live-stats `/metrics` follow-up** (deferred, none-blocking) — if
-   an operator wires Grafana, ADR-0011 §"Open questions" + ADR-0003
-   §"Open questions" together name the work: add `/metrics` endpoint,
-   amend ADR-0003 single-drainer constraint (fan-in layer or
-   `HostStatsEvent` tee). Don't pre-build.
-d. **Pick up an open follow-up** from the remaining carryovers
+a. **Confirm operator is fully running on v1.1.2 and using the
+   panel.** As of 2026-05-18 they logged in successfully (login_succeeded
+   audit event + dashboard rendered). If they hit anything new
+   (target config, OBS push, live-stats rendering), investigate that.
+b. **Remaining v1.1.2-era USER-action items**: (i) delete orphan
+   GHCR tag versions `:1.0.0`/`:1.0`/`:1`/`:sha-ffb1398` from v1.0.0
+   stillborn-#3 PLUS consider adding deprecation labels to
+   `:v1.0.0` / `:v1.1.0` / `:v1.1.1` (all browser-broken — operators
+   pulling those tags get a non-functional panel); (ii) set GHCR
+   retention via the package settings UI per
+   `docs/ops/ghcr-retention.md`; (iii) Kick browser spot-check
+   (release-checklist step 3); (iv) real-RTMP step 12b — OBS →
+   `:v1.1.2` → at least one platform end-to-end (step 12a auto-passes
+   since operator is using the panel); (v) announce v1.1.2.
+c. **Postmortem-driven follow-ups** (none blocking, do when bored):
+   - The browser-side smoke is still humans-only. A headless-browser
+     CI job that does "GET /, parse HTML, POST /api/auth/login with
+     admin pw, expect 200 + cookie, GET /api/run/state with that
+     cookie" would have caught both the SPA-mount AND the cookie-on-
+     HTTP bugs without any operator interaction. Estimated 1 day to
+     add via Playwright + a per-PR matrix leg. Worth doing if more
+     UI bugs slip through.
+   - `release-checklist.md` step 12 STILL relies on the operator
+     remembering to do it. Consider gating the GitHub Release
+     creation on an explicit step-12-done checkbox or a manual-
+     dispatch workflow.
+d. **Live-stats `/metrics` follow-up** (deferred): if an operator
+   wires Grafana, ADR-0011 §"Open questions" + ADR-0003 §"Open
+   questions" together name the work. Don't pre-build.
+e. **Pick up an open follow-up** from the remaining carryovers
    (first-run-complete auto-flip, YouTube backup-ingest, AuthReprompt
    grant-expired retry, HTTP sessions revoke reprompt). None gate
-   anything; v0.x → v1.0 was the only hard transition.
-e. **Iterate on a specific operator-side concern** (a new
-   reverse-proxy variant, a backup-script variant, v1.0.1 patch
-   release, etc.) — the design-memo invariants S-1..S-30 are the
-   gates.
+   anything.
+f. **Iterate on a specific operator-side concern** (reverse-proxy
+   variants, backup-script variants, v1.1.3 / v1.2.0, etc.) — the
+   design-memo invariants S-1..S-30 are the gates.
 
 ---
 
@@ -3888,4 +3920,122 @@ gzip (under the 256 KB budget).
   the `WorkerPidProvider` (owns `_workers`). If you need a different
   pid source in tests, pass a different factory — don't reach into
   the supervisor internals.
+
+---
+
+## v1.1.1 SPA-mount hotfix (2026-05-18 — PR #10, `7d2878a`)
+
+**Bug**: v1.0.0 and v1.1.0 both shipped without a static-file mount
+for the bundled React SPA. The Dockerfile built `web/dist/` into the
+image at `/app/web/dist/` (per `docker/Dockerfile:338`) but FastAPI
+never served it — `GET /` returned `{"detail":"Not Found"}`, making
+the web panel **unreachable in a browser**. JSON API + WS + RTMP all
+worked; only the operator UI was dead.
+
+**Surfaced**: when the operator opened the panel against a freshly-
+pulled `:v1.1.0` image on Unraid and saw JSON 404.
+`release-checklist.md` step 12 (real-RTMP smoke — human-required,
+"humans verify the data path") should have caught this on v1.0.0;
+it was never run.
+
+**Fix**: `app/main.py::_mount_spa(app, spa_dir)` registers a catch-
+all GET handler AFTER every `include_router(...)` call. Serves real
+on-disk files under `/app/web/dist/` (index.html, /assets/*,
+/favicon.ico) or falls back to `index.html` for SPA deep-links so
+React Router can resolve client-side. Explicitly excludes `api/`,
+`internal/`, `ws`, `livez`, `readyz` prefixes — silently serving HTML
+on missing API paths would hide frontend fetch typos. Path-traversal
+defense via `resolve()` + `relative_to(spa_dir.resolve())`. Mount is
+best-effort — if `/app/web/dist/` doesn't exist (typical in pytest
+from a fresh checkout), mount is skipped and API surface stays
+intact. In-tree dev fallback to `<repo>/web/dist/`.
+
+**Tests**: 8 new cases in `tests/api/test_spa_serving.py` pin the
+contract (root, assets, deep-link fallback, /api/* not shadowed,
+path-traversal rejected).
+
+**Runbook**: `docs/ops/release-checklist.md` step 12 got explicit
+substep **12a "Browser reachability"** ("open `/` in a real browser,
+MUST see SPA render not JSON; if you see JSON do NOT announce") —
+the check that would have caught this on v1.0.0.
+
+---
+
+## v1.1.2 RESTREAM_COOKIE_SECURE + login label hotfix (2026-05-18 — PR #11, `1726cd1`)
+
+**Two bugs**:
+
+1. **Session cookie unusable over HTTP.** Cookie was set with `Secure`
+   flag and `__Host-` name prefix (which REQUIRES Secure). Every
+   modern browser silently rejects such cookies on plain HTTP. Logs
+   showed `login_succeeded` server-side but the browser dropped
+   Set-Cookie → every follow-up request 401'd → WS handshake 403'd →
+   operator stuck on login screen. Affected ANY deployment NOT behind
+   a TLS reverse proxy. Bug was present since v1.0.0; masked in the
+   test suite by a manual cookie-injection workaround in
+   `tests/api/conftest.py` (added years ago when the same problem
+   surfaced in tests but was never fixed in production).
+2. **Login form placeholder wrong**. Placeholder said "Master password"
+   ([web/src/messages.ts](../../web/src/messages.ts)) but
+   `/api/auth/login` expects the **admin password** (from
+   `docker logs … FIRST BOOT` banner, OR pre-set via
+   `RESTREAM_ADMIN_PASSWORD`). Operators tried their
+   `RESTREAM_MASTER_PASSPHRASE` (key-derivation secret, NOT a login
+   credential) and got `wrong password`.
+
+**Surfaced**: when the operator opened the v1.1.1 panel on Unraid
+behind plain HTTP, tried master passphrase first (wrong), then admin
+password from logs (server accepted, browser dropped cookie, login
+appeared to "succeed and bounce back to the form").
+
+**Fix**:
+
+- New `RESTREAM_COOKIE_SECURE` env var (`AppSettings.cookie_secure`,
+  default `true`). When `true`: cookie `__Host-rp_session` + `Secure`
+  flag — strongest stock posture, requires HTTPS (production behind
+  TLS reverse proxy). When `false`: cookie name drops `__Host-`
+  prefix to `rp_session` and `Secure` flag is omitted (browsers
+  accept on http://). Other defenses preserved: `HttpOnly`,
+  `SameSite=Lax`, `Path=/`.
+- `app/auth/sessions.py::SESSION_COOKIE_NAME` constant replaced with
+  `session_cookie_name(*, secure: bool)` function.
+  `build_cookie_set_kwargs` + `build_cookie_delete_kwargs` now take
+  `secure: bool` explicit kwarg. All 8 call sites threaded
+  `SettingsDep` (or `app.state.settings` in WS handler which can't
+  use Depends). `app/auth/deps.py::get_current_user_via_cookie`
+  gracefully falls back to `secure=True` when `app.state.settings`
+  missing (minimal test apps).
+- Login form placeholder fixed: "Master password" → "Admin password"
+  with inline code comment naming the v1.1.1 confusion.
+- 2 new tests in `tests/auth/test_sessions.py` pin insecure-mode
+  cookie posture. `tests/api/conftest.py::_build_settings` now
+  defaults to `cookie_secure=False` so httpx persists the cookie
+  naturally over `http://` — the old manual cookie-injection
+  workaround is dead code in the common case.
+- Conftest exports `SESSION_COOKIE_NAME` = `session_cookie_name(secure=False)`
+  for other test files to import.
+
+**Runbook**: `docs/ops/release-checklist.md` step 12a now mandates
+an **actual login round-trip** in a real browser (not just SPA
+reachability). README quickstart explains `RESTREAM_COOKIE_SECURE=false`
+for plain-HTTP setups. `docs/ops/deployment.md` env-var appendix has
+a new entry for the variable.
+
+**Operator state on 2026-05-18 post-v1.1.2**: pulled v1.1.2, added
+`-e RESTREAM_COOKIE_SECURE=false`, no new FIRST BOOT banner (the
+database persisted across the upgrade — expected behavior for a
+schema-stable bump), logged in with the v1.1.1-era admin password
+from earlier first-boot logs, panel rendered, ran the page through
+to the dashboard. Reminded to use Settings → Change Password to
+rotate that password.
+
+**Operator-honest pattern from v1.1.1 + v1.1.2 together**: each
+release surfaced exactly one operator-actionable bug that automated
+tests had not caught. Each was found within MINUTES of the next
+operator browser-test attempt. The right read: **humans-only steps
+in operator runbooks get skipped** until forced by a sequence of
+broken UIs. If a check matters, it goes into automated tests AND
+the runbook AND the release notes — and ideally into a
+`pr-image-smoke` style CI job that simulates browser-side flow
+(not yet built; would require a headless browser in CI).
 

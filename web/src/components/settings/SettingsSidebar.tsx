@@ -23,20 +23,23 @@ type TabKey =
   | "tabVk"
   | "tabCustom";
 
+// Absolute `to=` values only — see settings/index.tsx for the
+// background on why relative routes here can compound segments
+// onto the URL and crash the SPA fallback.
 const NAV: readonly { to: string; label: TabKey; Icon: typeof Sliders }[] = [
-  { to: "general", label: "tabGeneral", Icon: Sliders },
+  { to: "/settings/general", label: "tabGeneral", Icon: Sliders },
   // Targets is a section header rendered specially below.
-  { to: "security", label: "tabSecurity", Icon: ShieldCheck },
-  { to: "sessions", label: "tabSessions", Icon: ClockCounterClockwise },
-  { to: "about", label: "tabAbout", Icon: Info },
+  { to: "/settings/security", label: "tabSecurity", Icon: ShieldCheck },
+  { to: "/settings/sessions", label: "tabSessions", Icon: ClockCounterClockwise },
+  { to: "/settings/about", label: "tabAbout", Icon: Info },
 ];
 
 const TARGET_TYPES: readonly { to: string; label: TabKey }[] = [
-  { to: "targets/twitch", label: "tabTwitch" },
-  { to: "targets/youtube", label: "tabYoutube" },
-  { to: "targets/kick", label: "tabKick" },
-  { to: "targets/vk", label: "tabVk" },
-  { to: "targets/custom", label: "tabCustom" },
+  { to: "/settings/targets/twitch", label: "tabTwitch" },
+  { to: "/settings/targets/youtube", label: "tabYoutube" },
+  { to: "/settings/targets/kick", label: "tabKick" },
+  { to: "/settings/targets/vk", label: "tabVk" },
+  { to: "/settings/targets/custom", label: "tabCustom" },
 ];
 
 export function SettingsSidebar(): ReactNode {

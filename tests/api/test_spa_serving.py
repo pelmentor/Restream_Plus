@@ -13,6 +13,7 @@ We construct a fake SPA tree under `tmp_path` and pass it to
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 from app.main import _mount_spa
 from fastapi import FastAPI
@@ -132,3 +133,60 @@ def test_path_traversal_rejected(tmp_path: Path) -> None:
 # `<repo>/web/dist/` exists (the frontend isn't built for backend
 # tests). If the SPA mount were load-bearing for app construction,
 # every test would fail; so its optionality is the test.
+
+
+# v1.1.3 regression coverage — see docs/releases/v1.1.3.md.
+# In v1.1.2, a relative `Navigate to="general"` in the SPA router
+# compounded segments onto the URL on every catch-all hit
+# (`/settings/foo/general/general/general/…`). The browser kept
+# navigating until the resulting path exceeded ext4's 4096-byte
+# filename limit, at which point the backend SPA fallback crashed in
+# `Path.is_file()` → uvicorn returned 500. The frontend bug is fixed
+# in web/src/pages/settings/index.tsx, but the backend must also
+# refuse to crash on absurd inputs regardless of any client bug.
+
+
+def test_extremely_long_path_does_not_crash(tmp_path: Path) -> None:
+    # An obscenely long path (well past ext4's ENAMETOOLONG cap) must
+    # not raise OSError from inside the handler. We accept either
+    # index.html (current behavior — length cap short-circuits before
+    # stat) or a real HTTP 404; what we MUST never see is HTTP 500.
+    spa = _fake_spa(tmp_path)
+    client = TestClient(_app_with_spa(spa))
+    long_segment = "general/" * 600  # ~4800 chars, well over 4096
+    r = client.get(f"/settings/{long_segment}")
+    assert r.status_code != 500
+    assert r.status_code in (200, 404)
+
+
+def test_path_with_unstattable_segments_does_not_crash(tmp_path: Path) -> None:
+    # A path that resolves to a non-file inside spa_dir but trips
+    # stat() with OSError (NUL byte, weird Unicode, etc.) must fall
+    # through gracefully. We exercise the OSError branch by requesting
+    # a path with a NUL byte, which Path.is_file() rejects on POSIX
+    # and Windows alike.
+    spa = _fake_spa(tmp_path)
+    client = TestClient(_app_with_spa(spa))
+    # Starlette URL-decodes %00 — the resulting Path raises ValueError
+    # on construction or OSError on stat; both must be caught.
+    r = client.get("/settings/with%00nul")
+    assert r.status_code != 500
+
+
+def test_resolve_oserror_is_caught_and_returns_404(tmp_path: Path) -> None:
+    # Pins the `resolve()` guard specifically — distinct from the
+    # `is_file()` guard exercised by the long-path / NUL-byte tests.
+    # Without this, a future refactor that moves the try/except off
+    # the resolve() call site would silently regress: the long-path
+    # test would still pass (length cap short-circuits) and the
+    # NUL test might still pass (OSError can fire from stat() too),
+    # leaving the resolve() guard untested.
+    #
+    # The 404 status (not 200) verifies the v1.1.1 invariant that
+    # paths we can't reason about return an honest 404, not the SPA
+    # shell — see app/main.py::_spa_fallback for the why.
+    spa = _fake_spa(tmp_path)
+    client = TestClient(_app_with_spa(spa))
+    with patch("pathlib.Path.resolve", side_effect=OSError("injected")):
+        r = client.get("/settings/normal-path")
+    assert r.status_code == 404

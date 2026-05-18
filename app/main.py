@@ -235,20 +235,45 @@ def _mount_spa(app: FastAPI, spa_dir: Path) -> None:
         "livez",
         "readyz",
     )
+    # Cap total request-path length BEFORE calling stat(). Linux ext4
+    # ENAMETOOLONG kicks in at 4096; we cap well under that so resolved
+    # paths can never trip the syscall limit. Anything longer is either
+    # an attack, a router-loop bug, or a typo — falling through to
+    # index.html lets the SPA render its own NotFound page rather than
+    # leaking a server-side crash to the client.
+    max_path_len = 1024
+    resolved_root = spa_dir.resolve()
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def _spa_fallback(request: Request, full_path: str) -> FileResponse:
         if any(full_path.startswith(p) for p in api_prefixes):
             raise HTTPException(status_code=404)
-        # Real on-disk file → serve it (handles /assets/*, favicon, etc.).
+        if len(full_path) > max_path_len:
+            return FileResponse(index_html)
         # `resolve()` collapses `..` segments to defend against path
-        # traversal attempting to read files outside spa_dir.
-        candidate = (spa_dir / full_path).resolve()
+        # traversal attempting to read files outside spa_dir. A path
+        # we can't even resolve (embedded NUL → ValueError, syscall
+        # error → OSError) is not a legitimate SPA deep link; we
+        # return 404 rather than the SPA shell so the request stays
+        # distinguishable from a normal deep-link in access logs.
         try:
-            candidate.relative_to(spa_dir.resolve())
+            candidate = (spa_dir / full_path).resolve()
+        except (OSError, ValueError):
+            raise HTTPException(status_code=404) from None
+        try:
+            candidate.relative_to(resolved_root)
         except ValueError:
             raise HTTPException(status_code=404) from None
-        if candidate.is_file():
+        # `is_file()` calls stat(), which raises OSError on weird inputs
+        # (broken symlinks, ENAMETOOLONG paths the cap above didn't
+        # catch, etc.) or ValueError on NUL bytes. Treat all such cases
+        # as "not a real file" and fall through to the SPA shell — the
+        # handler must never crash regardless of input.
+        try:
+            is_file = candidate.is_file()
+        except (OSError, ValueError):
+            return FileResponse(index_html)
+        if is_file:
             return FileResponse(candidate)
         return FileResponse(index_html)
 

@@ -115,3 +115,53 @@ class TestImmutability:
 
     def test_settings_fields_is_frozenset(self) -> None:
         assert isinstance(spec_for(TargetType.TWITCH).settings_fields, frozenset)
+
+    def test_accepted_video_codecs_is_frozenset(self) -> None:
+        assert isinstance(spec_for(TargetType.TWITCH).accepted_video_codecs, frozenset)
+
+
+class TestAcceptedVideoCodecs:
+    """ADR-0016 §6 codec capability table. Pinned per-platform from each
+    platform's published ingest spec + OBS services.json."""
+
+    def test_twitch_is_h264_only(self) -> None:
+        # Per reference/obs-studio/plugins/rtmp-services/data/services.json:204-206
+        # and the Twitch-Multitrack-out-of-scope decision in ADR-0016 §5.
+        assert spec_for(TargetType.TWITCH).accepted_video_codecs == frozenset({"avc1"})
+
+    def test_youtube_accepts_h264_hevc_av1(self) -> None:
+        # Per reference/obs-studio/plugins/rtmp-services/data/services.json:244-248.
+        # AV1 is YouTube-only among supported platforms today.
+        assert spec_for(TargetType.YOUTUBE).accepted_video_codecs == frozenset(
+            {"avc1", "hvc1", "av01"}
+        )
+
+    def test_kick_is_h264_only(self) -> None:
+        assert spec_for(TargetType.KICK).accepted_video_codecs == frozenset({"avc1"})
+
+    def test_vk_live_is_h264_only(self) -> None:
+        assert spec_for(TargetType.VK_LIVE).accepted_video_codecs == frozenset({"avc1"})
+
+    def test_custom_has_no_declared_codecs(self) -> None:
+        # Empty set is intentional: Custom RTMP endpoints have no
+        # platform-declared capability. Phase C fail-loud handles this.
+        assert spec_for(TargetType.CUSTOM).accepted_video_codecs == frozenset()
+
+    def test_all_codecs_are_lowercase_ascii_fourcc(self) -> None:
+        """Every entry must match the FourCC ASCII shape (4 lowercase
+        printable bytes). Drift here would silently miss the multi-track
+        codec gate at Phase C runtime."""
+        for spec in TARGET_TYPE_SPECS.values():
+            for fcc in spec.accepted_video_codecs:
+                assert len(fcc) == 4, f"{spec.type}: {fcc!r} is not 4 chars"
+                assert fcc.isascii(), f"{spec.type}: {fcc!r} is not ASCII"
+                assert fcc == fcc.lower(), f"{spec.type}: {fcc!r} is not lowercase"
+
+    def test_av1_only_youtube(self) -> None:
+        """Sanity check: AV1 is currently a YouTube-only capability."""
+        for tt in TargetType:
+            spec = spec_for(tt)
+            if tt is TargetType.YOUTUBE:
+                assert "av01" in spec.accepted_video_codecs
+            else:
+                assert "av01" not in spec.accepted_video_codecs, tt

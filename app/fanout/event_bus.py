@@ -23,7 +23,7 @@ from collections import deque
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Final
+from typing import Final, Literal
 
 from app.domain.run_state import RunState
 from app.domain.target import TargetUiState
@@ -107,6 +107,52 @@ class HostStatsEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class TrackInfo:
+    """One track in a multi-track FLV manifest (ADR-0016 Phase C)."""
+
+    track_id: int
+    """0..255, allocated by OBS per-encoder. Track 0 is the "primary" by
+    convention — every legacy single-track stream is `track_id=0`."""
+
+    codec_fourcc: str
+    """Lowercase ASCII FourCC: `avc1` / `hvc1` / `av01` for video,
+    `mp4a` for audio. Drawn from `flv-mux.c:91-128` (video) and
+    `flv-mux.c:75-89` (audio)."""
+
+    kind: Literal["video", "audio"]
+
+    def __post_init__(self) -> None:
+        # Wire-derived `track_id` is uint8; explicit guard catches a future
+        # caller (test helper, supervisor synthetic event) that passes an
+        # out-of-range value instead of letting it propagate silently to the
+        # bus + frontend.
+        if not 0 <= self.track_id <= 255:
+            raise ValueError(f"track_id must be 0..255, got {self.track_id}")
+
+
+@dataclass(frozen=True, slots=True)
+class TrackManifestEvent:
+    """ADR-0016 Phase C: emitted by the supervisor's FLV tap when a new
+    track-set is observed for the current run (initial detection on the
+    first key tag after `STARTING → ARMED`, and re-emission whenever the
+    set changes mid-run — e.g., operator toggles a renditions in OBS).
+
+    Consumers:
+      - The Phase D frontend's `useTrackManifest` hook renders the
+        per-target track-selector dropdown.
+      - The supervisor itself reads back the manifest to drive
+        per-target stdin-provider routing.
+
+    `tracks` is an ORDERED tuple — order is "first seen on the wire",
+    which OBS empirically emits as `track_id` ascending. Consumers MUST
+    NOT depend on order for correctness; the tuple shape is for stable
+    serialisation across WS deliveries.
+    """
+
+    tracks: tuple[TrackInfo, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class BusEvent:
     """The single tagged-union envelope on the bus. Ordering preserved."""
 
@@ -114,7 +160,12 @@ class BusEvent:
     monotonic_ns: int
     target_id: str | None
     payload: (
-        WorkerEvent | RunStateChangedEvent | TargetSnapshotEvent | DropAlertEvent | HostStatsEvent
+        WorkerEvent
+        | RunStateChangedEvent
+        | TargetSnapshotEvent
+        | DropAlertEvent
+        | HostStatsEvent
+        | TrackManifestEvent
     )
 
 

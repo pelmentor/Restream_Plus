@@ -19,8 +19,9 @@ it; the supervisor stays a pure orchestrator.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Literal, Protocol
 
@@ -46,12 +47,22 @@ class WorkerSpec:
     supervisor MUST register the plaintext key in `CredentialRegistry`
     BEFORE constructing the spec so any incidental log site is
     redacted; `RedactionSink` strips bytes that flow through stderr.
+
+    `stdin_provider` is the multi-track distribution channel (ADR-0016
+    Phase C). When `None` (the single-track default — every worker today),
+    ffmpeg reads from `input_url` directly. When populated, the
+    supervisor pumps per-target FLV bytes into the Queue and ffmpeg is
+    invoked with `-f flv -i pipe:0`; a `None` sentinel on the Queue
+    signals "no more bytes" (graceful EOF to the worker). The Queue
+    itself is mutable, but the dataclass field is frozen — only the
+    supervisor mutates the Queue contents.
     """
 
     worker_id: WorkerId
     target_type: TargetType
     input_url: str
     output_url: str
+    stdin_provider: asyncio.Queue[bytes | None] | None = field(default=None)
 
 
 @dataclass(frozen=True, slots=True)

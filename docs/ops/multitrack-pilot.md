@@ -134,18 +134,35 @@ Let it run for ~30 seconds (enough for several keyframes per rendition). Ctrl-C 
 
 ## Step 4 — Analyse the capture
 
-Run the pilot analysis script (to be written; placeholder spec in ADR-0016 §12). The script:
+Run the pilot analyser at [scripts/pilot_ertmp.py](../../scripts/pilot_ertmp.py):
 
-1. Opens `capture.flv` as a byte stream.
-2. Skips the FLV header (9 bytes) + initial back-reference (4 bytes).
-3. In a loop:
-   - Reads `tag_type` (1 byte), `data_size` (3 bytes), `timestamp_lower` (3 bytes), `timestamp_ext` (1 byte), `stream_id` (3 bytes).
-   - Reads `data_size` bytes for the tag body.
-   - Reads 4 bytes for the back-reference.
-4. For each tag:
-   - If `tag_type == 9` (video): inspect byte 0 of the body. `(byte0 & 0x80)` set → Enhanced RTMP. Extract `packet_type = byte0 & 0x0F`. If `packet_type == 6` → multi-track; parse `multitrack_type`, `codec_fourcc`, `track_id` per [reference/obs-studio/plugins/obs-outputs/flv-mux.c:442](../../reference/obs-studio/plugins/obs-outputs/flv-mux.c#L442).
-   - If `tag_type == 8` (audio): same idea with `AUDIO_HEADER_EX = 0x90`.
-5. Print summary: `total_tags`, `legacy_tags`, `ertmp_tags`, `multitrack_tags`, `tracks_seen = {(track_id, codec_fourcc) : count}`.
+```powershell
+python scripts/pilot_ertmp.py capture.flv            # human-readable summary
+python scripts/pilot_ertmp.py capture.flv --verbose  # per-tag dump + summary
+python scripts/pilot_ertmp.py capture.flv --json     # JSON summary (for piping)
+```
+
+Exit codes: `0` = parse ok (whatever the multi-track outcome), `1` = usage
+error (missing file), `2` = parse error (truncated / malformed FLV /
+unrecognised signature).
+
+The script is stdlib-only, walks every FLV tag, and classifies each as:
+
+- **legacy** — pre-E-RTMP byte 0 (high bit of video unset, audio high
+  nibble not 0x9). Today's OBS single-track pushes produce these.
+- **ertmp** — Enhanced RTMP non-multitrack tag with codec FourCC at
+  bytes 1-4 ([flv-mux.c:483-485](../../reference/obs-studio/plugins/obs-outputs/flv-mux.c#L483)).
+- **ertmp_multitrack** — `PACKETTYPE_MULTITRACK = 6` for video
+  ([flv-mux.c:477](../../reference/obs-studio/plugins/obs-outputs/flv-mux.c#L477)) or
+  `AUDIO_PACKETTYPE_MULTITRACK = 5` for audio
+  ([flv-mux.c:425](../../reference/obs-studio/plugins/obs-outputs/flv-mux.c#L425)).
+  For `MULTITRACKTYPE_ONE_TRACK` (the layout OBS emits per
+  [flv-mux.c:478-481](../../reference/obs-studio/plugins/obs-outputs/flv-mux.c#L478)),
+  the body decodes to `(codec_fourcc, track_id)`.
+
+Summary fields: `total_tags`, `video_tags`, `audio_tags`, `script_tags`,
+`legacy_video`, `ertmp_video`, `multitrack_video`, audio counterparts,
+and `tracks_seen = [{track_id, codec_fourcc, kind, count}, ...]`.
 
 ## Exit gates
 

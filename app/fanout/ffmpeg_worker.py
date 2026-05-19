@@ -94,6 +94,17 @@ emit blocks. We log a watermark warning at slow sends."""
 LOG_RING_LINES: Final[int] = 200
 """Per-worker stderr line retention for the WS slide-out (Phase 6)."""
 
+MAX_LIFETIME_SPAWN_ATTEMPTS: Final[int] = 1000
+"""Hex Audit FG2-H2 (slice 10): absolute lifetime cap on spawn attempts
+per worker instance. The breaker handles the short-term "30 failures in
+5 min → FAILED_OPEN" case; this caps the cumulative pathological case
+where an operator keeps clicking 'Retry now' on a permanently-wrong URL
+(typo in stream key, dead platform, etc.). Once exceeded, the worker
+stays in FAILED_OPEN permanently and `user_reset()` is a no-op — the
+operator must toggle the target off + on to rebuild the worker. At an
+average backoff of ~30 s/attempt, 1000 attempts is ~8 h of churn,
+which exceeds any plausible transient outage."""
+
 _HARD_KILL_GRACE: Final[float] = 2.0
 """After SIGKILL, wait this long for the OS to reap before giving up."""
 
@@ -141,6 +152,11 @@ class FFmpegWorker:
 
         self._state: WorkerState = WorkerState.IDLE
         self._attempt: int = 0
+        # Hex Audit FG2-H2 (slice 10): absolute lifetime spawn count.
+        # Never reset by `user_reset()` (only `_attempt` resets), so a
+        # permanently-wrong URL eventually pins the worker in
+        # FAILED_OPEN even across repeated operator "Retry now" clicks.
+        self._lifetime_spawn_count: int = 0
         self._last_event_at: datetime = clock()
         self._last_error: str | None = None
         self._last_progress_at_ns: int = monotonic_clock_ns()
@@ -276,8 +292,22 @@ class FFmpegWorker:
         Clears the breaker, zeros the attempt counter, and signals the
         lifecycle loop to leave the FAILED_OPEN waiting state and
         re-enter STARTING. No-op if not in FAILED_OPEN.
+
+        Hex Audit FG2-H2 (slice 10): no-op (silently) once the absolute
+        lifetime spawn cap is exceeded — a permanently-wrong URL is no
+        longer rescuable via repeated operator clicks. The operator
+        must rebuild the worker (toggle target off + on, or fix the
+        config) to reset `_lifetime_spawn_count`.
         """
         if self._state is not WorkerState.FAILED_OPEN:
+            return
+        if self._lifetime_spawn_count >= MAX_LIFETIME_SPAWN_ATTEMPTS:
+            _logger.warning(
+                "ffmpeg_worker_user_reset_capped",
+                worker_id=self._worker_id_log(),
+                lifetime_spawn_count=self._lifetime_spawn_count,
+                cap=MAX_LIFETIME_SPAWN_ATTEMPTS,
+            )
             return
         self._breaker.reset()
         self._attempt = 0
@@ -298,6 +328,7 @@ class FFmpegWorker:
         try:
             await self._set_state(WorkerState.STARTING, WorkerAction.START, cause="initial start")
             while not self._stop_requested.is_set():
+                self._lifetime_spawn_count += 1
                 await self._run_one_spawn()
                 if self._stop_requested.is_set():
                     break
@@ -386,6 +417,21 @@ class FFmpegWorker:
         verdict: BreakerVerdict,
         now: datetime,
     ) -> None:
+        # Hex Audit FG2-H2 (slice 10): force OPEN verdict once the
+        # absolute lifetime spawn cap is exceeded. The per-window
+        # breaker (30 in 5 min) handles transient flapping; this cap
+        # handles the pathological "operator keeps clicking Retry on
+        # a permanently-wrong URL" case where short-window breaker
+        # resets prevent the OPEN trip indefinitely. `user_reset()`
+        # is separately guarded so a Retry click past the cap is a
+        # no-op — the only escape is rebuilding the worker via toggle
+        # off + on.
+        if self._lifetime_spawn_count >= MAX_LIFETIME_SPAWN_ATTEMPTS:
+            verdict = BreakerVerdict.OPEN
+            self._last_error = (
+                f"absolute spawn cap reached ({MAX_LIFETIME_SPAWN_ATTEMPTS} attempts);"
+                " rebuild the target to reset"
+            )
         try:
             new_state = transition(
                 self._state,
@@ -397,7 +443,11 @@ class FFmpegWorker:
             return
         if new_state is self._state:
             return
-        cause = f"breaker {verdict.value} ({self._breaker.failure_count_in_window(now)} failures)"
+        cause = (
+            f"absolute spawn cap exceeded ({self._lifetime_spawn_count} attempts)"
+            if self._lifetime_spawn_count >= MAX_LIFETIME_SPAWN_ATTEMPTS
+            else f"breaker {verdict.value} ({self._breaker.failure_count_in_window(now)} failures)"
+        )
         await self._emit_state_change(new_state, cause=cause)
         self._state = new_state
 
@@ -408,7 +458,16 @@ class FFmpegWorker:
         method returns; the lifecycle loop then routes through the
         breaker the same way as a non-zero exit (post-Phase-5 review
         fix M-3: spawn failure and exit are equivalent failure causes).
+
+        Hex Audit BA-F15 (slice 10): clear `_log_ring` at the start of
+        each spawn so the slide-out shows the CURRENT process's stderr
+        only — a flapping target was hiding fresh post-reconnect lines
+        behind 200 stale lines from earlier attempts. The actually-
+        diagnostic content (`last_error`, the structured-log
+        `worker_event` stream) is preserved separately and not affected
+        by this clear.
         """
+        self._log_ring.clear()
         try:
             self._process = await self._process_spawner.spawn(
                 argv=build_argv(self._spec),

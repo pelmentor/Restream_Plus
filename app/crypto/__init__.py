@@ -11,11 +11,15 @@ admin-password hashing parameters.
 
 from app.crypto.aead import (
     AAD_CREDENTIAL_STREAM_KEY_V1,
+    AAD_CREDENTIAL_STREAM_KEY_V2,
     AEAD_NONCE_LENGTH,
     AEADDecryptionError,
     build_credential_aad,
+    build_credential_aad_v2,
     decrypt,
+    decrypt_credential,
     encrypt,
+    encrypt_credential,
 )
 from app.crypto.kdf import (
     DERIVED_KEY_LENGTH,
@@ -43,11 +47,15 @@ __all__ = [
     "derive_subkey",
     # AEAD
     "AAD_CREDENTIAL_STREAM_KEY_V1",
+    "AAD_CREDENTIAL_STREAM_KEY_V2",
     "AEAD_NONCE_LENGTH",
     "AEADDecryptionError",
     "build_credential_aad",
+    "build_credential_aad_v2",
     "decrypt",
+    "decrypt_credential",
     "encrypt",
+    "encrypt_credential",
     # Passwords
     "PasswordVerificationResult",
     "hash_password",

@@ -74,27 +74,47 @@ class TestBasicConversion:
 
 
 class TestBackupEnabledExtraction:
-    def test_backup_enabled_true(self) -> None:
+    """Hex Audit SA-F14 (slice 10): the per-target `backup_enabled` JSON
+    flag is gated by `youtube_backup_enabled` (config-level kwarg).
+    Tests pass the kwarg explicitly when verifying the per-target flag
+    is honored; the default (False) verifies the gate is closed.
+    """
+
+    def test_backup_enabled_true_with_config_gate_open(self) -> None:
         domain = target_dto_to_domain(
-            _target_dto(target_type="youtube", settings={"backup_enabled": True})
+            _target_dto(target_type="youtube", settings={"backup_enabled": True}),
+            youtube_backup_enabled=True,
         )
         assert domain.backup_enabled is True
 
+    def test_backup_enabled_true_but_config_gate_closed_yields_false(self) -> None:
+        # SA-F14 gate: even with the per-target flag set, the
+        # config-level flag must also be on. Default is False.
+        domain = target_dto_to_domain(
+            _target_dto(target_type="youtube", settings={"backup_enabled": True}),
+        )
+        assert domain.backup_enabled is False
+
     def test_backup_enabled_false(self) -> None:
         domain = target_dto_to_domain(
-            _target_dto(target_type="youtube", settings={"backup_enabled": False})
+            _target_dto(target_type="youtube", settings={"backup_enabled": False}),
+            youtube_backup_enabled=True,
         )
         assert domain.backup_enabled is False
 
     def test_backup_missing_defaults_false(self) -> None:
-        domain = target_dto_to_domain(_target_dto(target_type="youtube", settings={}))
+        domain = target_dto_to_domain(
+            _target_dto(target_type="youtube", settings={}),
+            youtube_backup_enabled=True,
+        )
         assert domain.backup_enabled is False
 
     def test_backup_non_bool_value_coerced(self) -> None:
         # bool() of a non-empty string → True; of empty → False.
         # We tolerate sloppy persisted values rather than crashing.
         domain = target_dto_to_domain(
-            _target_dto(target_type="youtube", settings={"backup_enabled": "yes"})
+            _target_dto(target_type="youtube", settings={"backup_enabled": "yes"}),
+            youtube_backup_enabled=True,
         )
         assert domain.backup_enabled is True
 

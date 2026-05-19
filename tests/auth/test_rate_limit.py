@@ -146,6 +146,71 @@ class TestReset:
         assert rl.check(ip="1.1.1.1", username="admin").allowed is True
 
 
+class TestUnboundedGrowthFootgun:
+    """Hex Audit footgun-hunter F2 (2026-05-18): the limiter must not let
+    bucket dicts grow without bound under a flood of rotating keys.
+    """
+
+    def test_check_only_does_not_materialize_buckets(self) -> None:
+        # `check` is non-mutating: a probe with no prior failure must
+        # NOT inflate `_by_ip` or `_by_username`. The earlier
+        # `defaultdict(deque)` design materialized empty buckets on
+        # every check, giving an attacker an O(unique-IPs) memory cost
+        # at zero attempt cost.
+        rl = LoginRateLimiter()
+        for i in range(500):
+            rl.check(ip=f"10.0.0.{i}", username=f"u{i}")
+        assert len(rl._by_ip) == 0
+        assert len(rl._by_username) == 0
+
+    def test_empty_buckets_pruned_after_window(self) -> None:
+        # A bucket that pruned to empty must be deleted, not lingered.
+        # Without this, only the cap (10_000) bounds memory; with it,
+        # cold keys vacate on the first read after their window expires.
+        t = [1000.0]
+        rl = LoginRateLimiter(failure_limit=3, window_seconds=60, clock=_clock(t))
+        rl.record_failure(ip="1.2.3.4", username="alice")
+        assert "1.2.3.4" in rl._by_ip
+        t[0] += 120  # past the window
+        rl.check(ip="1.2.3.4", username="alice")
+        assert "1.2.3.4" not in rl._by_ip
+        assert "alice" not in rl._by_username
+
+    def test_bucket_count_capped_at_max_tracked_buckets(self) -> None:
+        # Hard ceiling: MAX_TRACKED_BUCKETS. Under a flood of unique
+        # IPs, dict size stays bounded; oldest entries get FIFO-evicted.
+        from app.auth.rate_limit import MAX_TRACKED_BUCKETS
+
+        rl = LoginRateLimiter()
+        for i in range(MAX_TRACKED_BUCKETS + 250):
+            rl.record_failure(ip=f"10.{i // 65536}.{(i // 256) % 256}.{i % 256}", username=f"u{i}")
+        assert len(rl._by_ip) == MAX_TRACKED_BUCKETS
+        assert len(rl._by_username) == MAX_TRACKED_BUCKETS
+
+    def test_eviction_drops_oldest_keeps_recent(self) -> None:
+        # The (cap+1)th distinct key evicts the FIRST one; the most
+        # recent N keys stay. Hex Audit CR2-H3 (2026-05-18): the cap
+        # is a constructor parameter now, so the test injects a small
+        # cap directly instead of monkey-patching the module global
+        # (the prior test only worked because `_materialize` read the
+        # constant as a bare-name global; it would have silently broken
+        # if the cap ever moved onto `self`).
+        rl = LoginRateLimiter(max_buckets=5)
+        for i in range(7):  # 7 distinct keys, cap is 5
+            rl.record_failure(ip=f"10.0.0.{i}", username=f"u{i}")
+        assert len(rl._by_ip) == 5
+        # First two keys evicted, last five retained.
+        assert "10.0.0.0" not in rl._by_ip
+        assert "10.0.0.1" not in rl._by_ip
+        assert "10.0.0.6" in rl._by_ip
+
+    def test_max_buckets_zero_rejected(self) -> None:
+        import pytest
+
+        with pytest.raises(ValueError, match=">= 1"):
+            LoginRateLimiter(max_buckets=0)
+
+
 class TestRateLimitDecision:
     def test_allowed_decision_zero_retry(self) -> None:
         d = RateLimitDecision(allowed=True, retry_after_seconds=0)

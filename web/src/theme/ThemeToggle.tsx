@@ -52,8 +52,8 @@ export function ThemeToggle(): ReactNode {
       role="radiogroup"
       aria-label={t("theme.label")}
       className={cn(
-        "inline-flex items-center gap-1 rounded-full border border-(--color-border-subtle)",
-        "bg-(--color-bg-elevated) p-1",
+        "inline-flex items-center gap-(--space-1) rounded-full border border-(--color-border-subtle)",
+        "bg-(--color-bg-elevated) p-(--space-1)",
       )}
     >
       {SEGMENTS.map((seg, index) => {
@@ -71,7 +71,12 @@ export function ThemeToggle(): ReactNode {
             onClick={() => pick(seg.value)}
             onKeyDown={(e) => handleKeyDown(e, index)}
             className={cn(
-              "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium",
+              // Slice-6 UI-F4: segment py-1 (4px) → py-2 (8px); total
+              // segment height ~32px + outer p-1 = ~40px control. Stays
+              // under 44px (segmented controls are grouped touch
+              // targets per WCAG 2.5.5 — full 44px per segment would
+              // make the toggle read as a landmark not chrome).
+              "inline-flex items-center gap-(--space-1) rounded-full px-(--space-3) py-(--space-2) text-(length:--text-xs) font-medium",
               reducedMotion ? "transition-none" : "transition-colors duration-150 ease-out",
               checked
                 ? "bg-(--color-bg-base) text-(--color-fg-strong) shadow-(--shadow-xs)"

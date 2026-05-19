@@ -21,7 +21,10 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center gap-4 text-center",
+        // Hex Audit UX-F12 (slice 10): `gap-(--space-4)` token instead
+        // of raw `gap-4`. Aligns with the spacing-scale single-source-
+        // of-truth invariant established in slice 5 (UI-F8 / UX-F8).
+        "flex flex-col items-center justify-center gap-(--space-4) text-center",
         "px-(--space-4) py-(--space-16)",
         className,
       )}

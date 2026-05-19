@@ -12,11 +12,15 @@ import secrets
 import pytest
 from app.crypto.aead import (
     AAD_CREDENTIAL_STREAM_KEY_V1,
+    AAD_CREDENTIAL_STREAM_KEY_V2,
     AEAD_NONCE_LENGTH,
     AEADDecryptionError,
     build_credential_aad,
+    build_credential_aad_v2,
     decrypt,
+    decrypt_credential,
     encrypt,
+    encrypt_credential,
 )
 from app.crypto.kdf import DERIVED_KEY_LENGTH, KDF_SALT_LENGTH
 from hypothesis import HealthCheck, given, settings
@@ -213,3 +217,105 @@ def test_property_tampering_any_byte_fails(plaintext: bytes, flip_byte: int) -> 
     tampered[idx] ^= 0xFF
     with pytest.raises(AEADDecryptionError):
         decrypt(key, nonce, bytes(tampered), aad)
+
+
+# --- Slice 7 / Hex Audit BA-F5 — AAD v2 binds target_id ------------------------
+
+
+class TestBuildCredentialAadV2:
+    def test_v2_aad_is_discriminator_plus_salt_plus_target_id(self, salt: bytes) -> None:
+        target_id = "target-abc-123"
+        result = build_credential_aad_v2(salt, target_id)
+        assert result == AAD_CREDENTIAL_STREAM_KEY_V2 + salt + b"target-abc-123"
+
+    def test_v2_discriminator_is_pinned(self) -> None:
+        # Pinned so a refactor cannot silently change the AAD bytes
+        # and break decrypt of every at-rest credential.
+        assert AAD_CREDENTIAL_STREAM_KEY_V2 == b"credential:stream_key:v2"
+
+    def test_v2_rejects_wrong_salt_length(self) -> None:
+        with pytest.raises(ValueError, match=str(KDF_SALT_LENGTH)):
+            build_credential_aad_v2(b"\x00" * (KDF_SALT_LENGTH - 1), "tid")
+
+    def test_v2_rejects_empty_target_id(self, salt: bytes) -> None:
+        with pytest.raises(ValueError, match="target_id"):
+            build_credential_aad_v2(salt, "")
+
+    def test_v2_rejects_non_str_target_id(self, salt: bytes) -> None:
+        with pytest.raises(TypeError):
+            build_credential_aad_v2(salt, b"bytes-not-allowed")  # type: ignore[arg-type]
+
+
+class TestCredentialAeadHelpers:
+    """`encrypt_credential` + `decrypt_credential` round-trip + cross-row attack."""
+
+    def test_roundtrip_v2(self, key: bytes, salt: bytes) -> None:
+        target_id = "target-xyz"
+        plaintext = b"sk_live_1234567890abcdef"
+        nonce, ct = encrypt_credential(key, plaintext, salt, target_id)
+        assert len(nonce) == AEAD_NONCE_LENGTH
+        recovered = decrypt_credential(key, nonce, ct, salt, target_id)
+        assert recovered == plaintext
+
+    def test_wrong_target_id_fails(self, key: bytes, salt: bytes) -> None:
+        """Cross-row substitution attack: encrypted under target A, attacker
+        copies the row to target B → decrypt fails because v2 AAD no
+        longer matches AND v1 fallback also fails (the ciphertext was
+        produced under v2)."""
+        nonce, ct = encrypt_credential(key, b"sk_test", salt, "target-A")
+        with pytest.raises(AEADDecryptionError):
+            decrypt_credential(key, nonce, ct, salt, "target-B")
+
+    def test_v1_legacy_row_decrypts_via_fallback(self, key: bytes, salt: bytes) -> None:
+        """Rows written before slice 7 use v1 AAD (no target_id). The
+        rolling-migration helper must transparently fall back to v1
+        when v2 doesn't verify."""
+        v1_aad = build_credential_aad(salt)
+        plaintext = b"legacy-key-from-v1.1.3"
+        nonce, ct = encrypt(key, plaintext, v1_aad)
+        # target_id passed here is "what we have today" — the fallback
+        # path doesn't use it (v1 AAD doesn't bind target_id).
+        recovered = decrypt_credential(key, nonce, ct, salt, "any-target-id")
+        assert recovered == plaintext
+
+    def test_v2_row_does_not_decrypt_with_v1_aad(self, key: bytes, salt: bytes) -> None:
+        """Sanity check that v2 and v1 produce distinct authentication
+        — otherwise the fallback wouldn't be doing real work."""
+        nonce, ct = encrypt_credential(key, b"sk", salt, "tid")
+        with pytest.raises(AEADDecryptionError):
+            decrypt(key, nonce, ct, build_credential_aad(salt))
+
+    def test_v1_row_does_not_decrypt_with_v2_aad(self, key: bytes, salt: bytes) -> None:
+        v1_aad = build_credential_aad(salt)
+        nonce, ct = encrypt(key, b"sk", v1_aad)
+        with pytest.raises(AEADDecryptionError):
+            decrypt(key, nonce, ct, build_credential_aad_v2(salt, "tid"))
+
+    def test_v1_fallback_with_wrong_target_id_still_decrypts(self, key: bytes, salt: bytes) -> None:
+        """v1 rows have no `target_id` binding, so the legacy fallback
+        is permissive on target_id. The cross-row attack closes only
+        for v2 rows; v1 rows remain vulnerable until they're naturally
+        re-encrypted via the next write (rolling migration). This is
+        accepted in the architect verdict — v1 rows are legacy
+        baggage, and natural write cadence migrates them quickly."""
+        v1_aad = build_credential_aad(salt)
+        nonce, ct = encrypt(key, b"sk", v1_aad)
+        # Any target_id works for v1 rows because v1 AAD doesn't bind it.
+        assert decrypt_credential(key, nonce, ct, salt, "wrong-tid") == b"sk"
+
+    def test_tampered_v2_ciphertext_raises_not_silently_falls_back(
+        self, key: bytes, salt: bytes
+    ) -> None:
+        """Reviewer M-2: a v2 row with a tampered ciphertext byte must
+        raise `AEADDecryptionError` — NOT silently fall back to v1 and
+        succeed. AES-GCM's tag verification fails regardless of AAD,
+        so both v2 and v1 AAD attempts fail; the helper raises. This
+        pins the contract against a future regression that might
+        widen the fallback to retry with a different key/nonce."""
+        nonce, ct = encrypt_credential(key, b"plaintext", salt, "target-X")
+        # Flip a byte in the ciphertext (not in the GCM tag region, but
+        # any byte flip fails AEAD verification).
+        tampered = bytearray(ct)
+        tampered[0] ^= 0xFF
+        with pytest.raises(AEADDecryptionError):
+            decrypt_credential(key, nonce, bytes(tampered), salt, "target-X")

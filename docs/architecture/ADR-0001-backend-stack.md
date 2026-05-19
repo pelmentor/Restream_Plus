@@ -84,6 +84,33 @@ supervisor in-process). No Redis. No Postgres (see ADR-0006).
   system-overview.md §1 non-goals), revisit.
 - **Rust (axum)**: same reasoning as Go, more so.
 
+## Single-process invariants (slice 9 — SA-F13 ADR closure)
+
+The "one container, one Python process, one event loop" decision
+above (and ADR-0004 §"Why s6-overlay specifically") is load-bearing
+for several in-memory singletons whose lifetime is tied to the
+process. They are listed here so a future "let's add a second worker
+process" or "let's split control plane and supervisor into separate
+containers" refactor surfaces *every* invariant it would break in
+one place rather than discovering them piecemeal:
+
+| Singleton | Location | What multi-process would break |
+| --- | --- | --- |
+| `KeyMaterial` (root_key + derived AEAD/MAC subkeys) | `app/auth/key_material.py`, held on `app.state.key_material` | Each process derives its own root_key from the same passphrase, but `paste` mode (ADR-0010) admits the passphrase via `/api/unlock` — only ONE process receives the unlock; the others stay locked indefinitely. |
+| `RateLimiter` (per-IP + per-username sliding window for login) | `app/auth/ratelimit.py`, in-memory dicts | Per-process counters mean an attacker round-robins across N processes and gets N× the per-window budget. The deliberate decision (ADR-0005) was "single-machine, single-tenant — memory is fine, no Redis"; this lock-in is what makes that decision tenable. |
+| `RepromptStore` (60-second reveal-credential session map) | `app/auth/reprompts.py`, FIFO `OrderedDict` capped at 10 000 | A reveal granted on process A is unknown to process B; clicking "reveal" then refreshing onto a different process's session would silently force a re-prompt. The cap (FG2-C4) is per-process. |
+| `EventBus` drainer (single consumer = `ws_broadcaster`) | `app/fanout/event_bus.py`, single-drainer invariant called out in ADR-0003 §"Open questions" | Two drainers race the deque, which the `EventBus` does NOT guard. Splitting drainers requires the fan-in layer named in that ADR's revisit trigger. |
+| `host_stats` sampler (CPU% + aggregate Mbps via `/proc/<pid>/stat`) | `app/fanout/host_stats.py`, polls a single PID | Two processes mean two PIDs to sample; the dashboard would show the supervisor's CPU but not the API process's, or vice versa. |
+| `Supervisor` (per-target Worker registry + circuit breakers + lock ordering) | `app/fanout/supervisor.py`, owns the `_lock` BEFORE `rotation_lock` ordering invariant locked in by slice 3 | A second supervisor process would race the first on the per-target Worker set, the breaker counters, and the publish-began notification from the loopback ingest webhook. |
+| `LastSeenCoalescer` (60 s suppression window on session `last_seen_at` writes) | `app/auth/last_seen_coalescer.py`, FIFO cap 10 000 | Per-process coalescer means N processes each issue one write per minute per session, multiplying the DB-write savings by 1/N. The 60 s decision (FG2-H1) presumes one process. |
+
+The list grows as new in-memory singletons are added; this section is
+the single inventory point. The single-process invariant is *not just
+SQLite*. If a future revisit asks "can we scale to two control planes?"
+the answer is "this whole list breaks; ADR-0007 is the easy one to
+swap, this list is the hard one." Treat the list as load-bearing
+exactly as ADR-0004 §"Open questions" treats the loopback ingest gate.
+
 ## Open questions / revisit triggers
 
 - **Resolved 2026-05-16 (Phase 5 design memo):** subprocess primitive

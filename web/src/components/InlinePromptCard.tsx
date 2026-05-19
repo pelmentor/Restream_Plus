@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 
 import { Button } from "./Button";
+import { Input } from "./Input";
 import { t } from "@/messages";
 
 import type { TargetT } from "@/lib/schemas/targets";
@@ -66,8 +67,10 @@ export function InlinePromptCard({
               <span className="text-(length:--text-xs) font-medium text-(--color-fg-strong)">
                 {target.label}
               </span>
-              <input
+              <Input
                 type="password"
+                size="lg"
+                mono
                 // Reviewer M-1: `autocomplete="off"` is ignored by Chrome/
                 // Firefox on password fields; `new-password` is the
                 // documented way to suppress autofill on a paste-only
@@ -76,7 +79,6 @@ export function InlinePromptCard({
                 spellCheck={false}
                 value={value}
                 onChange={(e) => update(target.id, e.target.value)}
-                className="h-11 px-(--space-3) rounded-(--radius-md) bg-(--color-bg-base) border border-(--color-border-subtle) font-(family-name:--font-mono) text-(length:--text-sm) text-(--color-fg-strong) focus:border-(--color-accent) focus:outline-none"
               />
               <span className="text-(length:--text-xs) text-(--color-fg-muted)">
                 {hint === "empty"

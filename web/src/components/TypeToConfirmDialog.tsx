@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { WarningCircle } from "@phosphor-icons/react";
 
+import { Button } from "./Button";
+import { Input } from "./Input";
 import { cn } from "@/lib/cn";
 import { t } from "@/messages";
 
@@ -79,7 +81,7 @@ export function TypeToConfirmDialog(
           }}
           className={cn(
             "fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2",
-            "w-[90vw] max-w-[480px] rounded-(--radius-lg) border",
+            "w-[90vw] max-w-(--width-dialog-lg) rounded-(--radius-lg) border",
             "bg-(--color-bg-base) border-(--color-border-subtle) p-(--space-6)",
             "shadow-(--shadow-lg)",
           )}
@@ -94,9 +96,11 @@ export function TypeToConfirmDialog(
               {title}
             </Dialog.Title>
           </div>
-          <div className="mt-(--space-3) text-(length:--text-sm) text-(--color-fg-default)">
-            {body}
-          </div>
+          <Dialog.Description asChild>
+            <div className="mt-(--space-3) text-(length:--text-sm) text-(--color-fg-default)">
+              {body}
+            </div>
+          </Dialog.Description>
           {cannotUndo && (
             <div
               className={cn(
@@ -114,19 +118,15 @@ export function TypeToConfirmDialog(
             >
               {t("confirm.typeToConfirm", { phrase })}
             </label>
-            <input
+            <Input
               id="ttc-input"
               type="text"
+              mono
               value={typed}
               onChange={(e) => setTyped(e.target.value)}
               autoComplete="off"
               spellCheck={false}
-              className={cn(
-                "mt-(--space-1) h-10 w-full rounded-(--radius-md) border bg-(--color-bg-base)",
-                "border-(--color-border-subtle) px-(--space-3)",
-                "font-mono text-(length:--text-sm) text-(--color-fg-strong)",
-                "focus:border-(--color-accent) focus:outline-none",
-              )}
+              className="mt-(--space-1)"
             />
             <div
               aria-live="polite"
@@ -136,33 +136,20 @@ export function TypeToConfirmDialog(
             </div>
           </div>
           <div className="mt-(--space-5) flex justify-end gap-(--space-3)">
-            <button
-              type="button"
-              onClick={() => onOpenChange(false)}
-              className={cn(
-                "h-10 rounded-(--radius-md) px-(--space-4) text-(length:--text-sm)",
-                "text-(--color-fg-default) hover:bg-(--color-bg-sunken)",
-              )}
-            >
+            <Button variant="ghost" size="md" onClick={() => onOpenChange(false)}>
               {t("confirm.cancel")}
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant={destructive ? "danger" : "primary"}
+              size="md"
               disabled={!isMatch}
               onClick={() => {
                 onConfirm();
                 onOpenChange(false);
               }}
-              className={cn(
-                "h-10 rounded-(--radius-md) px-(--space-4) text-(length:--text-sm) font-medium text-white",
-                destructive
-                  ? "bg-(--color-error) hover:bg-(--color-error)/85"
-                  : "bg-(--color-accent) hover:bg-(--color-accent-strong)",
-                !isMatch && "opacity-50 cursor-not-allowed",
-              )}
             >
               {confirmLabel}
-            </button>
+            </Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

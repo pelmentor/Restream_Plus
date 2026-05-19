@@ -145,7 +145,7 @@ export function HeroCard({
     <section
       id="dashboard-hero"
       className={cn(
-        "mx-auto w-full max-w-[720px] rounded-(--radius-xl) bg-(--color-bg-elevated)",
+        "mx-auto w-full max-w-(--width-hero) rounded-(--radius-xl) bg-(--color-bg-elevated)",
         "border border-(--color-border-subtle) shadow-(--shadow-sm) p-(--space-8)",
         // Reviewer M-3: --color-* tokens ship full `hsl(...)` values per
         // Phase 7 §D — wrapping in hsl() again was invalid CSS and
@@ -246,7 +246,7 @@ function HeroButton({
         aria-label={t("hero.stopConfirmAria")}
         onKeyDown={onKeyDown}
         onMouseLeave={onCancelStop}
-        className="inline-flex h-20 min-w-[280px] max-w-[420px] gap-px overflow-hidden rounded-md"
+        className="inline-flex h-20 min-w-(--width-hero-action-min) max-w-(--width-hero-action-max) gap-px overflow-hidden rounded-md"
       >
         <Button
           ref={confirmStopRef}
@@ -340,7 +340,18 @@ function HeroBody({
   totalEnabled,
   totalDrops,
 }: HeroBodyProps): ReactNode {
-  const ingestUrl = `rtmps://${window.location.host}/live`;
+  // RTMP ingest lives on port 1935 (plain RTMP), never on whatever port
+  // the panel is served from. `window.location.host` is "host:port" of
+  // the HTTP panel — using that verbatim with `rtmps://…/live` produces
+  // a URL that's wrong in every deployment shape: prod (nginx-rtmp on
+  // :1935) and dev (MediaMTX on :1935). The earlier "rtmps://…/live"
+  // copy was a v1.0 bug that nobody noticed because operators have OBS
+  // configured externally — the panel's display didn't drive the actual
+  // push. Now we tell the truth: rtmp:// + hostname + :1935.
+  // TODO when we add a TLS terminator in front of RTMP (rtmps:// support
+  // via stunnel / nginx stream module): expose the protocol+port via
+  // /api/settings and read it here instead of hardcoding.
+  const ingestUrl = `rtmp://${window.location.hostname}:1935/live`;
   switch (runState) {
     case "offline":
       return (
@@ -448,12 +459,19 @@ function IngestEgressPair({ ingestKbps, egressMbps }: IngestEgressPairProps): Re
 }
 
 function FirstRunHint(): ReactNode {
+  // Hex Audit UI-F14 (slice 10): step circles bumped from `h-6 w-6`
+  // (24px) to `h-8 w-8` (32px) so they read as load-bearing numbered
+  // chips rather than tiny inline decorations against the 80px START
+  // button next door. Font also bumps text-2xs → text-sm so the
+  // numerals are legible at the new size. The pt-(--space-1) on the
+  // description text becomes unnecessary now that the larger circle
+  // already aligns with the first line baseline.
   return (
     <div className="w-full mt-(--space-2) rounded-(--radius-md) bg-(--color-info-faint) border-l-2 border-(--color-info) p-(--space-4)">
       <ol className="flex flex-col gap-(--space-2)">
         {(["firstRunStep1", "firstRunStep2", "firstRunStep3"] as const).map((key, i) => (
           <li key={key} className="flex items-start gap-(--space-3)">
-            <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-(--color-info) text-white text-(length:--text-xs) font-semibold">
+            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-(--color-info) text-(--color-on-accent) text-(length:--text-sm) font-semibold">
               {i + 1}
             </span>
             <span className="text-(length:--text-sm) text-(--color-fg-default) pt-(--space-1)">

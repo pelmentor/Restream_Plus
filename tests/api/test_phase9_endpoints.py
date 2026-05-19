@@ -34,6 +34,7 @@ from app.api.ws import WsRegistry
 from app.api.ws import router as ws_router
 from app.auth.deps import AuthState
 from app.auth.key_material import KeyMaterial, load_or_create_kdf_salt
+from app.auth.last_seen_coalescer import LastSeenCoalescer
 from app.auth.rate_limit import LoginRateLimiter
 from app.auth.reprompts import RepromptStore
 from app.config import AppSettings
@@ -381,8 +382,9 @@ async def test_about_last_reboots_reflects_app_started_events(
     repo = AuditLogRepository(api_sessionmaker)
     older = datetime(2026, 5, 14, 12, 0, 0, tzinfo=UTC)
     newer = datetime(2026, 5, 15, 12, 0, 0, tzinfo=UTC)
-    await repo.append(event_type="app_started", actor="system", at=older)
-    await repo.append(event_type="app_started", actor="system", at=newer)
+    # Hex Audit BA-F4 (slice 8): direct seeding uses `append_standalone`.
+    await repo.append_standalone(event_type="app_started", actor="system", at=older)
+    await repo.append_standalone(event_type="app_started", actor="system", at=newer)
     r = await auth_client.get("/api/about")
     assert r.status_code == 200
     reboots = r.json()["last_reboots"]
@@ -445,7 +447,9 @@ async def real_unlocked_app(
         sessionmaker=sm,
         rate_limiter=LoginRateLimiter(),
         unlock_rate_limiter=LoginRateLimiter(failure_limit=3, window_seconds=900.0),
+        reprompt_rate_limiter=LoginRateLimiter(failure_limit=3, window_seconds=900.0),
         reprompts=reprompts,
+        last_seen_coalescer=LastSeenCoalescer(),
         trusted_proxies=(),
     )
     app = FastAPI()
@@ -562,19 +566,134 @@ async def test_rotate_passphrase_happy_path_rewraps_credentials(
     assert len(active) == 0
 
     # Credentials re-wrapped: decrypt with NEW key works for both.
-    from app.crypto.aead import decrypt as aead_decrypt
+    # Slice 7 / BA-F5: rotate-passphrase now writes v2 AAD on rewrap, so
+    # the verification path uses `decrypt_credential` which transparently
+    # handles v1 or v2.
+    from app.crypto.aead import decrypt_credential
 
     async with sm() as s:
         for tid, original_pt in zip(target_ids, plaintexts, strict=True):
             cred = await CredentialsRepository(s).get_for_target(tid)
             assert cred is not None
-            recovered = aead_decrypt(
+            recovered = decrypt_credential(
                 km.require_ready().stream_key_kek,
                 cred.nonce,
                 cred.ciphertext,
-                build_credential_aad(cred.salt),
+                cred.salt,
+                tid,
             ).decode("utf-8")
             assert recovered == original_pt
+
+
+@pytest.mark.asyncio
+async def test_rotate_passphrase_emits_two_phase_audit(
+    real_unlocked_app: FastAPI,
+    real_unlocked_client: httpx.AsyncClient,
+) -> None:
+    """Slice 8.5 (Hex Audit BA2-F2 + FG3-F3 STRONG): the rotate-
+    passphrase happy path now emits TWO audit rows:
+
+    1. `passphrase_rotation_started` INSIDE the rewrap txn (atomic
+       with the credential rewrap + delete-all sessions/tokens).
+    2. `passphrase_rotated` via `append_standalone` AFTER the
+       salt-file rename + in-process key swap both succeed.
+
+    On the orphan-rename path (salt-file rename fails), an additional
+    `passphrase_rotation_orphaned` row records the divergence between
+    DB state and on-disk state. The two-phase shape prevents the
+    forensic-record-lies failure mode flagged in re-audit
+    Checkpoint #2.
+    """
+    sm: async_sessionmaker[AsyncSession] = real_unlocked_app.state.sessionmaker_
+    initial: str = real_unlocked_app.state.initial_passphrase
+
+    grant = await _issue(real_unlocked_client, "rotate_passphrase")
+    new_passphrase = "rotated-master-passphrase-32-chars"
+    r = await real_unlocked_client.post(
+        "/api/security/rotate-passphrase",
+        json={"old_passphrase": initial, "new_passphrase": new_passphrase},
+        headers={"X-Reprompt-Grant": grant},
+    )
+    assert r.status_code == 204, r.text
+
+    async with sm() as s:
+        rows = await AuditLogRepository(sm).list_recent(s, limit=20)
+
+    started = [r for r in rows if r.event_type == "passphrase_rotation_started"]
+    rotated = [r for r in rows if r.event_type == "passphrase_rotated"]
+    orphaned = [r for r in rows if r.event_type == "passphrase_rotation_orphaned"]
+
+    assert len(started) == 1, "passphrase_rotation_started must land in-txn"
+    assert len(rotated) == 1, "passphrase_rotated must land post-rename"
+    assert len(orphaned) == 0, "no orphan on happy path"
+    # Both audit rows carry the rewrap/revoke counters.
+    for row in (started[0], rotated[0]):
+        assert "credentials_rewrapped_count" in row.data
+        assert "sessions_revoked_count" in row.data
+        assert "api_tokens_revoked_count" in row.data
+
+
+@pytest.mark.asyncio
+async def test_rotate_passphrase_orphan_rename_emits_audit_and_raises(
+    real_unlocked_app: FastAPI,
+    real_unlocked_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Slice 8.5 reviewer-pass note: the forensically critical
+    orphan-rename branch (the post-commit `Path.replace` raises
+    `OSError`) was previously untested. This pins the load-bearing
+    invariant: when the rename fails, the audit log carries both
+    `passphrase_rotation_started` (in-txn commit succeeded) AND
+    `passphrase_rotation_orphaned` (post-commit failure noted) — but
+    NOT `passphrase_rotated`. The 500 returned to the client signals
+    rotation failure; the audit row matches reality (DB credentials
+    are new but on-disk salt is old).
+    """
+    sm: async_sessionmaker[AsyncSession] = real_unlocked_app.state.sessionmaker_
+    initial: str = real_unlocked_app.state.initial_passphrase
+
+    # Force the salt-file rename to fail. The rename is `new_path.replace(salt_path)`
+    # at security_api.py — monkeypatching `pathlib.Path.replace` is the cleanest
+    # way to simulate the OS-level failure.
+    from pathlib import Path
+
+    original_replace = Path.replace
+
+    def _boom_replace(self: Path, target: object) -> object:
+        if self.suffix == ".new":
+            raise OSError("simulated rename failure")
+        return original_replace(self, target)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "replace", _boom_replace)
+
+    grant = await _issue(real_unlocked_client, "rotate_passphrase")
+    new_passphrase = "orphan-test-passphrase-32-chars"
+    r = await real_unlocked_client.post(
+        "/api/security/rotate-passphrase",
+        json={"old_passphrase": initial, "new_passphrase": new_passphrase},
+        headers={"X-Reprompt-Grant": grant},
+    )
+    # The orphan path re-raises OSError -> generic 500.
+    assert r.status_code == 500
+
+    async with sm() as s:
+        rows = await AuditLogRepository(sm).list_recent(s, limit=20)
+
+    started = [r for r in rows if r.event_type == "passphrase_rotation_started"]
+    rotated = [r for r in rows if r.event_type == "passphrase_rotated"]
+    orphaned = [r for r in rows if r.event_type == "passphrase_rotation_orphaned"]
+
+    # Audit reality:
+    # - `started` row landed atomically with the rewrap+delete-all
+    #   inside the session.begin block (txn committed before rename).
+    # - `orphaned` row landed post-commit via append_standalone.
+    # - `rotated` row did NOT land (would imply the full rotation
+    #   succeeded — it didn't).
+    assert len(started) == 1, "rotation_started must land in-txn even on orphan"
+    assert len(orphaned) == 1, "orphaned must land on rename failure"
+    assert len(rotated) == 0, "rotated must NOT land when rename fails"
+    assert orphaned[0].data.get("old_salt_hex") is not None
+    assert orphaned[0].data.get("new_salt_hex") is not None
 
 
 @pytest.mark.asyncio
@@ -686,17 +805,21 @@ async def test_rotate_passphrase_atomicity_on_rewrap_failure(
     assert real_unlocked_app.state.settings.kdf_salt_path.read_bytes() == old_salt_bytes
     # KeyMaterial still holds OLD keys.
     assert await km.verify_passphrase(initial) is True
-    # Credentials decryptable with OLD KEK (rolled back).
-    from app.crypto.aead import decrypt as aead_decrypt
+    # Credentials decryptable with OLD KEK (rolled back). The fixture
+    # creates v1-AAD credentials; `decrypt_credential` transparently
+    # falls back to v1 when v2 doesn't match (Hex Audit BA-F5 rolling
+    # migration).
+    from app.crypto.aead import decrypt_credential
 
     async with sm() as s:
         for tid, original_pt in zip(target_ids, plaintexts, strict=True):
             cred = await CredentialsRepository(s).get_for_target(tid)
             assert cred is not None
-            recovered = aead_decrypt(
+            recovered = decrypt_credential(
                 km.require_ready().stream_key_kek,
                 cred.nonce,
                 cred.ciphertext,
-                build_credential_aad(cred.salt),
+                cred.salt,
+                tid,
             ).decode("utf-8")
             assert recovered == original_pt

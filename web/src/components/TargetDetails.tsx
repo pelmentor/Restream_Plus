@@ -8,10 +8,15 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { LogViewer } from "./LogViewer";
 import { MetricGrid, type Metric } from "./MetricGrid";
 import { Sparkline } from "./Sparkline";
-import { apiFetch } from "@/lib/api";
+import { ApiError, apiFetch } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { TARGETS_QUERY_KEY } from "@/hooks/useTargets";
 import { useLiveMetrics } from "@/hooks/useLiveMetrics";
+import {
+  REPROMPT_BUSY,
+  REPROMPT_CANCELLED,
+  useAuthReprompt,
+} from "@/hooks/useAuthReprompt";
 import { t } from "@/messages";
 
 import type { TargetWithSnapshot } from "@/hooks/useTargets";
@@ -42,12 +47,42 @@ export function TargetDetails({ target, onClose, triggerRef }: TargetDetailsProp
   const targetSamples =
     target !== null ? (egressByTarget.get(target.id) ?? []) : [];
 
+  const reprompt = useAuthReprompt();
+
+  // Hex Audit BA-F13 (slice 10): "Retry now" is reprompt-protected so a
+  // stolen-cookie attacker cannot defeat the circuit breaker's noisy-
+  // neighbor protection (ADR-0003 §Reconnect policy) by spamming the
+  // reset endpoint and earning the operator an IP-ban from the target
+  // platform.
   const resetMutation = useMutation({
-    mutationFn: (targetId: string) =>
-      apiFetch<void>(`targets/${targetId}/reset-worker?role=primary`, {
+    mutationFn: async (targetId: string) => {
+      const grantId = await reprompt("reset_target_worker");
+      return apiFetch<void>(`targets/${targetId}/reset-worker?role=primary`, {
         method: "POST",
-      }),
+        headers: { "X-Reprompt-Grant": grantId },
+      });
+    },
   });
+
+  const handleReset = (targetId: string): void => {
+    resetMutation.mutate(targetId, {
+      onError: (err: unknown) => {
+        if (
+          err instanceof ApiError &&
+          (err.message === REPROMPT_CANCELLED || err.message === REPROMPT_BUSY)
+        ) {
+          // Operator dismissed the dialog or a concurrent reprompt was in
+          // flight; silent — the action simply does not proceed. Network
+          // / auth failures still surface to the mutation's error state.
+          // Reviewer IMP-2: `instanceof ApiError` aligns with the six
+          // other reprompt call sites (SecurityTab, GeneralTab, VKTab,
+          // CustomTab, PersistentTargetTab). A plain `Error` whose
+          // `.message` happens to collide with the sentinel strings
+          // would otherwise be silently swallowed here.
+        }
+      },
+    });
+  };
 
   const disableMutation = useMutation({
     mutationFn: (targetId: string) =>
@@ -92,7 +127,9 @@ export function TargetDetails({ target, onClose, triggerRef }: TargetDetailsProp
             triggerRef.current?.focus();
           }}
           className={cn(
-            "fixed inset-y-0 right-0 w-[480px] max-w-full",
+            // Slice-6 FH2-M2: arbitrary `w-[480px]` tokenized to
+            // `--width-slideout`.
+            "fixed inset-y-0 right-0 w-(--width-slideout) max-w-full",
             "bg-(--color-bg-base) border-l border-(--color-border-subtle)",
             "shadow-(--shadow-lg) flex flex-col",
             "motion-reduce:transition-opacity",
@@ -104,15 +141,24 @@ export function TargetDetails({ target, onClose, triggerRef }: TargetDetailsProp
             <Dialog.Title className="text-(length:--text-lg) font-semibold text-(--color-fg-strong)">
               {target?.label ?? ""}
             </Dialog.Title>
-            <button
+            <Dialog.Description className="sr-only">
+              {t("targetDetails.description")}
+            </Dialog.Description>
+            {/* Slice-6 UI-F4: close button grows to size=lg (44×44) for
+                WCAG 2.5.5 touch-target floor. `rounded-full` is kept —
+                close-button universal affordance. Glyph stays at 20px;
+                the hit area expands, the visual mass does not. */}
+            <Button
               ref={closeRef}
-              type="button"
-              onClick={onClose}
+              iconOnly
+              variant="ghost"
+              size="lg"
               aria-label={t("targetDetails.close")}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-full hover:bg-(--color-bg-elevated)"
+              onClick={onClose}
+              className="rounded-full"
             >
-              <X className="h-5 w-5 text-(--color-fg-default)" weight="regular" aria-hidden="true" />
-            </button>
+              <X className="h-5 w-5" weight="regular" aria-hidden="true" />
+            </Button>
           </div>
           {target !== null && (
             <div className="flex-1 overflow-y-auto px-(--space-4) py-(--space-4) flex flex-col gap-(--space-6)">
@@ -151,7 +197,7 @@ export function TargetDetails({ target, onClose, triggerRef }: TargetDetailsProp
                 <Button
                   variant="secondary"
                   size="md"
-                  onClick={() => resetMutation.mutate(target.id)}
+                  onClick={() => handleReset(target.id)}
                   loading={resetMutation.isPending}
                 >
                   {t("targetDetails.retryNow")}

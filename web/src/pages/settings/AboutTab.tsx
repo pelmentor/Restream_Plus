@@ -51,7 +51,7 @@ export function AboutTab(): ReactNode {
           <code className="flex-1 truncate rounded-(--radius-md) border border-(--color-border-subtle) bg-(--color-bg-sunken) px-(--space-3) py-(--space-2) font-mono text-(length:--text-sm) text-(--color-fg-strong)">
             {t("aboutTab.logsPath")}
           </code>
-          <CopyToClipboard value={t("aboutTab.logsPath")} variant="standalone" />
+          <CopyToClipboard value={t("aboutTab.logsPath")} />
         </div>
       </SettingsSection>
       <SettingsSection title={t("aboutTab.licenseSection")}>

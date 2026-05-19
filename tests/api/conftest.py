@@ -28,6 +28,7 @@ from app.api import LockedModeMiddleware, install_exception_handlers
 from app.api.api_tokens_api import router as api_tokens_router
 from app.api.auth import auth_router, unlock_router
 from app.api.health import router as health_router
+from app.api.internal_mtx import router as internal_mtx_router
 from app.api.internal_rtmp import router as internal_rtmp_router
 from app.api.run import router as run_router
 from app.api.security_api import about_router, security_router
@@ -38,6 +39,7 @@ from app.api.ws import WsRegistry
 from app.api.ws import router as ws_router
 from app.auth.deps import AuthState
 from app.auth.key_material import DerivedKeys, KeyMaterial, KeyMaterialState
+from app.auth.last_seen_coalescer import LastSeenCoalescer
 from app.auth.rate_limit import LoginRateLimiter
 from app.auth.reprompts import RepromptStore
 from app.auth.sessions import session_cookie_name
@@ -172,7 +174,9 @@ async def auth_state(
         sessionmaker=api_sessionmaker,
         rate_limiter=LoginRateLimiter(),
         unlock_rate_limiter=LoginRateLimiter(failure_limit=3, window_seconds=900.0),
+        reprompt_rate_limiter=LoginRateLimiter(failure_limit=3, window_seconds=900.0),
         reprompts=reprompts,
+        last_seen_coalescer=LastSeenCoalescer(),
         trusted_proxies=(),
     )
 
@@ -209,6 +213,7 @@ def _make_test_app(
     app.include_router(api_tokens_router)
     app.include_router(sessions_history_router)
     app.include_router(internal_rtmp_router)
+    app.include_router(internal_mtx_router)
     app.include_router(security_router)
     app.include_router(about_router)
     app.include_router(ws_router)

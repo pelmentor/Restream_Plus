@@ -116,3 +116,57 @@ class SettingsRepository:
             )
         )
         return await self.get()
+
+    async def clear_ingest_key_previous_after_grace(
+        self,
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        """Clear `ingest_key_previous` + `ingest_key_grace_until` when
+        the grace window has expired.
+
+        Hex Audit BA-F1 (2026-05-18): the rotation grace window was
+        previously hygiene-only — the auth webhooks (`/internal/rtmp/publish`
+        and `/internal/mtx/auth`) accepted the previous key whenever
+        the column was non-null, even past `grace_until`. With the
+        auth-path now consulting `grace_until` directly, this method
+        is the matching cleanup: it lets the lifespan-side periodic
+        loop drop the stale row state so the DB no longer holds the
+        old key after it has stopped being honoured.
+
+        Returns:
+            True iff a row was cleared (grace had expired AND previous
+            was non-null). False on a no-op (nothing to clear, or grace
+            not yet expired). The lifespan loop uses the return value
+            to decide whether to emit an audit row.
+
+        The `UPDATE ... WHERE ... AND grace_until < :now AND previous
+        IS NOT NULL` shape makes the clear atomic and idempotent: two
+        concurrent ticks racing won't double-audit, because only the
+        first sees the predicate match.
+        """
+        actual_now = now if now is not None else datetime.now(tz=UTC)
+        if actual_now.tzinfo is None:
+            raise ValueError("now must be timezone-aware")
+        result = await self._s.execute(
+            update(SettingsORM)
+            .where(SettingsORM.id == 1)
+            .where(SettingsORM.ingest_key_previous.is_not(None))
+            .where(SettingsORM.ingest_key_grace_until.is_not(None))
+            .where(SettingsORM.ingest_key_grace_until < actual_now)
+            .values(
+                ingest_key_previous=None,
+                ingest_key_grace_until=None,
+                updated_at=actual_now,
+            )
+        )
+        # SQLAlchemy's `update().execute()` exposes `rowcount` on the
+        # cursor result — 1 when the predicate matched, 0 when not.
+        # `AsyncSession.execute` is typed as returning `Result[Any]`,
+        # but for UPDATE/DELETE statements the concrete return is a
+        # `CursorResult` carrying `rowcount`. The runtime guarantee
+        # holds; the type narrowing doesn't, hence the cast.
+        from sqlalchemy.engine import CursorResult
+
+        assert isinstance(result, CursorResult)
+        return bool(result.rowcount)

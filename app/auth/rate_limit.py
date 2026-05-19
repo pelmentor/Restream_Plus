@@ -35,7 +35,7 @@ import ipaddress
 import math
 import threading
 import time
-from collections import defaultdict, deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
@@ -59,6 +59,15 @@ UNKNOWN_CLIENT_IP: Final[str] = "unknown"
 discernible (e.g., Starlette's `request.client` is None during some
 test transports). Treats anonymous peers as a single shared bucket
 so they share the same rate ceiling — fail-closed."""
+
+MAX_TRACKED_BUCKETS: Final[int] = 10_000
+"""Hard cap on the number of live buckets in EACH of the per-IP and
+per-username dicts. Without a cap an attacker submitting login
+attempts with rotating spoofed `X-Forwarded-For` IPs (when trusted
+proxies are configured) or rotating usernames could materialize
+10M+ permanent dict entries, costing ~600 B/key and OOM-killing the
+process. Hex Audit footgun-hunter F2 (2026-05-18). 10k × 2 dicts
+× ~600 B = ~12 MB ceiling; far in excess of any legitimate workload."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,11 +110,14 @@ class LoginRateLimiter:
         failure_limit: int = DEFAULT_FAILURE_LIMIT,
         window_seconds: float = DEFAULT_WINDOW_SECONDS,
         clock: object = None,
+        max_buckets: int = MAX_TRACKED_BUCKETS,
     ) -> None:
         if failure_limit < 1:
             raise ValueError("failure_limit must be >= 1")
         if window_seconds <= 0:
             raise ValueError("window_seconds must be > 0")
+        if max_buckets < 1:
+            raise ValueError("max_buckets must be >= 1")
         self._limit = failure_limit
         self._window = window_seconds
         # `clock` is `monotonic` in production; tests can inject a
@@ -113,27 +125,47 @@ class LoginRateLimiter:
         # the test fixture's `Callable[[], float]` works without an
         # extra runtime check.
         self._clock = clock if callable(clock) else time.monotonic
+        # Hex Audit CR2-H3 (2026-05-18): the cap is stored on `self`
+        # so tests can construct a small-cap limiter explicitly
+        # (`LoginRateLimiter(max_buckets=5)`) instead of monkey-patching
+        # the module-level constant — the patching pattern only worked
+        # because `_materialize` referenced `MAX_TRACKED_BUCKETS` as a
+        # bare-name global at call time, and it would silently break if
+        # the cap ever moved to an instance attribute or closure.
+        self._max_buckets = max_buckets
         self._lock = threading.Lock()
-        self._by_ip: dict[str, deque[float]] = defaultdict(deque)
-        self._by_username: dict[str, deque[float]] = defaultdict(deque)
+        # OrderedDict (instead of defaultdict): `check()` reads via
+        # `.get()` and never materializes a bucket on miss; only
+        # `record_failure()` creates buckets, with FIFO eviction when
+        # the cap is hit. Empty buckets are deleted as soon as pruning
+        # drains them. See Hex Audit footgun-hunter F2.
+        self._by_ip: OrderedDict[str, deque[float]] = OrderedDict()
+        self._by_username: OrderedDict[str, deque[float]] = OrderedDict()
 
     def check(self, *, ip: str, username: str) -> RateLimitDecision:
         """Is this `(ip, username)` allowed to attempt right now?
 
-        Side effect: prunes expired entries from both buckets.
-        Does NOT record an attempt — call `record_failure` after a
-        failed login.
+        Side effect: prunes expired entries from both buckets when they
+        exist. Does NOT materialize new buckets on miss — that prevents
+        a flood of one-shot probes from inflating memory. Does NOT
+        record an attempt — call `record_failure` after a failed login.
         """
         username_key = normalize_username(username)
         with self._lock:
             now = self._clock()
-            ip_bucket = self._by_ip[ip]
-            uname_bucket = self._by_username[username_key]
-            self._prune(ip_bucket, now)
-            self._prune(uname_bucket, now)
+            ip_bucket = self._by_ip.get(ip)
+            uname_bucket = self._by_username.get(username_key)
+            if ip_bucket is not None:
+                self._prune_or_evict(self._by_ip, ip, ip_bucket, now)
+                ip_bucket = self._by_ip.get(ip)
+            if uname_bucket is not None:
+                self._prune_or_evict(self._by_username, username_key, uname_bucket, now)
+                uname_bucket = self._by_username.get(username_key)
 
-            ip_full = len(ip_bucket) >= self._limit
-            uname_full = len(uname_bucket) >= self._limit
+            ip_count = len(ip_bucket) if ip_bucket is not None else 0
+            uname_count = len(uname_bucket) if uname_bucket is not None else 0
+            ip_full = ip_count >= self._limit
+            uname_full = uname_count >= self._limit
 
             if not ip_full and not uname_full:
                 return RateLimitDecision(allowed=True, retry_after_seconds=0)
@@ -142,25 +174,35 @@ class LoginRateLimiter:
             # retry-after surfaces the *worst* case so the operator's
             # automation honors it.
             retry_candidates: list[float] = []
-            if ip_full:
+            if ip_full and ip_bucket is not None:
                 retry_candidates.append(self._oldest_expiry(ip_bucket, now))
-            if uname_full:
+            if uname_full and uname_bucket is not None:
                 retry_candidates.append(self._oldest_expiry(uname_bucket, now))
             seconds = max(retry_candidates) if retry_candidates else 0.0
             retry_after = max(1, math.ceil(seconds))
             return RateLimitDecision(allowed=False, retry_after_seconds=retry_after)
 
     def record_failure(self, *, ip: str, username: str) -> None:
-        """Record one failed attempt against both `(ip, username)` buckets."""
+        """Record one failed attempt against both `(ip, username)` buckets.
+
+        Materializes the bucket if absent, enforcing `MAX_TRACKED_BUCKETS`
+        via FIFO eviction (drop the least-recently-touched bucket).
+        Touch (`move_to_end`) on every insert so the eviction order
+        reflects activity, not original creation time.
+        """
         username_key = normalize_username(username)
         with self._lock:
             now = self._clock()
-            ip_bucket = self._by_ip[ip]
-            uname_bucket = self._by_username[username_key]
+            ip_bucket = self._materialize(self._by_ip, ip)
+            uname_bucket = self._materialize(self._by_username, username_key)
             self._prune(ip_bucket, now)
             self._prune(uname_bucket, now)
             ip_bucket.append(now)
             uname_bucket.append(now)
+            # Recording made these buckets MRU; refresh their position
+            # so the FIFO eviction targets genuinely cold keys.
+            self._by_ip.move_to_end(ip)
+            self._by_username.move_to_end(username_key)
 
     def reset(self) -> None:
         """Drop all in-memory buckets. Test helper."""
@@ -168,10 +210,42 @@ class LoginRateLimiter:
             self._by_ip.clear()
             self._by_username.clear()
 
+    def _materialize(self, store: OrderedDict[str, deque[float]], key: str) -> deque[float]:
+        """Get-or-create a bucket, evicting the oldest if at cap."""
+        bucket = store.get(key)
+        if bucket is not None:
+            return bucket
+        if len(store) >= self._max_buckets:
+            # FIFO eviction — drop the least-recently-touched key. The
+            # evicted bucket's history is lost, which is the price of
+            # the memory cap; the alternative is OOM.
+            store.popitem(last=False)
+        bucket = deque()
+        store[key] = bucket
+        return bucket
+
     def _prune(self, bucket: deque[float], now: float) -> None:
         threshold = now - self._window
         while bucket and bucket[0] <= threshold:
             bucket.popleft()
+
+    def _prune_or_evict(
+        self,
+        store: OrderedDict[str, deque[float]],
+        key: str,
+        bucket: deque[float],
+        now: float,
+    ) -> None:
+        """Prune expired entries; delete the bucket entirely if empty.
+
+        Without the delete, a bucket whose contents pruned to zero would
+        linger forever (the read-side never deletes), giving back the
+        unbounded-growth footgun the cap closes. Deleting on empty is
+        the load-bearing companion to `MAX_TRACKED_BUCKETS`.
+        """
+        self._prune(bucket, now)
+        if not bucket:
+            store.pop(key, None)
 
     def _oldest_expiry(self, bucket: deque[float], now: float) -> float:
         """Seconds until the oldest entry in `bucket` falls out of window.

@@ -96,13 +96,15 @@ async def update_settings(
         idle_timeout_seconds=body.idle_timeout_seconds,
         log_retention_days=body.log_retention_days,
     )
-    await session.commit()
+    # Hex Audit BA-F4 (slice 8): audit in the business txn.
     audit = AuditLogRepository(state.sessionmaker)
     await audit.append(
+        session,
         event_type="settings_updated",
         actor=auth.user.username,
         data=dict(body.model_dump(exclude_unset=True)),
     )
+    await session.commit()
     return _project_settings(updated)
 
 
@@ -136,13 +138,15 @@ async def rotate_ingest_key(
     updated = await SettingsRepository(session).rotate_ingest_key(
         new_key=new_key, grace_until=grace_until, now=now
     )
-    await session.commit()
+    # Hex Audit BA-F4 (slice 8): audit in the business txn.
     audit = AuditLogRepository(state.sessionmaker)
     await audit.append(
+        session,
         event_type="ingest_key_rotated",
         actor=auth.user.username,
         data={"new_last4": new_key[-4:], "grace_until": grace_until.isoformat()},
     )
+    await session.commit()
 
     last4 = new_key[-4:]
     # The `updated` DTO has the masked snapshot; the plaintext is
@@ -189,16 +193,17 @@ async def reveal_ingest_key(
     plaintext = dto.ingest_key_current
     last4 = plaintext[-4:] if len(plaintext) >= 4 else plaintext
 
-    # Release the request session BEFORE the audit log opens its own
-    # short-lived transaction — SQLite is single-writer (matches the
-    # `credential_set` precedent in app/api/targets.py:156).
-    await session.commit()
+    # Hex Audit BA-F4 (slice 8): audit in the business txn — closes the
+    # forensic gap where the read happened but the audit row could
+    # silently fail on its own session.
     audit = AuditLogRepository(state.sessionmaker)
     await audit.append(
+        session,
         event_type="ingest_key_revealed",
         actor=auth.user.username,
         data={"last4": last4},
     )
+    await session.commit()
     return IngestKeyRevealResponse(plaintext=plaintext, last4=last4)
 
 

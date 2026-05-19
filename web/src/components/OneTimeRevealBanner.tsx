@@ -74,7 +74,7 @@ export function OneTimeRevealBanner(
           />
         </div>
         <div ref={copyRef}>
-          <CopyToClipboard value={value} variant="standalone" />
+          <CopyToClipboard value={value} />
         </div>
       </div>
       <div className="mt-(--space-4) flex justify-end">
@@ -82,8 +82,8 @@ export function OneTimeRevealBanner(
           type="button"
           onClick={onDismiss}
           className={cn(
-            "h-10 rounded-(--radius-md) px-(--space-4) text-(length:--text-sm) font-medium",
-            "bg-(--color-accent) text-white hover:bg-(--color-accent-strong)",
+            "h-(--size-control-md) rounded-(--radius-md) px-(--space-4) text-(length:--text-sm) font-medium",
+            "bg-(--color-accent) text-(--color-on-accent) hover:bg-(--color-accent-strong)",
           )}
         >
           {t("reveal.bannerDismiss")}

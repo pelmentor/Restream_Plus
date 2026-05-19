@@ -18,8 +18,9 @@ tagged-union `BusEvent`, not N queues per kind.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import deque
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Final
@@ -33,6 +34,15 @@ EVENT_BUS_CAPACITY: Final[int] = 10_000
 """ADR-0003 fixes this. With ≤ 6 targets producing ~1 progress event
 per second per worker, 10 000 entries is ~25 minutes of headroom even
 if the API drainer is wedged."""
+
+EVENT_BUS_DROP_WINDOW_SECONDS: Final[float] = 60.0
+"""Hex Audit BA-F9 (slice 10): rolling-window for the `dropped_recent`
+metric. The lifetime `dropped_total` counter is monotonic and never
+clears, so "drops happened weeks ago but the bus is healthy now" looks
+identical to "the bus is dropping now" to anything reading
+`dropped_total`. A 60-second tumbling window distinguishes the two:
+`dropped_recent` is 0 when no drops have happened in the last minute,
+non-zero when drops are currently in flight."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,15 +131,37 @@ class EventBus:
     do not do this.
     """
 
-    __slots__ = ("_buf", "_capacity", "_cond", "_dropped_total")
+    __slots__ = (
+        "_buf",
+        "_capacity",
+        "_cond",
+        "_drop_timestamps",
+        "_drop_window_seconds",
+        "_dropped_total",
+        "_monotonic",
+    )
 
-    def __init__(self, *, capacity: int = EVENT_BUS_CAPACITY) -> None:
+    def __init__(
+        self,
+        *,
+        capacity: int = EVENT_BUS_CAPACITY,
+        drop_window_seconds: float = EVENT_BUS_DROP_WINDOW_SECONDS,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
         if capacity <= 0:
             raise ValueError("capacity must be > 0")
+        if drop_window_seconds <= 0:
+            raise ValueError("drop_window_seconds must be > 0")
         self._buf: deque[BusEvent] = deque(maxlen=capacity)
         self._capacity = capacity
         self._cond = asyncio.Condition()
         self._dropped_total = 0
+        # Hex Audit BA-F9 (slice 10): rolling-window drop timestamps.
+        # Each drop appends one float; the window prunes lazily on
+        # read so a long-quiet bus pays no cost.
+        self._drop_timestamps: deque[float] = deque()
+        self._drop_window_seconds = drop_window_seconds
+        self._monotonic = monotonic
 
     @property
     def dropped_total(self) -> int:
@@ -141,6 +173,20 @@ class EventBus:
         return self._dropped_total
 
     @property
+    def dropped_recent(self) -> int:
+        """Drops in the rolling `EVENT_BUS_DROP_WINDOW_SECONDS` window.
+
+        Hex Audit BA-F9 (slice 10): distinguishes "currently degraded"
+        from "was-degraded-once-ages-ago". The UI banner reads this
+        rather than `dropped_total` so a one-time historical spike
+        doesn't show a permanent red bar.
+        """
+        cutoff = self._monotonic() - self._drop_window_seconds
+        while self._drop_timestamps and self._drop_timestamps[0] < cutoff:
+            self._drop_timestamps.popleft()
+        return len(self._drop_timestamps)
+
+    @property
     def capacity(self) -> int:
         return self._capacity
 
@@ -148,15 +194,17 @@ class EventBus:
         """Producer-side. Sync, O(1), never blocks.
 
         On overflow: deque drops the oldest entry implicitly via
-        `maxlen`; we increment the drop counter explicitly. The
-        producer (supervisor) MUST then call `notify()` from the event
-        loop so any waiting drainer wakes — `put` is sync so a thread
+        `maxlen`; we increment the drop counter explicitly AND append
+        a timestamp to the rolling window (BA-F9). The producer
+        (supervisor) MUST then call `notify()` from the event loop
+        so any waiting drainer wakes — `put` is sync so a thread
         could in principle call it, but in practice the supervisor is
         single-loop, so the notify can be folded into the producer call
         site via `loop.call_soon(_notify_task)`.
         """
         if len(self._buf) >= self._capacity:
             self._dropped_total += 1
+            self._drop_timestamps.append(self._monotonic())
         self._buf.append(event)
 
     async def notify(self) -> None:

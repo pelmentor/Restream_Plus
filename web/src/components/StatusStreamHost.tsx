@@ -14,6 +14,14 @@ import { RUN_STATE_QUERY_KEY } from "@/hooks/useRunState";
 import { LIVE_METRICS_QUERY_KEY } from "@/hooks/useLiveMetrics";
 import { useRecentEventsActions, type RecentEvent } from "@/components/RecentEventsProvider";
 
+// Hex Audit footgun-hunter FG2-C1 (2026-05-18): cap the edge-detect
+// Map. A `target.snapshot` event with a fresh `target_id` would
+// otherwise grow the Map without bound — same v1.1.3 unbounded-growth
+// class slice 1 closed in wsReducer + liveMetricsReducer (which uses
+// the same TARGET_MAP_CAP = 16). Matches that value so the per-target
+// tracking surface is uniform across the three client-side maps.
+const PREV_UI_STATE_MAP_CAP = 16;
+
 /**
  * Owns the WS singleton lifecycle for the authenticated session.
  * Mounted as a sibling of <AppShell> inside <RequireAuth> per
@@ -67,7 +75,16 @@ export function StatusStreamHost(): ReactNode {
       if (known.event === "state.full") {
         const validated = RunStateView.safeParse(known.data);
         if (validated.success) {
-          validated.data.targets.forEach((t) => prevMap.set(t.target_id, t.ui_state));
+          // state.full is the server-side authoritative reset point.
+          // Replace the Map wholesale (instead of incremental .set) so
+          // operator-config target removals shrink the tracking surface;
+          // bounded by validated.data.targets.length which is the
+          // operator's target count.
+          const replacement = new Map<string, TargetUiStateT>();
+          validated.data.targets.forEach((t) =>
+            replacement.set(t.target_id, t.ui_state),
+          );
+          prevUiStateRef.current = replacement;
         }
         return;
       }
@@ -85,6 +102,18 @@ export function StatusStreamHost(): ReactNode {
       if (known.event === "target.snapshot") {
         const prevUi = prevMap.get(known.data.target_id);
         const nextUi = known.data.ui_state;
+        // FG2-C1: cap on insert of a NEW target_id. Map iteration
+        // order in JS is insertion order, so `keys().next().value`
+        // is the oldest entry — drop it to make room.
+        if (
+          !prevMap.has(known.data.target_id) &&
+          prevMap.size >= PREV_UI_STATE_MAP_CAP
+        ) {
+          const oldestKey = prevMap.keys().next().value;
+          if (oldestKey !== undefined) {
+            prevMap.delete(oldestKey);
+          }
+        }
         prevMap.set(known.data.target_id, nextUi);
         if (prevUi === undefined) return;
         if (prevUi === nextUi) return;
@@ -131,8 +160,17 @@ function makeEvent(
   message: string,
   atIso: string,
 ): RecentEvent {
+  // Hex Audit FG2-L2 (slice 10): `crypto.randomUUID()` instead of
+  // `Math.random()`. Collision probability was already negligible
+  // (8 base36 chars + a timestamp prefix), but `randomUUID` is the
+  // built-in cryptographically-random primitive available in every
+  // modern browser AND in jsdom (used by vitest) — using it removes
+  // the "negligible but non-zero" footgun the audit flagged and
+  // matches the rest of the codebase's identifier-generation pattern
+  // (the API tokens and reprompt grant IDs both use a CSPRNG source
+  // on the server side).
   return {
-    id: `${atIso}-${Math.random().toString(36).slice(2, 10)}`,
+    id: `${atIso}-${crypto.randomUUID()}`,
     kind,
     message,
     at: new Date(atIso),

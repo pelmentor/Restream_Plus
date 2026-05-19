@@ -30,7 +30,13 @@ function SkeletonBase({ className, style, width, height, rounded = "md" }: Skele
 }
 
 function Tile({ className }: { className?: string }): ReactNode {
-  return <SkeletonBase className={cn("h-32 w-full", className)} rounded="lg" />;
+  // Hex Audit UX-F14 (slice 10): height tightened from `h-32` (128px)
+  // to `h-24` (96px). The actual `TargetTile` button — p-(--space-4) +
+  // label row + 4-col MetricGrid — measures ~92-98px at default font
+  // size; the old 128px skeleton caused a visible upward jump when the
+  // real data resolved. The new value matches the median actual
+  // height to within 4-6px so the layout shift is sub-perceptual.
+  return <SkeletonBase className={cn("h-24 w-full", className)} rounded="lg" />;
 }
 
 function Row({ className }: { className?: string }): ReactNode {

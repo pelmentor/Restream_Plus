@@ -25,20 +25,37 @@ from app.fanout.worker import WorkerId
 
 
 class ScriptedProcReader:
-    """Returns pre-staged (utime, stime, rss_bytes) tuples per pid.
+    """Returns pre-staged readings per pid.
 
-    `script[pid]` is a list popped in order. Returns None when exhausted
-    (mirrors a vanished process).
+    `script[pid]` is a list popped in order. Each entry is either:
+      - `(utime, stime, rss_bytes)` — legacy 3-tuple; `starttime` is
+        defaulted to 0 for tests that don't exercise the slice-10
+        FG2-M2 pid-reuse detection path.
+      - `(utime, stime, starttime, rss_bytes)` — full 4-tuple for
+        tests that DO exercise pid-reuse.
+      - `None` — mirrors a vanished process.
     """
 
-    def __init__(self, script: dict[int, list[tuple[int, int, int] | None]]) -> None:
+    def __init__(
+        self,
+        script: dict[
+            int,
+            list[tuple[int, int, int] | tuple[int, int, int, int] | None],
+        ],
+    ) -> None:
         self._script = script
 
-    def read(self, pid: int) -> tuple[int, int, int] | None:
+    def read(self, pid: int) -> tuple[int, int, int, int] | None:
         seq = self._script.get(pid)
         if not seq:
             return None
-        return seq.pop(0)
+        raw = seq.pop(0)
+        if raw is None:
+            return None
+        if len(raw) == 3:
+            utime, stime, rss = raw
+            return utime, stime, 0, rss
+        return raw
 
 
 class StaticPidProvider:
@@ -211,8 +228,11 @@ class TestHostStatsSampler:
         await sampler.sample()  # delta + provider tick 2
         clk.advance(2.0)
         await sampler.sample()  # provider tick 3 → pid 1234 gone
-        # _last_samples should hold ONLY self_pid now.
-        assert set(sampler._last_samples.keys()) == {9999}
+        # _last_samples should hold ONLY self_pid now. Hex Audit FG2-M2
+        # (slice 10): keys are `(pid, starttime)` tuples (starttime=0
+        # for the legacy 3-tuple fake-reader path), so check the pid
+        # subset rather than full equality with bare ints.
+        assert {pid for pid, _ in sampler._last_samples} == {9999}
 
     async def test_protocol_widening_keeps_types_aligned(self) -> None:
         # Cheap structural assertion: the test fakes satisfy the

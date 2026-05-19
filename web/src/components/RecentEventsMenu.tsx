@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Bell, BellSlash } from "@phosphor-icons/react";
+import * as Popover from "@radix-ui/react-popover";
 
+import { Button } from "@/components/Button";
 import { cn } from "@/lib/cn";
 import { t } from "@/messages";
 import {
@@ -11,72 +13,74 @@ import {
 
 /**
  * Design-system §6.21 + ux-flows §1: bell with unseen-count dot;
- * 320px dropdown listing last 50 in-session events. NOT persisted.
+ * 320px popover listing last 50 in-session events. NOT persisted.
  * Events are pushed by `StatusStreamHost` per phase-8-design-memo §O.
+ *
+ * Hex Audit slice-6 deferral (closed in slice 10): migrated from a
+ * hand-rolled disclosure (manual outside-click + Escape listeners +
+ * containerRef) to **Radix Popover**. Why Popover, not DropdownMenu:
+ * the popup is a `dialog`-shape panel (list of event rows + a single
+ * "Clear" action), NOT a `role="menu"` container with `menuitem`
+ * keyboard navigation. Radix Popover handles outside-click, Escape,
+ * focus return to trigger, portal mounting, and aria-haspopup="dialog"
+ * automatically — the pre-slice-10 hand-rolled version reimplemented
+ * each badly (the outside-click listener fired on `mousedown` AND
+ * touched the bell-button's own area via a `containerRef` workaround;
+ * the Escape listener was global; focus didn't return to the trigger).
  */
 export function RecentEventsMenu(): ReactNode {
   const { events, unseenCount } = useRecentEvents();
   const { markSeen, clear } = useRecentEventsActions();
   const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!open) return;
-    markSeen();
-    const onClick = (e: MouseEvent): void => {
-      const target = e.target;
-      if (!(target instanceof Node)) return;
-      if (containerRef.current !== null && !containerRef.current.contains(target)) {
-        setOpen(false);
-      }
-    };
-    // Reviewer L-2: keyboard escape for the disclosure (ARIA APG).
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("mousedown", onClick);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onClick);
-      window.removeEventListener("keydown", onKey);
-    };
+    if (open) markSeen();
   }, [open, markSeen]);
 
   return (
-    <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-label={t("recentEvents.trigger")}
-        aria-expanded={open}
-        aria-haspopup="menu"
-        className="relative inline-flex h-9 w-9 items-center justify-center rounded-full border border-(--color-border-subtle) bg-(--color-bg-elevated) hover:bg-(--color-bg-sunken)"
-      >
-        <Bell
-          className="h-5 w-5 text-(--color-fg-default)"
-          weight="regular"
-          aria-hidden="true"
-        />
-        {unseenCount > 0 && (
-          <span
-            className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-(--color-error)"
-            style={{ boxShadow: "0 0 0 2px var(--color-bg-base)" }}
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        {/* Slice-6 UI-F4: trigger grows to size=lg (44×44) for WCAG 2.5.5
+            touch-target floor. `rounded-full` retained — bell-icon header
+            chip universal affordance. */}
+        <Button
+          iconOnly
+          variant="secondary"
+          size="lg"
+          aria-label={t("recentEvents.trigger")}
+          className="relative rounded-full"
+        >
+          <Bell
+            className="h-5 w-5 text-(--color-fg-default)"
+            weight="regular"
             aria-hidden="true"
           />
-        )}
-      </button>
-      {open && (
-        <div
+          {unseenCount > 0 && (
+            <span
+              className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-(--color-error)"
+              style={{ boxShadow: "0 0 0 2px var(--color-bg-base)" }}
+              aria-hidden="true"
+            />
+          )}
+        </Button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          align="end"
+          sideOffset={8}
           className={cn(
-            "absolute right-0 mt-2 w-80 max-h-[480px]",
+            "w-80 max-h-(--height-events-menu)",
             "rounded-(--radius-md) border border-(--color-border-subtle)",
             "bg-(--color-bg-base) shadow-(--shadow-md)",
             "flex flex-col overflow-hidden",
+            "z-50",
           )}
         >
           <div className="flex-1 overflow-y-auto">
             {events.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-(--space-2) py-(--space-8) text-center text-(--color-fg-muted)">
+                {/* Empty-state illustration, not a control — 32px per
+                    design-system §6.16, exempt from UI-F4 floor. */}
                 <BellSlash
                   className="h-8 w-8"
                   weight="regular"
@@ -98,9 +102,9 @@ export function RecentEventsMenu(): ReactNode {
           >
             {t("recentEvents.clear")}
           </button>
-        </div>
-      )}
-    </div>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 

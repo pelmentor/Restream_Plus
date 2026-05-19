@@ -40,7 +40,7 @@ from app.auth.deps import (
     SessionDep,
 )
 from app.auth.reprompts import RepromptScope
-from app.crypto.aead import AEADDecryptionError, build_credential_aad, decrypt, encrypt
+from app.crypto.aead import AEADDecryptionError, decrypt_credential, encrypt_credential
 from app.crypto.kdf import KDF_SALT_LENGTH
 from app.domain.credential_policy import lifetime_for
 from app.domain.target_types import TARGET_TYPE_SPECS, TargetType
@@ -150,17 +150,21 @@ async def create_target(
         enabled=body.enabled,
         settings=body.settings,
     )
-    # Commit the request session BEFORE the audit so the audit repo
-    # (which opens its own session) does not race the request write
-    # lock — SQLite is single-writer.
-    await session.commit()
+    # Hex Audit BA-F4 (slice 8): audit append participates in the
+    # business transaction so the forensic row and the business write
+    # commit atomically (or roll back together on failure).
     audit = AuditLogRepository(state.sessionmaker)
     await audit.append(
+        session,
         event_type="target_created",
         actor=auth.user.username,
         target_id=dto.id,
         data={"type": body.type.value, "label": body.label},
     )
+    # Commit BEFORE the supervisor call so the supervisor's own session
+    # observes the just-created target (SQLite is single-writer; we
+    # cannot read uncommitted state across sessions).
+    await session.commit()
 
     # If a run is active and the new target is enabled, the supervisor
     # checks for an active credential before spawning; with none yet,
@@ -199,14 +203,16 @@ async def update_target(
     if updated is None:  # pragma: no cover — race between get and update
         raise http_exception(ErrorCode.TARGET_NOT_FOUND, status.HTTP_404_NOT_FOUND)
 
-    await session.commit()
+    # Hex Audit BA-F4 (slice 8): audit in the business txn.
     audit = AuditLogRepository(state.sessionmaker)
     await audit.append(
+        session,
         event_type="target_updated",
         actor=auth.user.username,
         target_id=target_id,
         data=dict(body.model_dump(exclude_unset=True)),
     )
+    await session.commit()
 
     # Track enable/disable transitions for the supervisor.
     if body.enabled is not None:
@@ -261,16 +267,19 @@ async def delete_target(
     if not deleted:  # pragma: no cover — race
         raise http_exception(ErrorCode.TARGET_NOT_FOUND, status.HTTP_404_NOT_FOUND)
 
-    await session.commit()
+    # Hex Audit BA-F4 (slice 8): audit in the business txn. `target_id`
+    # is intentionally NOT passed — the row was just deleted in this
+    # same transaction and the audit_log FK would refuse the insert.
+    # The deleted target's id appears in `data["target_id"]` for
+    # trail-readability instead.
     audit = AuditLogRepository(state.sessionmaker)
-    # `target_id` is intentionally NOT passed: the row was just deleted
-    # and the audit_log FK would refuse the insert. The deleted target's
-    # id appears in `data["target_id"]` for trail-readability instead.
     await audit.append(
+        session,
         event_type="target_deleted",
         actor=auth.user.username,
         data={"target_id": target_id, "label": existing.label},
     )
+    await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -306,8 +315,13 @@ async def set_credential(
 
     plaintext = body.stream_key
     salt = secrets.token_bytes(KDF_SALT_LENGTH)
-    aad = build_credential_aad(salt)
-    nonce, ciphertext = encrypt(keys.stream_key_kek, plaintext.encode("utf-8"), aad)
+    # Hex Audit BA-F5 (slice 7): always write v2 AAD, which binds
+    # target_id. Legacy v1 rows continue to decrypt via the fallback
+    # path in `decrypt_credential`; rolling migration happens on the
+    # next write (here) or during rotate-passphrase.
+    nonce, ciphertext = encrypt_credential(
+        keys.stream_key_kek, plaintext.encode("utf-8"), salt, target_id
+    )
     last4 = plaintext[-4:] if len(plaintext) >= 4 else plaintext
 
     creds = CredentialsRepository(session)
@@ -320,14 +334,16 @@ async def set_credential(
         last4=last4,
     )
 
-    await session.commit()
+    # Hex Audit BA-F4 (slice 8): audit in the business txn.
     audit = AuditLogRepository(state.sessionmaker)
     await audit.append(
+        session,
         event_type="credential_set",
         actor=auth.user.username,
         target_id=target_id,
         data={"lifetime": lifetime.value, "last4": last4},
     )
+    await session.commit()
 
     if target.enabled:
         # If a run is active, the supervisor picks up the new credential
@@ -388,11 +404,12 @@ async def reveal_credential(
         raise http_exception(ErrorCode.CREDENTIAL_NOT_FOUND, status.HTTP_404_NOT_FOUND)
 
     try:
-        plaintext_bytes = decrypt(
+        plaintext_bytes = decrypt_credential(
             keys.stream_key_kek,
             cred.nonce,
             cred.ciphertext,
-            build_credential_aad(cred.salt),
+            cred.salt,
+            target_id,
         )
     except AEADDecryptionError:
         # Corrupted at-rest material or a mid-rotation race; surface a
@@ -406,14 +423,16 @@ async def reveal_credential(
         raise http_exception(ErrorCode.NOT_FOUND, status.HTTP_500_INTERNAL_SERVER_ERROR) from None
     plaintext = plaintext_bytes.decode("utf-8")
 
-    await session.commit()
+    # Hex Audit BA-F4 (slice 8): audit in the business txn.
     audit = AuditLogRepository(state.sessionmaker)
     await audit.append(
+        session,
         event_type="credential_revealed",
         actor=auth.user.username,
         target_id=target_id,
         data={"last4": cred.last4},
     )
+    await session.commit()
     return RevealCredentialResponse(plaintext=plaintext, last4=cred.last4)
 
 
@@ -456,13 +475,15 @@ async def clear_credential(
         # Already absent — idempotent.
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-    await session.commit()
+    # Hex Audit BA-F4 (slice 8): audit in the business txn.
     audit = AuditLogRepository(state.sessionmaker)
     await audit.append(
+        session,
         event_type="credential_cleared",
         actor=auth.user.username,
         target_id=target_id,
     )
+    await session.commit()
     # Tear down workers (no credential ⇒ nothing to push).
     await supervisor.disable_target(target_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -481,12 +502,29 @@ async def clear_credential(
 async def reset_target_worker(
     target_id: str,
     role: WorkerRole,
-    _: AuthenticatedRequestDep,
+    auth: AuthenticatedRequestDep,
+    state: AuthStateDep,
     supervisor: SupervisorDep,
+    x_reprompt_grant: Annotated[str | None, Header(alias="X-Reprompt-Grant")] = None,
 ) -> Response:
     """User clicked 'Retry now' on a FAILED_OPEN tile. Routes through
     the supervisor's `reset_target_worker` which is a no-op if no
-    worker is running for that (target, role)."""
+    worker is running for that (target, role).
+
+    Hex Audit BA-F13 (slice 10): reprompt-protected. A stolen-cookie
+    attacker without this gate can spam the breaker reset and defeat
+    the per-target circuit-breaker's noisy-neighbor protection
+    (ADR-0003 §Reconnect policy), earning the operator an IP-ban from
+    the target platform.
+    """
+    if not x_reprompt_grant:
+        raise http_exception(ErrorCode.REPROMPT_REQUIRED, status.HTTP_403_FORBIDDEN)
+    if not state.reprompts.consume(
+        grant_id=x_reprompt_grant,
+        user_id=auth.user.id,
+        scope=RepromptScope.RESET_TARGET_WORKER,
+    ):
+        raise http_exception(ErrorCode.REPROMPT_INVALID_OR_EXPIRED, status.HTTP_403_FORBIDDEN)
     await supervisor.reset_target_worker(target_id, role)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

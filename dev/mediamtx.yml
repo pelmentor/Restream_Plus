@@ -1,0 +1,79 @@
+# MediaMTX config — DEV ONLY.
+#
+# Spawned by `start.py` so the operator can test the OBS → server →
+# fanout path on a Docker-less Windows dev box. NOT used by the
+# production container (which runs nginx-rtmp via s6, see
+# `docker/nginx.conf`). See `app/api/internal_mtx.py` for the
+# webhook contract this config talks to.
+#
+# Locked-down posture: RTMP only, no API / metrics / pprof / WebRTC
+# / HLS / SRT / RTSP / playback / recording. Loopback-only auth +
+# lifecycle webhooks. Anything that broadcasts non-RTMP off the box
+# is explicitly disabled below — defence-in-depth in case the dev
+# box has an open LAN port.
+
+# ---- logging -----------------------------------------------------
+# `warn` matches `docker/nginx.conf`'s `error_log warn` in production.
+# MediaMTX's INFO level prints the full path including the ingest key
+# (e.g. `[path live/<KEY>] runOnReady command started`) — there is no
+# built-in path redaction equivalent to nginx-rtmp's `map $uri
+# $safe_uri`. Anything that needs `info` for diagnosis should be a
+# temporary local bump that's reverted before sharing logs publicly.
+# If you need a full prod-parity redactor in dev, build a Python
+# pipe wrapper that regex-subs `live/<key>` → `live/<redacted>`
+# before printing to the cmd window (deferred — not blocking dev).
+logLevel: warn
+logDestinations: [stdout]
+
+# ---- protocols: only RTMP is on -----------------------------------
+rtmp: yes
+rtmpAddress: :1935
+rtmpEncryption: 'no'
+
+rtsp: no
+hls: no
+webrtc: no
+srt: no
+
+# Local-only HTTP API for MediaMTX. Disabled — we don't read it.
+api: no
+metrics: no
+pprof: no
+playback: no
+
+# ---- auth via our /internal/mtx/auth endpoint --------------------
+authMethod: http
+authHTTPAddress: http://127.0.0.1:8000/internal/mtx/auth
+# Limit which actions go through HTTP auth. We want publish + read
+# gated; other actions are off at the protocol level above.
+authHTTPExclude: []
+
+# ---- lifecycle hooks via curl → /internal/mtx/lifecycle ----------
+# MediaMTX hooks are process-exec, not HTTP. We shim through `curl`
+# so the side-effect (notify the supervisor of publish-end) lives
+# in our Python handler, not in the shell.
+#
+# `curl` is shipped with Windows 10 1803+. If the launcher fails on
+# an older host, document the install step in dev/README.
+pathDefaults:
+  source: publisher
+  # `-o NUL` swallows curl's response body so the JSON `{"status":"ok"}`
+  # doesn't pollute MediaMTX's stdout (and thus the dev cmd window).
+  # `-sS` keeps errors visible but silences progress + body.
+  runOnReady: >
+    curl -sS -o NUL -X POST
+    --data-urlencode "event=ready"
+    --data-urlencode "path=$MTX_PATH"
+    http://127.0.0.1:8000/internal/mtx/lifecycle
+  runOnNotReady: >
+    curl -sS -o NUL -X POST
+    --data-urlencode "event=not_ready"
+    --data-urlencode "path=$MTX_PATH"
+    http://127.0.0.1:8000/internal/mtx/lifecycle
+
+# ---- paths -------------------------------------------------------
+# A single wildcard path matches anything OBS publishes to
+# `rtmp://host:1935/<anything>`. The actual auth happens in the
+# HTTP webhook (which inspects `path` for the `live/<key>` shape).
+paths:
+  all_others:

@@ -2,6 +2,8 @@ import { useState, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
 import { Info } from "@phosphor-icons/react";
 
+import { Button } from "@/components/Button";
+import { FormField } from "@/components/FormField";
 import { SecretField } from "@/components/SecretField";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { useAuthReprompt, REPROMPT_CANCELLED } from "@/hooks/useAuthReprompt";
@@ -12,7 +14,6 @@ import {
 } from "@/hooks/useTargetsAdmin";
 import { useTargets } from "@/hooks/useTargets";
 import { ApiError } from "@/lib/api";
-import { cn } from "@/lib/cn";
 import { TARGET_TYPE_SPECS } from "@/lib/targetTypeSpecs";
 import { t } from "@/messages";
 
@@ -81,55 +82,29 @@ export function VKTab(): ReactNode {
         <SettingsSection
           title={t("targetTab.identitySection")}
           footer={
-            <button
+            <Button
               type="submit"
-              disabled={!form.formState.isDirty || form.formState.isSubmitting}
-              className={cn(
-                "h-10 rounded-(--radius-md) px-(--space-4) text-(length:--text-sm) font-medium text-white",
-                "bg-(--color-accent) hover:bg-(--color-accent-strong)",
-                (!form.formState.isDirty || form.formState.isSubmitting) &&
-                  "opacity-50 cursor-not-allowed",
-              )}
+              variant="primary"
+              size="md"
+              disabled={!form.formState.isDirty}
+              loading={form.formState.isSubmitting}
             >
               {t("settings.save")}
-            </button>
+            </Button>
           }
         >
-          <label className="block">
-            <span className="text-(length:--text-sm) font-medium text-(--color-fg-strong)">
-              {t("targetTab.labelInput")}
-            </span>
-            <input
+          <FormField label={t("targetTab.labelInput")}>
+            <FormField.Input
               type="text"
               {...form.register("label", { required: true, maxLength: 128 })}
-              className={cn(
-                "mt-(--space-1) h-10 w-full rounded-(--radius-md) border bg-(--color-bg-base)",
-                "border-(--color-border-subtle) px-(--space-3)",
-                "text-(length:--text-sm) text-(--color-fg-strong)",
-                "focus:border-(--color-accent) focus:outline-none",
-              )}
             />
-          </label>
-          <label className="block">
-            <span className="text-(length:--text-sm) font-medium text-(--color-fg-strong)">
-              {t("targetTab.urlPresetLabel")}
-            </span>
-            <select
+          </FormField>
+          <FormField label={t("targetTab.urlPresetLabel")}>
+            <FormField.Select
               {...form.register("url")}
-              className={cn(
-                "mt-(--space-1) h-10 w-full rounded-(--radius-md) border bg-(--color-bg-base)",
-                "border-(--color-border-subtle) px-(--space-3)",
-                "text-(length:--text-sm) text-(--color-fg-strong)",
-                "focus:border-(--color-accent) focus:outline-none",
-              )}
-            >
-              {spec.presetUrls.map((u) => (
-                <option key={u} value={u}>
-                  {u}
-                </option>
-              ))}
-            </select>
-          </label>
+              options={spec.presetUrls.map((u) => ({ value: u, label: u }))}
+            />
+          </FormField>
           <label className="flex items-center gap-(--space-3)">
             <input
               type="checkbox"
@@ -157,13 +132,15 @@ export function VKTab(): ReactNode {
             </p>
           </div>
         </div>
-        <button
+        <Button
           type="button"
+          variant="link"
+          size="sm"
           onClick={() => setAdvanced((v) => !v)}
-          className="self-start text-(length:--text-sm) text-(--color-accent) hover:underline"
+          className="self-start"
         >
           {t("targetTab.vkAdvancedToggle")}
-        </button>
+        </Button>
         {advanced && existing !== null && (
           <div className="rounded-(--radius-md) border border-(--color-border-subtle) p-(--space-3)">
             <SecretField
@@ -173,18 +150,16 @@ export function VKTab(): ReactNode {
               ariaLabel={t("targetTab.streamKeySection")}
             />
             <div className="mt-(--space-3) flex justify-end">
-              <button
+              <Button
                 type="button"
+                variant="primary"
+                size="md"
                 onClick={() => void onSaveKey()}
-                disabled={!pasteKey.trim() || setCred.isPending}
-                className={cn(
-                  "h-9 rounded-(--radius-md) px-(--space-3) text-(length:--text-sm) font-medium text-white",
-                  "bg-(--color-accent) hover:bg-(--color-accent-strong)",
-                  (!pasteKey.trim() || setCred.isPending) && "opacity-50 cursor-not-allowed",
-                )}
+                disabled={!pasteKey.trim()}
+                loading={setCred.isPending}
               >
                 {t("targetTab.saveForNext")}
-              </button>
+              </Button>
             </div>
           </div>
         )}

@@ -71,11 +71,13 @@ from typing import TYPE_CHECKING, Final
 
 import structlog
 
+from app.auth.last_seen_coalescer import LAST_SEEN_TOUCH_TIMEOUT_SECONDS
 from app.auth.usernames import normalize_username
 from app.crypto import hash_password, verify_password
 
 if TYPE_CHECKING:  # pragma: no cover
     from app.auth.key_material import DerivedKeys
+    from app.auth.last_seen_coalescer import LastSeenCoalescer
     from app.auth.rate_limit import LoginRateLimiter
     from app.repositories.sessions import HttpSessionDTO, HttpSessionsRepository
     from app.repositories.users import UserDTO, UsersRepository
@@ -219,17 +221,34 @@ def generate_session_cookie_value() -> str:
     return secrets.token_urlsafe(SESSION_COOKIE_VALUE_RANDOM_BYTES)
 
 
+MAX_SESSION_COOKIE_VALUE_LENGTH: Final[int] = 256
+"""Hex Audit BA-F19 (slice 10): hard ceiling on the cookie value before
+we ever feed it to HMAC. The legitimate cookie is 43 chars
+(`secrets.token_urlsafe(32)`); 256 is generous slack for a future
+generator tweak but rejects megabyte-scale `Cookie:` headers BEFORE
+the HMAC hashes them. Defence-in-depth: starlette/uvicorn caps the
+total header line, but a client that smuggles a 10 MB cookie through
+a CDN that doesn't enforce the same cap would otherwise burn
+~10 ms/request of HMAC work; the cap collapses that to a one-byte
+length check."""
+
+
 def compute_session_token_hash(cookie_value: str, mac_key: bytes) -> bytes:
     """HMAC-SHA256(mac_key, utf-8(cookie_value)) → 32-byte digest.
 
     The DB stores this fingerprint at `sessions.token_hash` (BLOB
     PRIMARY KEY). Looking up a session means recomputing the
     fingerprint and doing a direct primary-key read — no scan.
+
+    Hex Audit BA-F19 (slice 10): rejects cookie values longer than
+    `MAX_SESSION_COOKIE_VALUE_LENGTH` BEFORE feeding them to HMAC.
     """
     if not isinstance(cookie_value, str):
         raise TypeError("cookie_value must be a string")
     if len(cookie_value) == 0:
         raise ValueError("cookie_value must not be empty")
+    if len(cookie_value) > MAX_SESSION_COOKIE_VALUE_LENGTH:
+        raise ValueError("cookie_value too long")
     if not isinstance(mac_key, bytes):
         raise TypeError("mac_key must be bytes")
     return hmac.new(mac_key, cookie_value.encode("utf-8"), hashlib.sha256).digest()
@@ -302,6 +321,7 @@ class SessionAuthService:
         sessions: HttpSessionsRepository,
         keys: DerivedKeys,
         rate_limiter: LoginRateLimiter,
+        last_seen_coalescer: LastSeenCoalescer,
         constant_time_floor_seconds: float = DEFAULT_CONSTANT_TIME_FLOOR_SECONDS,
         cookie_lifetime: timedelta = SESSION_COOKIE_LIFETIME,
     ) -> None:
@@ -311,6 +331,7 @@ class SessionAuthService:
         self._sessions = sessions
         self._keys = keys
         self._rate_limiter = rate_limiter
+        self._coalescer = last_seen_coalescer
         self._floor_s = constant_time_floor_seconds
         self._cookie_lifetime = cookie_lifetime
 
@@ -444,10 +465,19 @@ class SessionAuthService:
     async def verify_cookie(self, cookie_value: str) -> tuple[UserDTO, HttpSessionDTO] | None:
         """Cookie → (user, session) on success, `None` on any failure.
 
-        Touches `last_seen_at` on success. Lazily deletes expired or
-        orphaned (no matching user) session rows on failed lookup so
-        the DB doesn't accumulate dead state between scheduled
-        purges.
+        Touches `last_seen_at` on success, **coalesced via
+        `LastSeenCoalescer`** so a normal SPA page-load's ~10-20
+        verify_cookie calls collapse to one DB write per
+        `LAST_SEEN_COALESCE_WINDOW_SECONDS` (Hex Audit BA-F6, slice 7).
+        The actual UPDATE is wrapped in `asyncio.wait_for(..., timeout
+        =LAST_SEEN_TOUCH_TIMEOUT_SECONDS)` so a contended SQLite
+        write-lock cannot block the request indefinitely (FG2-M7);
+        on timeout we log a warning and return success anyway — the
+        column is observability, not load-bearing for auth decisions.
+
+        Lazily deletes expired or orphaned (no matching user) session
+        rows on failed lookup so the DB doesn't accumulate dead state
+        between scheduled purges.
         """
         token_hash = compute_session_token_hash(cookie_value, self._keys.session_token_mac_key)
         session = await self._sessions.get_by_token_hash(token_hash)
@@ -456,21 +486,47 @@ class SessionAuthService:
         now = datetime.now(tz=UTC)
         if session.expires_at <= now:
             await self._sessions.delete(token_hash)
+            self._coalescer.forget(token_hash)
             return None
         user = await self._users.get_by_id(session.user_id)
         if user is None:
             await self._sessions.delete(token_hash)
+            self._coalescer.forget(token_hash)
             return None
-        await self._sessions.touch_last_seen(token_hash, now)
+        if self._coalescer.should_write(token_hash):
+            try:
+                await asyncio.wait_for(
+                    self._sessions.touch_last_seen(token_hash, now),
+                    timeout=LAST_SEEN_TOUCH_TIMEOUT_SECONDS,
+                )
+                self._coalescer.mark_written(token_hash)
+            except TimeoutError:
+                _logger.warning(
+                    "touch_last_seen_timeout",
+                    session_token_fingerprint=token_hash[:4].hex(),
+                    timeout_seconds=LAST_SEEN_TOUCH_TIMEOUT_SECONDS,
+                    via="http",
+                )
         return user, session
 
     async def revoke(self, cookie_value: str) -> None:
         """Delete the session row matching this cookie. Idempotent."""
         token_hash = compute_session_token_hash(cookie_value, self._keys.session_token_mac_key)
         await self._sessions.delete(token_hash)
+        # Slice 7: drop the coalescer entry so a vanishingly-unlikely
+        # cookie-value reuse lands a write immediately rather than
+        # being suppressed by stale in-memory state.
+        self._coalescer.forget(token_hash)
 
     async def revoke_all_for_user(self, user_id: str) -> int:
-        """Implements ADR-0005's "log out everywhere" button. Returns count."""
+        """Implements ADR-0005's "log out everywhere" button. Returns count.
+
+        Note: the coalescer is NOT forgotten here — we don't have the
+        per-session `token_hash`es, only the user_id. Stale entries
+        decay naturally via FIFO eviction (cap = MAX_TRACKED_SESSIONS)
+        and don't carry a security implication (an evicted-or-stale
+        entry causes at most one extra UPDATE on next verify).
+        """
         return await self._sessions.delete_all_for_user(user_id)
 
 

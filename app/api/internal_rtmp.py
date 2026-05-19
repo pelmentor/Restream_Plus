@@ -25,10 +25,11 @@ from __future__ import annotations
 
 import hmac
 import ipaddress
+from datetime import UTC, datetime
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Form, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 
 from app.api.deps import SupervisorDep
 from app.api.errors import ErrorCode
@@ -54,6 +55,13 @@ def _assert_loopback(request: Request) -> None:
     dual-stack uvicorn deployments). Per security review H-1, we DO
     NOT include the string `"localhost"` — `request.client.host` is a
     numeric peer IP from the ASGI scope, never a hostname.
+
+    Hex Audit CR2-H2 (2026-05-18): wired as a route-decorator
+    `dependencies=[Depends(_assert_loopback)]` so FastAPI runs it
+    BEFORE resolving body / session dependencies. The previous
+    arrangement (called as the first line of the path-operation
+    function body) opened a DB session for every non-loopback probe
+    before any check rejected it, wasting a single-writer SQLite slot.
     """
     peer = request.client.host if request.client is not None else None
     if peer is None:
@@ -73,7 +81,11 @@ def _locked_mode_503() -> HTTPException:
     )
 
 
-@router.post("/publish", status_code=status.HTTP_200_OK)
+@router.post(
+    "/publish",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(_assert_loopback)],
+)
 async def on_publish(
     request: Request,
     session: SessionDep,
@@ -89,13 +101,18 @@ async def on_publish(
         403 — wrong key; nginx denies.
         503 — service locked; OBS publish fails until operator unlocks.
     """
-    _assert_loopback(request)
     state = request.app.state.auth
     if state.key_material.state != KeyMaterialState.READY:
         raise _locked_mode_503()
 
     current = await SettingsRepository(session).get()
-    if not _keys_match(name, current.ingest_key_current, current.ingest_key_previous):
+    if not _keys_match(
+        name,
+        current.ingest_key_current,
+        current.ingest_key_previous,
+        grace_until=current.ingest_key_grace_until,
+        now=datetime.now(tz=UTC),
+    ):
         # Don't echo the supplied key into the log line — could land in
         # disk logs the operator shares for debugging.
         _logger.warning("rtmp_publish_rejected", reason="ingest_key_mismatch")
@@ -109,24 +126,39 @@ async def on_publish(
     return {"status": "ok"}
 
 
-@router.post("/publish_done", status_code=status.HTTP_200_OK)
+@router.post(
+    "/publish_done",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(_assert_loopback)],
+)
 async def on_publish_done(
-    request: Request,
     supervisor: SupervisorDep,
     name: Annotated[str | None, Form(alias="name")] = None,
 ) -> dict[str, str]:
     """OBS stopped publishing. Always 200 — nginx ignores the body but
     expects a 2xx. The handler informs the supervisor unconditionally;
     the supervisor's notify method is a no-op if RunState is not LIVE."""
-    _assert_loopback(request)
     _ = name  # not used; nginx supplies it for completeness
     supervisor.notify_obs_publish_ended()
     return {"status": "ok"}
 
 
-def _keys_match(submitted: str, current: str, previous: str | None) -> bool:
-    """Timing-safe compare against the current key and (if any) the
-    previous-key during the rotation grace window.
+def _keys_match(
+    submitted: str,
+    current: str,
+    previous: str | None,
+    *,
+    grace_until: datetime | None,
+    now: datetime,
+) -> bool:
+    """Timing-safe compare against the current key and (if the rotation
+    grace window is still open) the previous key.
+
+    Hex Audit BA-F1 (2026-05-18): `grace_until` is now load-bearing.
+    Previously `previous` was accepted whenever the column was non-null
+    — security theatre. With this signature, the previous key is only
+    accepted when:
+        previous is not None AND grace_until is not None AND now < grace_until
 
     Always runs BOTH comparisons (no short-circuit on current-key
     match) so the wall-clock duration leaks nothing about WHICH key
@@ -134,10 +166,25 @@ def _keys_match(submitted: str, current: str, previous: str | None) -> bool:
     one extra `compare_digest` (sub-microsecond); the property is
     that a successful current-key match has the same timing as a
     successful previous-key match.
+
+    The "previous not honoured" branch (rotation not active OR grace
+    expired) still runs an `hmac.compare_digest` against a fixed-length
+    sentinel — same defence-in-depth: an observer can't distinguish
+    "rotation expired" from "rotation never happened" by response
+    time.
     """
+    if previous is not None and grace_until is not None and now < grace_until:
+        previous_valid = True
+        previous_for_compare = previous
+    else:
+        previous_valid = False
+        # `compare_digest` requires equal-length strs; the sentinel
+        # matches `len(current)` precisely so the timing profile is
+        # identical to a real previous-key check.
+        previous_for_compare = "\0" * len(current)
     current_ok = hmac.compare_digest(submitted, current)
-    prev_ok = previous is not None and hmac.compare_digest(submitted, previous)
-    return current_ok or prev_ok
+    prev_ok = hmac.compare_digest(submitted, previous_for_compare)
+    return current_ok or (previous_valid and prev_ok)
 
 
 __all__ = ["router"]

@@ -4,7 +4,7 @@
 this project cold, after a context compaction or a fresh conversation.
 Read this first; everything else is reachable from here.
 
-**Last updated:** 2026-05-18 — **v1.1.2 LIVE as current release.** Image at `ghcr.io/pelmentor/restream-plus:v1.1.2` (digest `sha256:7b5ff13e8d49ee6267aefd86e355c3c5a246b0cb0fd621129c70d17c2fbafb94`), cosign-verified, GitHub Release at https://github.com/pelmentor/Restream_Plus/releases/tag/v1.1.2. **HEAD is the v1.1.2 PR #11 squash-merge** (re-verify with `git log --oneline -1`). **OPERATOR IS CURRENTLY RUNNING `:v1.1.2` on Unraid** (10.10.0.2:8000, plain HTTP, `RESTREAM_COOKIE_SECURE=false`, `/mnt/user/appdata/restream-plus` bind-mount). Four releases shipped today: v1.0.0 (2026-05-17, 3 stillborn iterations to surface release.yml drift); v1.1.0 (2026-05-18, `feat(stats)` live dashboard); v1.1.1 (2026-05-18, SPA-mount hotfix — v1.0.0/v1.1.0 panel returned JSON 404 in browser); v1.1.2 (2026-05-18, `RESTREAM_COOKIE_SECURE` env var + login form label fix — v1.1.1 cookie was unusable on plain HTTP, login form said "Master password" instead of "Admin password"). **OPERATORS MUST PULL `:v1.1.2` or `:latest`, NOT `:v1.0.0` / `:v1.1.0` / `:v1.1.1`** — all earlier releases have at least one broken-in-browser bug. Tail sections §"v1.0.0 SHIPPED", §"feat(stats) live dashboard stats", §"v1.1.1 SPA-mount hotfix", §"v1.1.2 RESTREAM_COOKIE_SECURE + login label hotfix" have the chronology per release. Remaining USER-actions, no code work: orphan GHCR tag cleanup (PLUS deprecation labels on `:v1.0.0` / `:v1.1.0` / `:v1.1.1` — all browser-broken), GHCR retention via UI, Kick browser spot-check, real-RTMP step 12b (12a now passing on v1.1.2 since operator IS using the panel), announce v1.1.2. Earlier tail sections §"v1.0.0 tag-push attempt (HISTORICAL)" + §"This handoff doc note (HISTORICAL)" are historical-only; do NOT act on their DECISION REQUIRED prompts.
+**Last updated:** 2026-05-18 — **v1.1.3 LIVE as current release; project now in LOCAL-DEV MODE — no more image builds without explicit operator authorization.** Image at `ghcr.io/pelmentor/restream-plus:v1.1.3` (PR #13, commit `48ce0b8`), cosign-signed multi-arch, GitHub Release at https://github.com/pelmentor/Restream_Plus/releases/tag/v1.1.3. **HEAD on `main` is `48ce0b8`** (re-verify with `git log --oneline -1`). **OPERATOR IS CURRENTLY RUNNING `:v1.1.3` on Unraid** (10.10.0.2:8000, plain HTTP, `RESTREAM_COOKIE_SECURE=false`, `/mnt/user/appdata/restream-plus` bind-mount). Five releases shipped today: v1.0.0 (3 stillborn iterations to surface release.yml drift); v1.1.0 (`feat(stats)` live dashboard); v1.1.1 (SPA-mount hotfix); v1.1.2 (`RESTREAM_COOKIE_SECURE` + login label); v1.1.3 (SPA relative-route loop crash — operator clicking around → URL compounded `/general/general/general…` until ext4 ENAMETOOLONG crashed backend `_spa_fallback`). **OPERATORS MUST PULL `:v1.1.3` or `:latest`** — every earlier release has at least one operator-blocking bug. Tail sections §"v1.0.0 SHIPPED" through §"v1.1.3 SPA route-loop hotfix" (+ §"Local dev session — web-panel UX fixes + Phase 13 multi-track exploration + Unraid hardening plan, 2026-05-18 evening") have the chronology. **Active local-dev state (uncommitted, see tail §"Local dev session"):** 4 web-panel UX fixes landed in working tree (Save-trap, stream-key visibility, EmptyState messages, missing-key banner) — typecheck+lint+tests green, awaiting browser smoke test before commit. New dev launcher `start.bat` + `start.py` (untracked, awaiting smoke-test confirmation). `.restream-plus-db/` is the operator's verbatim Unraid appdata copy (gitignored; needs `.env.local` with production passphrase to decrypt creds). Remaining USER-actions: orphan GHCR tag cleanup + deprecation labels on `:v1.0.0` / `:v1.1.0` / `:v1.1.1` / `:v1.1.2`; GHCR retention via UI; Kick browser spot-check; real-RTMP step 12b; announce v1.1.3; change publicly-leaked admin password `<REDACTED — see local memory/project-restream-plus.md>`. Earlier tail sections §"v1.0.0 tag-push attempt (HISTORICAL)" + §"This handoff doc note (HISTORICAL)" are historical-only; do NOT act on their DECISION REQUIRED prompts.
 
 **GitHub:** https://github.com/pelmentor/Restream_Plus
 (initial commit `a100f2a` covers Phases 0–10; Phase 11 + Phase 12 +
@@ -4038,4 +4038,1354 @@ broken UIs. If a check matters, it goes into automated tests AND
 the runbook AND the release notes — and ideally into a
 `pr-image-smoke` style CI job that simulates browser-side flow
 (not yet built; would require a headless browser in CI).
+
+## v1.1.3 SPA route-loop hotfix (2026-05-18 — PR #13, `48ce0b8`)
+
+Operator clicked around the panel on `:v1.1.2` and hit
+`HTTP 500 Internal Server Error`. Backend traceback:
+`OSError: [Errno 36] File name too long` inside `Path.is_file()` at
+`app/main.py::_spa_fallback`. The URL in the error showed
+`/settings/targets/twitch/targets/twitch/general/general/general/...`
+— segments compounding via a React Router relative-navigation loop
+until the URL exceeded ext4's 4096-byte filename limit.
+
+**Root cause (frontend, `web/src/pages/settings/index.tsx`)**:
+relative `Navigate to="general"` inside catch-all `<Route path="*">`.
+React Router resolved relative to the splat-matched URL, so each
+catch-all hit appended `/general` instead of replacing the path.
+`/settings/foo` → `/settings/foo/general` → `/settings/foo/general/general`
+→ infinite loop until OS path-length crash.
+
+**Defense in depth (backend, `app/main.py::_spa_fallback`)**: never
+crashes on absurd input. 1024-char `full_path` cap short-circuits
+before `stat()`; `OSError`/`ValueError` from `Path.resolve()` returns
+explicit **404** (preserves the v1.1.1 traversal invariant — paths
+the OS can't resolve stay distinguishable from happy-path deep links
+in access logs); `OSError`/`ValueError` from `Path.is_file()` falls
+through to `index.html`.
+
+**Tests landed in `tests/api/test_spa_serving.py`**:
+- `test_extremely_long_path_does_not_crash` — `/settings/general/`
+  repeated 600× (~4800 chars), must NOT return 500.
+- `test_path_with_unstattable_segments_does_not_crash` — URL-encoded
+  NUL byte (`%00`), must NOT return 500.
+- `test_resolve_oserror_is_caught_and_returns_404` — pins the
+  `resolve()` guard distinct from the `is_file()` guard via patched
+  `OSError`, so a future refactor moving one but not the other
+  regresses loudly instead of silently.
+
+**All `to=` paths in the settings router + sidebar made ABSOLUTE**
+(`web/src/pages/settings/index.tsx` + `web/src/components/settings/SettingsSidebar.tsx`)
+with an inline comment naming the compounding hazard. Reviewer fixes
+(`feature-dev:code-reviewer` per Rule №4) caught: (1) test-coverage
+gap — no distinct `resolve()` guard test; (2) security invariant
+weakening — traversal paths that crashed `resolve()` got 200+HTML
+instead of 404. Both addressed pre-commit.
+
+672 backend tests green (was 671 + 1 new `resolve()` guard test).
+Cosign-signed multi-arch image shipped, GitHub Release published.
+
+## Local dev session — web-panel UX fixes + Phase 13 exploration (2026-05-18 evening)
+
+After v1.1.3 shipped, the operator switched to **local-dev mode** —
+"no more image building, we start raw on this dev machine first" —
+and ran the app from source against the existing venv + the
+production database copied locally to `D:\Projects\Programming\Restream_Plus\.restream-plus-db\`.
+This session is **uncommitted** at the time of writing; everything
+below lives in the working tree only.
+
+### Dev launcher (NEW, UNTRACKED FILES)
+
+- `start.bat` (4 lines): cd to script dir → `python start.py` → pause.
+- `start.py`: Windows-only launcher. Opens two visible `cmd /k`
+  windows — backend FastAPI on `:8000` + Vite dev server on `:5173`
+  (Vite proxies `/api` + `/ws` to the backend, see `web/vite.config.ts`).
+  Reads `RESTREAM_MASTER_PASSPHRASE` from a gitignored `.env.local`
+  in the repo root (precedence: real env var > `.env.local` > hard
+  error). Env passed to backend via `subprocess.Popen(env=…)` —
+  **deliberately not via `set FOO=bar && set ...` chain** because
+  cmd.exe puts the space before `&&` INTO the value
+  (caused `cookie_secure='false '` trailing-space → pydantic
+  bool_parsing crash on first attempt; fixed by switching to Popen
+  env=). Also keeps the passphrase out of any command-line string.
+
+### Web-panel UX fixes (UNCOMMITTED — typecheck/lint/tests green, browser smoke pending)
+
+Operator reported "a lot is fucked on the web panel":
+- Disabled targets still showed Stream key + Danger zone sections.
+- "Add a target to get started — Enable at least one platform to
+  enable START." warning never went away even after adding targets.
+- "Start button never shown" — diagnosed as: form defaults made
+  `formState.isDirty == false` for a new target, so the Save button
+  stayed greyed → user couldn't create a target without typing an
+  arbitrary change first → no target → no enabled target → no Start
+  → user assumed nothing worked.
+
+Four fixes landed in working tree (4 files modified):
+
+1. **`web/src/pages/settings/targets/PersistentTargetTab.tsx`** —
+   Save button gate changed from `!form.formState.isDirty || form.formState.isSubmitting`
+   to `(existing !== null && !form.formState.isDirty) || form.formState.isSubmitting`
+   so a fresh tab's "Create target" button is immediately clickable.
+   Button label "Save changes" → "Create target" for new targets.
+   Stream key section + missing-key banner wrapped in
+   `existing.enabled && …` (saved server state, not form-watched —
+   atomic with Save model, no flicker mid-edit). Danger zone stays
+   visible always (you should always be able to delete).
+2. **`web/src/components/Banner.tsx` import added** to PersistentTargetTab
+   for the new missing-key warning banner.
+3. **`web/src/pages/Dashboard.tsx`** — EmptyState splits "0 targets
+   total" → "Add a target to get started" vs "N targets, 0 enabled"
+   → "Enable a target to get started" (was previously conflated —
+   always said "Add a target" even when targets existed).
+4. **`web/src/messages.ts`** — new strings:
+   `targetTab.createTarget`, `targetTab.missingKeyTitle`,
+   `targetTab.missingKeyBody`, `dashboard.disabledTitle`,
+   `dashboard.disabledBody`, `dashboard.disabledCta`. Existing
+   `dashboard.emptyBody` rewritten to be specific to the 0-targets
+   case.
+
+**Validation done so far**: `tsc -b --noEmit` clean, eslint clean,
+vitest 19/19 green. **NOT YET DONE**: browser smoke test on the
+running stack. Operator was about to smoke-test when other
+discussions interrupted. Rule №4 code-reviewer agent NOT YET RUN —
+gated on smoke-test confirmation.
+
+### `.gitignore` update (UNCOMMITTED)
+
+Added `/.restream-plus-db/` and `/.dev-data/` directory rules so
+no loose file inside the operator's bind-mount-copy can sneak in.
+Existing `*.db` / `.kdf_salt` / `*.pem` rules already protected the
+contents; this is defense-in-depth.
+
+### Phase 13 multi-track exploration → ABANDONED until upstream
+
+Operator asked: "OBS sends multiple tracks to Restream_Plus, we
+forward multi-track to Twitch and single-track to the others." A
+full design pass via `general-purpose` Agent + deep OBS-source
+inspection surfaced TWO independent upstream blockers:
+
+1. **OBS gates Multitrack Video on `multitrack_video_configuration_url`
+   in services.json.** Commit "Don't attempt multitrack without
+   config url" (Aug 2025). The bundled "Custom" service has no
+   such field. Pointing OBS at `rtmp://our-host:1935/live/<key>`
+   via Custom Service today means **the Multitrack Video toggle is
+   greyed out** — operator literally cannot push multi-track to us.
+   Workarounds (ship services.json fragment for manual OBS install;
+   submit Restream_Plus upstream to OBS as a named service) are
+   either fragile or slow. Tracked at
+   https://ideas.obsproject.com/posts/2684/ +
+   https://ideas.obsproject.com/posts/2743/.
+2. **ffmpeg stable cannot emit Enhanced RTMP multi-track FLV
+   output.** Multi-track FLV encode lives in BtbN's `enhanced-flv`
+   branch, not mainline 7.x. Even if (1) were solved, we couldn't
+   forward multi-track to Twitch without vendoring nightlies.
+
+Operator's verdict: **"we're abandoning this idea of multitracks
+until obs supports it properly."** Paper trail landed in:
+- `docs/architecture/ADR-0003-rtmp-ingest-and-fanout.md` §"Open
+  questions" — full reasoning + revisit triggers.
+- `docs/architecture/ADR-0008-worker-abstraction.md` §"Open
+  questions" — confirms `-c copy` lock survives, no transcoding
+  tier on the roadmap.
+
+**The architecture agent's report named PRs 1–3 (MediaMTX cutover +
+fattest-track extraction) as the "what we CAN deliver crutch-free"
+partial answer. Operator rejected the partial — wants the full
+multi-track-to-Twitch story or nothing.** When upstream blockers
+clear, re-open the design pass and likely execute PRs 1–4 in
+sequence (MediaMTX spike → cutover → multi-track demux → OBS
+service-entry distribution). PR 5 (Twitch multitrack egress)
+depends on ffmpeg mainline merging the BtbN enhanced-flv branch.
+
+### Unraid hardening plan returned (BUILD PAUSED)
+
+Operator noted appdata folder shows "UNKNOWN owner" on Unraid. The
+`Agent` returned a comprehensive plan:
+- Root cause: container's uid 10001 doesn't exist in Unraid host's
+  `/etc/passwd` (which only has nobody=99, users=100). Unraid UI
+  surfaces the unmapped uid as literal "UNKNOWN".
+- Fix: hybrid PUID/PGID switching pattern. Keep uid 10001 default
+  (load-bearing for existing v1.0.0–v1.1.3 operators per Phase 10
+  §F), opt-in via `-e PUID=99 -e PGID=100` mutates `restream` user
+  in entrypoint.sh before s6 takes over. Linuxserver.io's standard
+  pattern; refuses PUID=0 + asymmetric PUID-without-PGID.
+- Add OCI labels + `net.unraid.docker.{webui,icon,managed,shell}`
+  to Dockerfile so plain `docker run` produces a first-class
+  container card.
+- One PR: Dockerfile labels + entrypoint switching + s6 init-data
+  `id -u restream` instead of literal `10001` + README §Option 3
+  Unraid quickstart + docs/ops/deployment.md §Unraid section +
+  256×256 PNG icon at `docs/assets/restream-plus-icon.png`.
+- **PAUSED**: requires image rebuild, which is gated by the
+  operator's "no more image building, we start raw on this dev
+  machine first" directive. Unblock when the operator says go.
+
+### How to resume this session cold
+
+1. `git log --oneline -3` should show `48ce0b8` (v1.1.3) at HEAD.
+   Working tree should have:
+   - Modified: `.gitignore`, `web/src/messages.ts`,
+     `web/src/pages/Dashboard.tsx`,
+     `web/src/pages/settings/targets/PersistentTargetTab.tsx`.
+   - Untracked: `start.bat`, `start.py`.
+   - Modified (this session): ADR-0003 + ADR-0008 §"Open questions"
+     amendments documenting Phase 13 deferral.
+2. `D:\Projects\Programming\Restream_Plus\.restream-plus-db\` is the
+   operator's verbatim Unraid appdata copy (gitignored — contains
+   real encrypted credentials). `.env.local` at repo root must
+   contain `RESTREAM_MASTER_PASSPHRASE=<production-passphrase>` to
+   decrypt. If the file isn't there, `start.bat` errors out with
+   copy-pasteable fix instructions.
+3. Run `start.bat`. Backend opens at `:8000`, frontend Vite at
+   `:5173`. Backend logs `key_material_unlocked` if the passphrase
+   matched. Open http://localhost:5173/.
+4. Smoke-test the 4 web-panel UX fixes (list above). If green,
+   spawn `feature-dev:code-reviewer` (Rule №4) on the 4 modified
+   web files. If reviewer is clean, commit as one PR with a
+   concise message like "fix(web): unbrick the target-setup flow
+   + clarify dashboard empty state."
+5. Unraid hardening: ready to commit + build when the operator
+   unpauses image builds. The plan is in this section + agent
+   report (transcript only — not persisted to a doc).
+6. Phase 13: leave alone. Revisit triggers are in the ADRs.
+
+### Architecturally-sound things deliberately NOT done this session
+
+- No code commits. Working tree only.
+- No image rebuilds, no GHCR pushes, no version bumps.
+- No `services.json` fragment for OBS (would be a крутыль; rejected
+  by operator).
+- No bleeding-edge ffmpeg from BtbN nightlies.
+- No MediaMTX as PRODUCTION ingest (Phase 13 deferral stands). We DID
+  add a dev-only MediaMTX sidecar — that's a launcher tool, not a
+  production decision. See "MediaMTX dev sidecar" section below.
+- No transcoding tier of any kind (would revoke ADR-0008's `-c copy`
+  lock, which was reaffirmed in this session's ADR-0008 amendment).
+
+## MediaMTX dev sidecar + post-v1.1.3 working-tree state (2026-05-18 late evening)
+
+After the Phase 13 deferral landed, the operator hit the natural
+next question: "how do I test RTMP push end-to-end on the dev box
+without Docker?" The Windows dev host has no nginx-rtmp binary, and
+the operator explicitly refused to depend on Docker for the dev
+loop. The resolution is a **dev-only MediaMTX sidecar** that
+listens on `:1935` and webhooks our local FastAPI for auth +
+lifecycle. Production is unchanged — production runs nginx-rtmp
+inside the v1.1.3 container per ADR-0003.
+
+### New files (UNTRACKED in git)
+
+- **`start.bat`** — 4-line cmd launcher that runs `python start.py`.
+- **`start.py`** — Windows-only launcher. Three visible cmd windows:
+  - **Backend** = `.venv/Scripts/python.exe -m app.main` (FastAPI
+    :8000). Reads `RESTREAM_MASTER_PASSPHRASE` from gitignored
+    `.env.local` at repo root. Backend env passed via Popen `env=`
+    (NOT `set FOO=bar && ...` chain — that puts the space-before-&&
+    into the value, caused `cookie_secure='false '` trailing-space
+    → pydantic bool_parsing crash on first cut).
+  - **RTMP** = `dev/mediamtx.exe` (auto-downloaded on first run from
+    GitHub, SHA-256-verified against pinned `945ab46c5fc6d28…`,
+    re-verified at every subsequent launch via a sibling
+    `dev/mediamtx.exe.sha256`).
+  - **Frontend** = `npm run dev` (Vite :5173). `vite.config.ts`
+    `server.host: "0.0.0.0"` so LAN devices can hit HMR.
+  - **start.py runs `npm run build` BEFORE launching** so the
+    backend `_spa_fallback` serves a fresh bundle at :8000 (without
+    this, hitting :8000 from a LAN device showed a months-old SPA
+    and masked v1.1.3 + UX edits — caught during smoke test).
+- **`dev/mediamtx.yml`** — locked-down RTMP-only config (RTSP /
+  HLS / WebRTC / SRT / API / metrics / pprof / playback all
+  explicitly `no`). `authHTTPAddress` → `/internal/mtx/auth`,
+  `runOnReady`/`runOnNotReady` curl → `/internal/mtx/lifecycle`.
+  `logLevel: warn` (matches production `nginx.conf`'s
+  `error_log warn`) — INFO would print full publish paths
+  including the ingest key, which leaked once in this session
+  and forced a manual key rotation. **curl invocations use
+  `-o NUL`** so the `{"status":"ok"}` response body doesn't
+  pollute MediaMTX's stdout.
+
+### New backend files (UNTRACKED)
+
+- **`app/api/internal_mtx.py`** — `/internal/mtx/auth` (publish-
+  auth, JSON body) + `/internal/mtx/lifecycle` (form-encoded curl
+  exec target). Mirrors `internal_rtmp.py`'s security properties
+  exactly: loopback gate via `ipaddress.is_loopback`, timing-safe
+  key compare via `hmac.compare_digest`, `KeyMaterialState.READY`
+  gate, no key echoed to logs. Charset allowlist on
+  `_extract_ingest_key` (`^[A-Za-z0-9_\-]+$`) as defence-in-depth
+  for the `runOnReady` curl shell substitution. Mounted in
+  `app/main.py` and `tests/api/conftest.py`.
+- **`tests/api/test_internal_mtx.py`** — 9 new tests (correct
+  key → 200, wrong key → 403, malformed path → 403, shell
+  metacharacters → 403, read always 200, admin actions 403,
+  unknown action 422, lifecycle not_ready notifies supervisor,
+  lifecycle ready is informational, unknown event 422).
+
+### Modified backend files (working tree only)
+
+- **`app/api/internal_rtmp.py`** — backported the timing-safety
+  fix from the mtx adapter to the PRODUCTION nginx-rtmp adapter.
+  `_keys_match` now always runs both `hmac.compare_digest` calls
+  even when `previous is None` (compares against NUL-padded
+  sentinel), closing the "is rotation active" timing oracle that
+  the reviewer caught.
+- **`app/main.py`** — added `internal_mtx_router` mount.
+- **`tests/api/conftest.py`** — same mount for the test app.
+- **`app/domain/target_types.py`** — Twitch default URL kept as
+  `rtmp://live.twitch.tv/app` (Twitch's "intelligent ingest"
+  hostname) but documented the caveat: that URL is NOT in OBS's
+  bundled `services.json`. The regional list (47 URLs total) lives
+  in the frontend. When Phase 13 reopens we'll add the Auto Stream
+  Configuration adapter so we don't need a manual regional picker.
+- **`app/fanout/supervisor.py`** — **OBS-start-before-panel-START
+  ordering bug fixed.** Added `_obs_is_publishing: bool` flag,
+  updated unconditionally on `notify_obs_publish_began` /
+  `notify_obs_publish_ended` regardless of run state. `start_run`
+  now consults the flag immediately after `STARTING → ARMED` and
+  auto-promotes `ARMED → LIVE` if OBS was already publishing
+  before START was clicked. `stop_run` resets the flag to False
+  on every clean stop. Without this, the dashboard showed
+  "WAITING FOR OBS TO START STREAM" forever when the operator
+  started OBS before clicking START on the panel — the auth
+  webhook fired during OFFLINE, the state machine rejected the
+  transition, no later signal arrived, run wedged on ARMED.
+- **`.gitignore`** — `/dev/mediamtx.exe`, `/dev/mediamtx.exe.sha256`,
+  `/dev/*.zip` (defence-in-depth on top of existing patterns).
+
+### Modified frontend files (working tree only)
+
+- **`web/src/lib/targetTypeSpecs.ts`** — Twitch presets expanded
+  from `[rtmp://live.twitch.tv/app]` to the full 47-entry list
+  (the auto-route URL + 46 regional URLs verbatim from OBS's
+  `services.json`). YouTube gained the 2 legacy `rtmp://`
+  fallbacks for operators behind RTMPS-hostile middleboxes.
+- **`web/src/components/HeroCard.tsx`** — `ingestUrl` was
+  `rtmps://${window.location.host}/live` since v1.0 (wrong port,
+  wrong protocol — `host` includes the panel port, RTMP lives on
+  1935, and we're not behind TLS). Now
+  `rtmp://${window.location.hostname}:1935/live`. Operator hit
+  this when the hero card kept telling them to push to
+  `rtmps://10.10.0.4:8000/live` and they intuited the right URL
+  themselves. TODO comment in-file: when a TLS terminator is
+  added in front of RTMP, expose protocol+port via `/api/settings`
+  instead of hardcoding.
+- **`web/src/lib/wsReducer.ts`** + `wsReducer.test.ts` — on
+  `run.state.changed` to `OFFLINE`, target snapshots are cleared.
+  Without this, a tile whose worker died with `ui_state=errored`
+  showed RECONNECTING forever after STOP. New test:
+  `run.state.changed to OFFLINE clears stale target snapshots`.
+- **`web/src/messages.ts`** — added strings for the post-v1.1.3
+  web-panel UX fixes (`targetTab.createTarget`,
+  `targetTab.missingKeyTitle/Body`,
+  `dashboard.disabledTitle/Body/Cta`).
+- **`web/src/pages/Dashboard.tsx`** — EmptyState splits "0 targets
+  total" → "Add a target to get started" vs "N targets, 0 enabled"
+  → "Enable a target to get started" (was previously conflated).
+- **`web/src/pages/settings/targets/PersistentTargetTab.tsx`** —
+  Save button enabled for new targets (was `!isDirty`-gated which
+  trapped operators because form defaults are valid); button
+  label "Create target" for new vs "Save changes" for edits;
+  Stream key section + missing-key banner gated on
+  `existing.enabled`; Banner import added.
+- **`web/vite.config.ts`** — `server.host: "0.0.0.0"` so LAN
+  devices can hit Vite for HMR (was localhost-only).
+
+### Modified ADRs (working tree only)
+
+- **`docs/architecture/ADR-0003-rtmp-ingest-and-fanout.md`** —
+  appended Phase 13 deferral entry to §"Open questions" with the
+  two upstream blockers (OBS Custom-Service multi-track config-URL
+  gate + ffmpeg mainline missing enhanced-flv encode) AND the
+  empirical confirmation note (operator tested OBS multi-track ON
+  against our Custom Service, got the predicted "Output failure /
+  No URL", unchecked Multitrack → standard RTMP worked).
+- **`docs/architecture/ADR-0008-worker-abstraction.md`** — Open
+  questions amendment confirming `-c copy` lock survives Phase 13
+  exploration; when Phase 13 reopens, the only addition is the
+  track-selection computation, not loosening the encode-flag lock.
+
+### Code-reviewer (Rule №4) results from the MediaMTX adapter pass
+
+Spawned mid-session on the MediaMTX adapter + dev tooling diff.
+Reviewer flagged 4 issues, all addressed in code:
+
+1. **Shell injection in `runOnReady` curl** (confidence 85) —
+   `$MTX_PATH` shell-interpolates BEFORE curl parses; theoretically
+   bypassable by an ingest key with shell metacharacters even
+   though `secrets.token_urlsafe` can't produce them. Fix:
+   charset-allowlisted `_extract_ingest_key` to `^[A-Za-z0-9_\-]+$`
+   so the regex is the source of truth, not a property of the
+   generator.
+2. **`_keys_match` timing drift on `previous is None`** (conf 90) —
+   pre-existing in `internal_rtmp.py`; backported the fixed shape
+   to BOTH adapters.
+3. **`ensure_mediamtx_present` silently skipped SHA verify on
+   subsequent launches** (conf 88) — fixed: record the verified
+   exe SHA at first-run, re-verify on every launch, refuse to
+   spawn on mismatch.
+4. **`SessionDep` injected on read-path waste** (conf 82) —
+   acknowledged but not fixed: one no-op DB connection per
+   ffmpeg-worker spawn is negligible. Documented as known.
+
+### Current operator workflow (cold-resume cheat sheet)
+
+1. `git log --oneline -1` → `48ce0b8` (v1.1.3 PR #13 merge).
+2. Working tree state matches `git status --short` from the
+   session — many uncommitted files. Total: +593 / -21 lines
+   across 17 changed + 4 new files.
+3. `.env.local` at repo root contains
+   `RESTREAM_MASTER_PASSPHRASE=<production-passphrase>` (the
+   passphrase the operator used on their Unraid container that
+   wrote `.restream-plus-db/`). `key_material_unlocked` event in
+   the backend window confirms it matched.
+4. Run `start.bat`. First launch downloads MediaMTX, all subsequent
+   launches verify the cached exe SHA. Three visible cmd windows
+   open.
+5. Browser: `http://localhost:5173/` (HMR over `web/src/`) or
+   `http://10.10.0.4:5173/` from another LAN device. The
+   `:8000` URL serves the bundled SPA from `web/dist/`
+   (rebuilt at every `start.bat` launch).
+6. OBS: `rtmp://<this-box-LAN-IP>:1935/live` + ingest key from
+   Settings → General. **Multitrack Video OFF** — per the empirical
+   Phase 13 confirmation, OBS's Multitrack toggle against a Custom
+   Service fails to start.
+7. Order of operations is robust either way thanks to the
+   supervisor `_obs_is_publishing` flag — OBS-first-then-START
+   and START-first-then-OBS both promote to LIVE correctly.
+
+### What's still pending in the working tree
+
+- **Bug C (Twitch fanout)** — not root-caused. Operator hasn't
+  shared backend stderr from the post-publish window. Likely
+  causes (in order): (a) auto-routing `live.twitch.tv/app` failing
+  for the operator's region (added the 46 regional URLs so they
+  can pick), (b) stream key rotated on Twitch dashboard but not
+  re-pasted in our panel, (c) outbound 1935 blocked from dev box
+  to Twitch's ingest. Resolves with one regional-URL test or
+  one fresh ffmpeg_stderr paste from the operator.
+- **Radix DialogContent missing-Description warning** — dev-only
+  console warning (`index.mjs:309`); three candidate files
+  (`TargetDetails.tsx`, `AuthRepromptHost.tsx`,
+  `TypeToConfirmDialog.tsx`). Non-fatal; suppressed in prod
+  builds; low priority.
+- **No commit yet** — everything is working tree. When operator
+  signs off on the smoke test, the right packaging is probably:
+  - **PR A** "fix(web): unbrick target-setup flow + smarter
+    empty state + correct push URL" — `HeroCard.tsx`,
+    `Dashboard.tsx`, `messages.ts`, `PersistentTargetTab.tsx`,
+    `wsReducer.ts` + test, `targetTypeSpecs.ts` (Twitch + YouTube
+    URL expansions).
+  - **PR B** "fix(supervisor): OBS-publish-before-START ordering"
+    — `supervisor.py` flag + auto-promote. Needs a unit test in
+    `tests/fanout/test_supervisor.py` for the
+    OBS-first-then-START path.
+  - **PR C** "feat(dev): MediaMTX sidecar for Docker-less local
+    RTMP testing" — `internal_mtx.py`, `internal_rtmp.py` timing
+    fix backport, `internal_mtx` test file, conftest mount,
+    `dev/mediamtx.yml`, `start.bat`, `start.py`, `.gitignore`,
+    `vite.config.ts`. Plus the 2 ADR amendments.
+  - PR ordering: A → B → C (smallest blast radius first).
+
+## Hex Audit 2026-05-18 — slice 1 applied
+
+First execution of the new `hex-audit` named workflow (six parallel
+audit agents — four agency-personas + code-reviewer + footgun-hunter
+per [[rule-audit-footgun-hunter]] / Rule №6). Reports back from all
+six. ~90 findings across them (12 Critical, 25+ High, rest M/L).
+
+**Slice 1 fix scope: all four footgun-hunter Critical findings (the
+v1.1.3 unbounded-growth / path-length-blindspot repeat-class) + one
+small Backend Architect fix (Backend F12, locked-mode allowlist
+extension to /internal/mtx/). The other Critical findings (ingest-key
+rotation grace not enforced, fire-and-forget run-state races, UI
+contrast tokens, UX i18n leaks, ADR drift) are deferred to slice 2+
+because they're architectural and need standalone PR scoping.**
+
+### What landed in slice 1
+
+- **[F-FG1] `web/src/lib/wsReducer.ts`** — dropped the "stub-append on
+  unknown target_id" branch in `patchTargetSnapshots`. The reducer
+  invariant is now: snapshot events NEVER grow the targets array —
+  unknown ids are discarded, `state.full` is the only path that
+  populates new entries. Crash input that motivated it: 50k+
+  `target.snapshot` events with rotating `crypto.randomUUID()` ids
+  while `state.full` hasn't landed → O(N²) renders → tab OOM. Same
+  class as v1.1.3 SPA route compounding. Tests: existing "unknown
+  appends a stub" test rewritten to assert NO growth; new
+  "1000-snapshot flood with rotating ids → targets length still 1"
+  test pins the invariant.
+- **[F-FG2] `app/auth/rate_limit.py`** — replaced
+  `defaultdict(deque)` with explicit `OrderedDict` + `MAX_TRACKED_BUCKETS
+  = 10_000` FIFO cap per dict. `check()` is now non-mutating (uses
+  `.get(key)`, no allocation on miss); `record_failure()` evicts the
+  oldest-touched key when at cap. Empty buckets get deleted after
+  prune via `_prune_or_evict` — without that, the cap alone isn't
+  enough because expired-but-non-empty-dict-entry buckets would
+  linger. Crash input: 10M unique IP / username bucket keys via
+  rotating `X-Forwarded-For` (when trusted-proxies configured) or
+  rotating usernames → ~6 GB RSS on a 4 GB Unraid LXC. 4 new tests
+  in `tests/auth/test_rate_limit.py::TestUnboundedGrowthFootgun`:
+  check-only doesn't materialize, empty buckets pruned after window,
+  bucket count capped, FIFO eviction order verified.
+- **[F-FG3 + F-FG4] `app/api/internal_mtx.py`** — added
+  `MAX_INTERNAL_MTX_BODY_BYTES = 4096` content-length cap wired as a
+  FastAPI route-decorator `dependencies=[Depends(_assert_small_body)]`
+  on BOTH `/auth` and `/lifecycle`. Wired via decorator-dependency
+  (NOT as the first line of the function body) because by the time
+  the function body runs, FastAPI has already buffered the body to
+  validate the `MtxAuthBody` / `Form()` parameters; the decorator
+  dependency resolves earlier. Per-field `max_length` added to every
+  `str` field on `MtxAuthBody` (path 512, protocol 64, user 256,
+  password 512, token 512, ip 64, id 128, query 1024) and the
+  lifecycle `path` Form field (max_length=512) — layered defence
+  behind the body cap. Used `HTTP_413_CONTENT_TOO_LARGE` (starlette
+  0.49 renamed the constant; `filterwarnings=["error", ...]` promotes
+  the legacy name to a 500). Missing Content-Length is 411 (chunked
+  clients refused — MediaMTX always sends Content-Length). 4 new
+  tests cover oversized JSON (413), missing CL (411 via unit-level
+  helper because httpx ASGITransport backfills CL), oversized form
+  (413), Pydantic per-field cap (422).
+- **[Backend F12] `app/api/middleware.py`** — added `/internal/mtx/`
+  to `DEFAULT_ALLOWLIST` alongside `/internal/rtmp/`. Reason: a
+  publish that was in flight at unlock time must still be able to
+  emit its `not_ready` lifecycle signal to clear the supervisor's
+  `_obs_is_publishing` flag. Without the allowlist entry, the MTX
+  hook gets gated at locked-mode middleware, the supervisor never
+  sees `publish_ended`, and the flag wedges True across the unlock.
+  The handler itself 503s on locked state — same belt-and-suspenders
+  posture as `/internal/rtmp/`. Pin test in
+  `test_middleware.py::test_default_allowlist_pins` updated with
+  inline Hex Audit rationale.
+
+### Gates at slice-1 close
+
+- Backend pytest: **693/693 ✅** (was 681 pre-Hex-Audit; +12 net new:
+  4 footgun rate-limit, 4 internal_mtx body-cap, 2 supervisor
+  OBS-ordering, 2 inline pin/rationale updates)
+- Mypy strict: **71/71 ✅**
+- Frontend: typecheck ✅, eslint ✅, vitest **21/21 ✅** (was 20;
+  added wsReducer 1000-snapshot flood test)
+- Working tree: 24 modified + 6 new files; +1111/-61 lines.
+
+### Hex Audit slice-2+ backlog (NOT yet applied)
+
+Severity-ranked findings still open. Each is architectural — proper
+fix needs scoped PR + design discussion. Listed for the next slice:
+
+**Critical (security/correctness):**
+- [Backend F1] Ingest-key rotation grace window NOT enforcing —
+  `_keys_match` ignores `grace_until` field, `previous` accepted
+  indefinitely after rotation. Security theatre. Fix: pass
+  `grace_until` + `now` into `_keys_match`; periodic lifespan loop
+  that clears `previous` once `now > grace_until`; audit
+  `ingest_key_grace_expired`. ~half a day.
+- [Backend F2] `start_run`/`stop_run` HTTP handler does legality
+  check OUTSIDE supervisor lock + spawns task; second concurrent
+  START gets 202 then ERROR'd silently. Fix: synchronous intent flag
+  + `RunActionFailedEvent` on bus + 409 for concurrent. 1 day.
+
+**Critical (UX/UI accessibility — token redesign):**
+- [UI F1] Disabled-state `opacity-50` → contrast ~2:1 (WCAG fail).
+- [UI F2] White-on-accent ~3.5:1 in light theme.
+- [UI F3] Loading Button hides label under spinner.
+- [UX F1] `<span>`-as-label vs `<label htmlFor>` in `Field` helper.
+- [UX F2] Hardcoded user-facing strings bypass `t()` (SecurityTab
+  ×5 mentions, plus `aria-label="API token"`, etc.).
+- [UX F3] AccountMenu `<details>` → no Escape, no `aria-expanded`;
+  replace with Radix `DropdownMenu`.
+
+**High (security/reliability — STRONG signal from multiple agents):**
+- [Backend F7 + Footgun F5] `notify_obs_publish_*` mutates
+  `_run_state` outside supervisor lock — three-way ordering race
+  with `start_run` can land in ERROR. Proper fix: async-and-locked
+  notify methods OR queued action drained inside the lock at
+  natural transition points (architectural cleanup: single source
+  of truth, eliminate the dual `_run_state` + `_obs_is_publishing`).
+- [Backend F3] `/api/auth/reprompt` no rate-limit + no constant-time
+  floor — brute-force admin password via stolen cookie.
+- [Backend F4] Audit log writes are `contextlib.suppress(Exception)`;
+  forensic gap. Proper fix: transactional audit (audit row in the
+  same SQLite txn as the protected action).
+- [Backend F5] AEAD AAD doesn't bind `target_id` — DB-write attacker
+  can swap credentials between targets.
+- [Backend F6] `last_seen_at` UPDATE per request → SQLite write
+  amplification on single-writer.
+- [Backend F8] `RedactionSink` regex bypass on URLs with embedded
+  `:` / `=` / query-string keys.
+
+**High (UX/UI design-system):**
+- [UX F4 + UI F5] **Button primitive bypass** — ~20 inline
+  `<button className="h-10 rounded-(--radius-md) ...">` recipes
+  across Settings tabs, dialogs, confirms. STRONG signal — found by
+  two agents.
+- [UX F5 + UI F6] **Input primitive does not exist** — same 6-line
+  className duplicated ~14×. STRONG signal.
+- [UX F6] Hardcoded layout widths (`max-w-[1200px]`, `max-w-[480px]`,
+  etc.) — no `--width-*` tokens.
+- [UI F4] Touch target floor: `h-7` (28px) / `h-9` (36px) icon-only
+  buttons in LogViewer / AppShell.
+- [UX F7] `LiveStatsStrip hidden md:flex` — desktop-first violation;
+  rule says mobile-first.
+
+**Medium / documentation (Software Architect):**
+- [SA F2] ADR-0011 over-promises a `health_probe` DB write canary
+  the handler intentionally doesn't run — future-maintainer trap.
+- [SA F6] MediaMTX dev sidecar shipping code with NO ADR — write
+  ADR-0012 "MediaMTX as dev-only sidecar."
+- [SA F13] Extend ADR-0001/0004 §Open questions with the explicit
+  single-process invariant list (KeyMaterial, RateLimiter,
+  RepromptStore, EventBus drainer, host_stats — not just SQLite).
+
+### How to invoke the workflow next time
+
+`hex-audit` / `запусти hex-audit` / `сделай hex audit`. The full
+procedure is in `memory/workflow-hex-audit.md`. Estimated wall-clock
+~15-20 minutes (6 agents in parallel + synthesis).
+
+### Burndown — single source of progress truth
+
+Checkable burndown of all ~100 findings (with phase + slice
+assignments, applied/open/deferred/wontfix status, file:line
+citations, and transcript-recovery pointers for truncated
+notifications) lives at `docs/audit/hex-audit-2026-05-18.md`.
+Grep `^- \[x\]` to count applied; grep `^- \[ \]` to count open.
+Update in lockstep with every slice — that file is the canonical
+"what's left" doc across sessions, since TodoWrite is per-session
+and memory text-summaries drift.
+
+---
+
+## Hex Audit 2026-05-18 — slice 2 applied (Phase 1, 2/3 slices done)
+
+**Status:** 17/100 findings closed (~17% raw); 11/16 Critical drained
+(~69%). Phase 1 (Critical security drain) is 2/3 slices complete —
+remaining: slice 3 (supervisor sync-webhook race, STRONG signal pairing
+BA-F7 + FG-F5 + FG2-C2 + FG2-H3 + FG2-H6 — all on the same lock-free
+state-mutation surface).
+
+**What slice 2 actually did:**
+
+- **BA-F1** Ingest-key rotation grace enforced end-to-end:
+  - Both `internal_rtmp.py::_keys_match` and `internal_mtx.py::_keys_match`
+    take `grace_until` + `now`, accept `previous` only when
+    `previous is not None AND grace_until is not None AND now < grace_until`.
+    Timing-flat sentinel comparison still runs on the "previous not
+    honoured" path so an observer can't distinguish expired from
+    no-rotation by response time.
+  - New `SettingsRepository.clear_ingest_key_previous_after_grace(now)`
+    does the atomic `UPDATE ... WHERE grace_until < :now AND previous
+    IS NOT NULL` and returns True only when a row was cleared.
+  - New `_ingest_key_previous_cleanup_loop` lifespan task at
+    `INGEST_KEY_PREVIOUS_CHECK_INTERVAL_SECONDS = 60.0` cadence;
+    emits `ingest_key_previous_cleared` audit row on success.
+
+- **BA-F2** Fire-and-forget exception surfacing:
+  - `_spawn_supervisor_task` done-callback funnels exceptions through
+    `_log_supervisor_task_exception`.
+  - `IllegalRunStateTransitionError` → info `supervisor_task_race_lost`
+    (concurrent START / STOP race is benign).
+  - Anything else → error `supervisor_task_failed` with full traceback.
+
+- **FG2 sibling-sweep Criticals** (the v1.1.3 unbounded-growth class
+  that slice 1 closed for one instance each but missed siblings):
+  - **FG2-C1** `prevUiStateRef.current` Map capped at 16 with FIFO
+    eviction by insertion order; `state.full` reseats the Map
+    wholesale (operator-config removals shrink the tracking surface).
+  - **FG2-C3** SPA fallback caps on BOTH codepoint count
+    (`max_path_codepoints = 1024`) AND fsencoded UTF-8 byte length
+    (`max_path_bytes = 2048`) so multi-byte codepoint expansion
+    can't blow past Linux ext4's 4096-byte ENAMETOOLONG cliff.
+  - **FG2-C4** `RepromptStore._grants` switched to `OrderedDict` +
+    `MAX_TRACKED_GRANTS = 10_000` FIFO; constructor takes
+    `max_grants` for test injection.
+  - **FG2-C5** `_load_runnable_targets` returns `(pairs,
+    decrypt_failures)` as a local; `self._decrypt_failures` instance
+    state removed. Interrupted `start_run` can no longer leak
+    failure entries into the next attempt.
+
+- **CR2 high-confidence Highs:**
+  - **CR2-H1** `MAX_INTERNAL_MTX_BODY_BYTES: Final[int]` (mypy now
+    blocks accidental re-assignment).
+  - **CR2-H2** `_assert_loopback` wired as `dependencies=[Depends(...)]`
+    on all four internal endpoints (`/internal/rtmp/publish`,
+    `/publish_done`, `/internal/mtx/auth`, `/internal/mtx/lifecycle`)
+    so non-loopback probes get 403 BEFORE FastAPI opens a DB
+    session slot.
+  - **CR2-H3** `LoginRateLimiter(max_buckets=...)` constructor param;
+    the fragile monkey-patch in the eviction test is gone.
+
+- **CR2 mediums + 1 FG2 medium:**
+  - **CR2-M1** wsReducer `offline → offline` preserves
+    `prev.targets` reference when already empty (React `===`
+    memoization downstream).
+  - **CR2-M3** `_INGEST_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")`
+    canonical hyphen-last form.
+  - **FG2-M3** `_extract_ingest_key` short-circuits on
+    `_MAX_PATH_FOR_KEY_EXTRACT = 256` before splitting the path
+    into a list.
+
+**Gates — all green post-slice-2:**
+- Backend pytest 718/718 (was 693; +25 new tests covering BA-F1
+  grace + cleanup + FG2-C4 RepromptStore cap + FG2-M3 length cap +
+  CR2-H1 Final pin + CR2-H3 ctor + BA-F2 done-callback + SPA byte cap)
+- mypy 71/71 source files clean
+- Frontend typecheck + ESLint + 22 vitest (was 21; +1 for CR2-M1 ref
+  preservation)
+
+**Fresh re-audit agents this session (recover from 0-byte original
+transcripts):**
+- Fresh Footgun Hunter `aba08162de9691354` on slice-1 working tree
+  → 21 findings (5 Critical / 6 High / 7 Medium / 3 Low). Dominant
+  pattern: slice 1 closed obvious instances of unbounded-growth
+  class but did not sweep for siblings — slice 2 closed 4 of the 5
+  Criticals from this sweep; FG2-C2 deferred to slice 3 where it
+  pairs with BA-F7.
+- Fresh Code-reviewer `ad4b45152ea2d01e4` on slice-1 working tree →
+  Rule №5 PASS on all 5 prior fixes + 3 High / 2 Medium / 2 Low new
+  findings. CR2-H1/H2/H3/M1/M3 all closed in slice 2; CR2-L1/L2
+  acceptable as-is.
+
+**Slice 3 next (Phase 1 closes):** supervisor sync-webhook race —
+the lock-free mutation of `_run_state` + `_obs_is_publishing` from
+`notify_obs_publish_*` request handlers. Combined surface:
+- BA-F7 — primary race description
+- FG-F5 — original-audit confirmation
+- FG2-C2 — fresh re-audit Critical (same root cause)
+- FG2-H3 — `rotation_lock` vs supervisor lock interaction (stale
+  `DerivedKeys` snapshot under concurrent rotate-passphrase)
+- FG2-H6 — `notify_obs_publish_began` race with `stop_run` flag-clear
+- BA-F10 — `_obs_is_publishing` not cleared on ERROR-path teardown
+  (folds into the same refactor)
+
+Architectural cleanup: introduce a queued action drained inside the
+supervisor lock at natural transition points (eliminates dual
+`_run_state` + `_obs_is_publishing` as separate sources of truth).
+Estimated ~1.5 days; surgical-by-design (small file count, one
+correctness lens). Closes Phase 1 entirely.
+
+**Phase 2 onward:** Phase 2 (slice 4 design-system primitives Button
++ Input ~34 sites; slice 5 token redesign contrast + widths) will
+need a **re-audit checkpoint** on its tail edge before moving to
+Phase 3. Phase 5 (slice 8 transactional audit-log refactor ~15 call
+sites) similarly. All 6 phases / 10 slices / 2 re-audit
+checkpoints documented in the burndown's phase table.
+
+---
+
+## Hex Audit 2026-05-18 — slice 3 applied (PHASE 1 COMPLETE)
+
+**Status:** 20/100 findings closed; 12/16 Critical drained (~75%); Phase 1 done (3/3 slices). Audit burndown at `docs/audit/hex-audit-2026-05-18.md`. Slice 3 closed the supervisor sync-webhook race — BA-F7 + FG-F5 + FG2-C2 (Critical) + FG2-H3 + FG2-H6 (High) + BA-F10 (Medium). Architectural change is the queued-action pattern: `notify_obs_publish_*` (still synchronous, request-side) becomes O(1) enqueue + `call_soon`; the drain runs under `supervisor._lock` as the single writer of `_run_state` + `_obs_is_publishing` at three deterministic checkpoints inside `start_run` / `stop_run`.
+
+**Rotation_lock ordering** (FG2-H3 fix): `supervisor._lock` ALWAYS acquired BEFORE `rotation_lock`. `Supervisor.__init__` now takes a `rotation_lock` constructor parameter, wired in `main.py` from `auth_state.rotation_lock`. `start_run` checks `rotation_lock.locked()` and acquires it under `_lock`; `rotate_passphrase` uses the new `supervisor.acquire_state_lock()` async context manager to take `_lock` first, then acquire rotation_lock, then release `_lock` (rotation runs without holding supervisor's lock — the multi-second re-wrap doesn't block enable/disable/snapshot reads). New typed `RunBlockedByRotationError` in `app/domain/errors.py` is the supervisor-side error; `app/api/run.py::_log_supervisor_task_exception` catches it at info-level (race-OK).
+
+**Cap:** `PENDING_ACTIONS_CAP = 64` with FIFO drop-oldest + structlog warning per drop.
+
+**FakeSupervisor parity:** added `acquire_state_lock` no-op cm to `app/fanout/_testing.py` so HTTP-layer tests against `FakeSupervisor` don't AttributeError on rotate-passphrase.
+
+**Rule №4 review:** code-reviewer agent `a4a5f6fc285bdbcaa` verified all 6 findings closed. Two issues fixed in-slice: (H-1) `_spawn_drain_task` registers `_log_drain_task_exception` BEFORE `_pending_drain_tasks.discard` (matches `run.py::_spawn_supervisor_task` ordering precedent); (M-1) `_drain_pending_actions_locked` re-entrancy docstring rewritten to name the actual safety property (FIFO across suspend points). Outstanding (deferred slice 10): H-2 — no end-to-end test confirms `state.rotation_lock` is the SAME object as `supervisor._rotation_lock`; main.py wires correctly today but the protection is silent-failure if wiring breaks.
+
+**Gates at slice 3 close:**
+- backend pytest: **723/723** (was 718; +5 new in `TestSlice3SupervisorRace`)
+- mypy: **71/71**
+- frontend typecheck + lint + 22 vitest: green
+- working tree: ~41 modified + 7 untracked from v1.1.3 baseline
+
+**Files changed in slice 3:**
+- `app/domain/errors.py` — new `RunBlockedByRotationError`
+- `app/fanout/supervisor.py` — `_PendingActionKind` enum + `_PendingAction` dataclass; `PENDING_ACTIONS_CAP = 64`; `_pending_actions: deque`; `_pending_drain_tasks: set`; `rotation_lock` constructor param; new methods `acquire_state_lock`, `_drain_pending_actions`, `_drain_pending_actions_locked`, `_enqueue_action`, `_enqueue_synthetic_action`, `_schedule_drain`, `_spawn_drain_task`, `_log_drain_task_exception`; `start_run` and `stop_run` refactored to use drain checkpoints; `notify_obs_publish_*` reduced to enqueue + schedule
+- `app/fanout/_testing.py` — `acquire_state_lock` no-op cm on FakeSupervisor
+- `app/api/run.py` — `_log_supervisor_task_exception` branch for `RunBlockedByRotationError` (info-level)
+- `app/api/security_api.py` — `rotate_passphrase` uses `supervisor.acquire_state_lock()` cm for the OFFLINE check + rotation_lock acquire; explicit `try / finally: state.rotation_lock.release()` around the re-wrap
+- `app/main.py` — passes `rotation_lock=auth_state.rotation_lock` to `Supervisor(...)`
+- `tests/fanout/test_supervisor.py` — 3 existing tests updated to drain explicitly; new `TestSlice3SupervisorRace` class with 5 tests
+
+**Next slice (slice 4, Phase 2):** Design-system primitives — Button + Input across ~34 sites (UX-F4 + UX-F5 + UI-F5 + UI-F6). Surgical but wide-touch; Rule №4 code-reviewer is sufficient (no re-audit on Phase 2 slice 4; the re-audit checkpoint fires after slice 5 closes Phase 2).
+
+**Cold-resume tail for slice 4:**
+- Read `docs/audit/hex-audit-2026-05-18.md` UX/UI sections for finding text.
+- Inventory call sites with `grep -rn '<button' web/src` and `grep -rn 'className.*input' web/src`.
+- Backend-architect agency-agent prompt at `docs/prompts/` (UX architect + UI designer for design decisions).
+- Slice 4 estimated 2-3 days; slice 5 (tokens) ~1.5 days; combined Phase 2 ~4-5 days before re-audit.
+
+---
+
+## Slice 4 — design-system primitives (Phase 2 start, 2026-05-19)
+
+**Scope:** Authored `Input.tsx` primitive, extended `Button.tsx` with `iconOnly` + `danger-ghost`, migrated ~14 input + ~14 button bypass sites. **Closes 6 findings: UX-F4, UX-F5, UI-F5, UI-F6, UI-F7, UI-F10.**
+
+**Design phase (Rule №3 — consulted agency-agents in parallel before coding):**
+- UX-architect agent `a463d876059420f39`, UI-designer agent `a83d0c6aed12e2192`.
+- One conflict (heights: agent A wanted `h-8/h-11/h-12` for 44px touch-target floor on `md`; agent B wanted `h-7/h-9/h-11` matching Button). I resolved in favor of B — Input + Button row-baseline alignment is the highest-violated invariant pre-slice-4, more important than the 44px floor (which slice 6 specifically addresses for icon-buttons via UI-F4).
+- Both agents recommended `focus-visible:outline-none` + `ring-2`. I overrode both: `tokens.css:185-189` already declares a global `*:focus-visible { outline: 2px solid var(--color-accent) }`; suppressing it is exactly UI-F7. The proper fix is to NOT set `focus-visible:outline-none` on Input — only swap border color on focus-visible for the "engaged" cue.
+
+**Primitive shape (Input.tsx):**
+- `forwardRef<HTMLInputElement, InputProps>`.
+- `extends Omit<InputHTMLAttributes<HTMLInputElement>, "size" | "prefix">` — native `size` collides with our visual `size` prop; `prefix` collides with TS DOM lib's stray global attr.
+- Props: `size: "sm"|"md"|"lg"` (default `md`), `invalid: boolean` (sets `aria-invalid` + error-tinted border), `mono: boolean` (font-mono + tabular-nums), `leading: ReactNode`, `trailing: ReactNode`, `containerClassName: string`.
+- Heights `h-7 / h-9 / h-11` matching Button 1:1.
+- Radius: raw `rounded-md` (matches Button precedent; slice 5 will tokenize both together).
+- Slot wrappers: leading has `pointer-events-none aria-hidden` (decorative icons); trailing does NOT (callers pass interactive Buttons). JSDoc on `trailing` prop documents the asymmetry per code-review IMP-2.
+- Padding strategy: per-size `pl-*` / `pr-*` override applied when a slot is present (e.g., `md` + trailing slot → `pr-10` to make room for an `h-9 w-9` button at `right-1`).
+
+**Primitive shape (Button.tsx extensions):**
+- `iconOnly?: boolean` — square geometry via separate `iconOnlySizes` table (`sm: h-7 w-7`, `md: h-9 w-9`, `lg: h-11 w-11`, `xl: h-20 w-20`). Per-size `gap-2` moved into `sizes` (so `iconOnly` correctly omits it).
+- `variant: "danger-ghost"` — `bg-transparent text-(--color-error) hover:bg-(--color-error-faint)`. Added in response to Rule №4 code-review CRIT-1.
+
+**Rule №4 code-reviewer pass:** Agent `a286562aff1b65f09`. All 5 audit findings VERIFIED CLOSED. One Critical finding fixed in-slice:
+
+- **CRIT-1 — Tailwind v4 cascade-order:** The project uses `clsx` (no `tailwind-merge`). I had been passing `className="text-(--color-error) hover:bg-(--color-error-faint) hover:text-(--color-error)"` to `<Button variant="ghost">` for the "Revoke" / "Delete" patterns. Reviewer confirmed via grepping the built dist CSS that `text-(--color-error)` is generated **before** `text-(--color-fg-default)` in stylesheet order. Since both classes have equal CSS specificity, the cascade winner is the later-declared one — i.e., ghost's `text-(--color-fg-default)` wins, and my error-color override is silently lost. The Revoke / Delete buttons would have rendered in default gray rather than red, breaking the danger affordance. **Fix:** Added dedicated `variant="danger-ghost"` to Button. Updated 4 call sites (SecurityTab ×2 + CustomTab + PersistentTargetTab).
+- **IMP-1 — aria-invalid declaration:** Added explicit `@custom-variant aria-invalid (&[aria-invalid="true"])` to `tokens.css` so the contract is documented instead of relying on Tailwind v4's undocumented `aria-*` functional fallback.
+- **IMP-2 — slot asymmetry JSDoc:** Added JSDoc on Input's `trailing` prop documenting the no-`pointer-events-none` convention (callers passing non-interactive trailing nodes must add `pointer-events-none` themselves).
+
+**Outstanding from review (intentionally deferred):**
+- **`outline-accent` "New API Token" button** in `SecurityTab.tsx` ~line 377 — one-off pattern, no other call sites, left as inline bypass with an in-file comment marking it as slice-5 work (when token redesign revisits the Button variant matrix).
+- **`<select>` bypasses** in PersistentTargetTab + VKTab — out of slice-4 scope (Input handles inputs only). Slice 6 (UX accessibility) will introduce a Select primitive.
+- **Component-level unit tests** for Input + Button — `web/vite.config.ts:63` explicitly defers DOM/component tests to "Phase 8b". Slice 4 honors that posture.
+
+**Files changed in slice 4 (13 frontend files, 0 backend):**
+- `web/src/components/Input.tsx` — new
+- `web/src/components/Button.tsx` — `iconOnly` prop + `iconOnlySizes` table + `danger-ghost` variant
+- `web/src/theme/tokens.css` — explicit `@custom-variant aria-invalid`
+- `web/src/components/TypeToConfirmDialog.tsx` — input + 2 buttons
+- `web/src/components/AuthRepromptHost.tsx` — input + 2 buttons
+- `web/src/components/InlinePromptCard.tsx` — input (mono, lg)
+- `web/src/components/SecretField.tsx` — MaskedField icon button + EntryField (input + trailing slot Button) + PasteOnlyField (input)
+- `web/src/pages/settings/SecurityTab.tsx` — PasswordField helper now wraps Input with `aria-describedby` to error `<p>`; 7 buttons (2 revoke triggers use danger-ghost)
+- `web/src/pages/settings/targets/CustomTab.tsx` — 2 inputs + 6 buttons (1 danger-ghost)
+- `web/src/pages/settings/targets/PersistentTargetTab.tsx` — 2 inputs + 5 buttons (1 danger-ghost); removed unused `submitDisabled` derived var
+- `web/src/pages/settings/targets/VKTab.tsx` — 1 input + 3 buttons
+- `web/src/pages/Login.tsx` — password input → `size="lg"` (kept hidden username `<input hidden>` raw on purpose)
+- `web/src/pages/Unlock.tsx` — passphrase input → `size="lg" mono`
+
+**Gates at slice 4 close (after CRIT-1 fix):**
+- frontend typecheck: green
+- frontend lint: green (`--max-warnings 0`)
+- frontend vitest: **22/22** (unchanged — DOM tests deferred to Phase 8b)
+- backend pytest: **723/723** (unchanged)
+- backend mypy: **71/71** (unchanged)
+- working tree: ~49 modified + 7 untracked from v1.1.3 baseline
+
+**Burndown counts at slice 4 close:** 26/100 findings closed (~26%); 12/16 Critical drained (~75%); Phase 1 COMPLETE (3/3); Phase 2 in progress (1/2 — slice 5 remaining).
+
+**Next slice (slice 5, Phase 2 closeout):** Design-token redesign — contrast (UI-F1 + UI-F2 + UI-F3 loading-button-strips-label) + layout widths (UX-F6 — replace hardcoded `max-w-[1200px]` with `--width-*` tokens) + spacing token consistency (UX-F8). Picking up the `outline-accent` button bypass from slice 4 falls naturally into this slice's Button variant matrix revisit.
+
+**Re-audit checkpoint #1** fires at the tail edge of slice 5 (per the phase table). Mandatory fresh 6-lens hex-audit on the cumulative Phase 2 diff (~40 new sites: Input primitive + token rewrite + variant matrix).
+
+**Cold-resume tail for slice 5:**
+- Inventory `grep -rn 'max-w-\[' web/src` for hardcoded layout widths.
+- Inventory `grep -rn 'text-(' web/src` for contrast issues (UI-F1/F2/F3 — color tokens that fail WCAG AA in dark or light mode).
+- Inventory the lone `outline-accent` site in `SecurityTab.tsx` ~line 377.
+- Spawn UX-architect + UI-designer agency-agents for token decisions (contrast palette, width scale).
+- Build a slice-5 burndown section in `docs/audit/hex-audit-2026-05-18.md`.
+- After slice 5 closes, **spawn fresh hex-audit (Rule №6 re-audit checkpoint #1)** before Phase 3.
+
+---
+
+## Slice 5 + Re-audit checkpoint #1 — Phase 2 COMPLETE (2026-05-19)
+
+**Slice 5 scope:** Design-token redesign. 9 findings closed (UI-F1, UI-F2, UI-F3 — all 3 Criticals — plus UX-F6/F8/F9 + UI-F9/F11/F12). 24 frontend files migrated. Zero backend touch.
+
+**Token additions in `web/src/theme/tokens.css`:**
+- 9 width tokens (`--width-popover/dialog-{sm,md,lg}/hero/content/app/hero-action-{min,max}`).
+- 3 control-height tokens (`--size-control-{sm,md,lg}` = 28/36/44px).
+- 3 disabled-state tokens (`--color-{bg,fg,border}-disabled`). After re-audit UI-CHECKPOINT-1: light `bg-disabled` set to `hsl(220 14% 89%)` (was 93%) so it's perceptibly distinct from `bg-sunken` (93%). Dark `bg-disabled` set to `hsl(220 18% 18%)`.
+- 1 `--color-on-accent` token (white in light, near-black `hsl(220 30% 8%)` in dark).
+- Darkened `--color-accent` from `hsl(220 90% 56%)` → `hsl(220 90% 40%)` (passes WCAG AA white-on-accent at ~7.5:1).
+- Darkened `--color-info` to match (sibling-fill caught in slice-5 code-review CRIT-1).
+
+**Primitive updates:**
+- Button: control-height + spacing tokens, `text-(--color-on-accent)` instead of `text-white`, explicit disabled tokens replacing `opacity-50`, width-stable loading (spinner gutter ALWAYS reserved, animated only when `loading` per re-audit FH2-M1; suppressed entirely for `variant="link"` per re-audit SA-RISK-2).
+- Input: control-height + spacing tokens, disabled tokens, slot padding tokenized, JSDoc on slot-vs-bare DOM shape change (per re-audit FH2-H3).
+- Banner: body inherits container's `--color-fg-strong` (was forcing `fg-default` regardless of variant).
+- TargetTile: disabled state uses tokens (was `opacity-60`).
+
+**Design phase (Rule №3, parallel):** UX-architect `a07c03612c34e9a2c` (structural — widths/heights/spacing/radius) + UI-designer `a7ef80be91594c5c4` (visual — contrast/disabled/loading/banner). No cross-agent conflicts.
+
+**Rule №4 code-reviewer pass (slice 5):** Agent `aa693ca258ff616ac`. 1 Critical caught: **CRIT-1** — `bg-(--color-info)` at HeroCard.tsx:467 wasn't darkened alongside `--color-accent` → sibling-fill contrast miss. Fixed by darkening `--color-info`. Plus IMP-1 (`CopyToClipboard.variant` dead code → removed per Rule №2; 3 call sites updated) + IMP-2 (SettingsSidebar height-unification comment).
+
+**🔁 Re-audit checkpoint #1 (Rule №6 mandatory at Phase 2 tail edge):** 5-lens parallel audit on cumulative slices 4 + 5 diff. Backend-architect skipped (zero backend touch). Agents:
+- software-architect `afc618c0ceee9a4c8`
+- UX-architect `a51885b84708612e0`
+- UI-designer `ab60a6adcf7ca3538`
+- code-reviewer `a50f4cc06b1aca7a7`
+- footgun-hunter `af50887102b2bb773`
+
+**Re-audit Critical (fixed in-checkpoint):** **FH2-C1** — `focus:outline-none` on raw `<select>` elements in VKTab.tsx:117 + PersistentTargetTab.tsx:189 re-introduced UI-F7 for keyboard focus. Fixed: removed `focus:outline-none`, swapped `focus:` → `focus-visible:` for the border swap, tokenized `h-10` → `h-(--size-control-md)`. (Slider.tsx:53 uses the same `focus:outline-none` but is paired with `focus-visible:ring-2` standard Radix pattern — confirmed correct, not a regression.)
+
+**Other in-checkpoint fixes (applied immediately):**
+- **FH2-M1** — `animate-spin` ran on `invisible` spinners (50+ idle buttons spinning hidden = CPU waste). Gated on `loading`.
+- **SA-RISK-2** — `loading` gutter rendered inside `variant="link"` (text-only buttons). Suppressed for link variant.
+- **UI-CHECKPOINT-1** — `--color-bg-disabled` was identical to `--color-bg-sunken` in light theme → disabled controls invisible on sunken surfaces. Darkened `--color-bg-disabled` to be distinct (4.55:1 light / 4.62:1 dark AA preserved).
+- **FH2-H3** — Input slot DOM shape change documented in JSDoc.
+
+**Re-audit items DEFERRED to slice 6** (pre-scoped in audit phase table for UX accessibility + FormField + Select primitive + UI-F4 touch targets):
+
+1. **SA-BLOCK-1** — Button `iconOnly` not type-enforced (discriminated union forcing `aria-label`).
+2. **SA-BLOCK-2** — 4 inline `<button>` elements still bypass Button primitive: GeneralTab.tsx:195+208 (Save/Discard), SessionsTab.tsx:75 (Load older), DestructiveConfirm.tsx:69 (Confirm), AppShell.tsx:171-180 (sign-out missing disabled styling).
+3. **FH2-H1** — Select primitive (replaces VKTab + PersistentTargetTab raw `<select>` elements).
+4. **FH2-H2** — `--color-info` ≡ `--color-accent` semantically. Consolidate or shift hue.
+5. **SA-RISK-1** — `disabled:hover:*` guards on Button variants.
+6. **SA-RISK-3** — Adopt `tailwind-merge` (`cn = (...args) => twMerge(clsx(args))`). The proper Rule №1 fix for the className-override hazard slice-4 CRIT-1 surfaced.
+7. **SA-RISK-4** — Stand up jsdom + testing-library; move beyond Phase-8b deferral now that Button + Input are load-bearing.
+8. **UI-CHECKPOINT-2** — Dark-theme danger button reads "peachy chip". Consider `--color-on-error` token.
+9. **UI-CHECKPOINT-3** — Banner body using `fg-strong` flattens tone hierarchy on error variant.
+10. **UX-B.2** — SettingsSidebar tier signal depends on "Targets" header rendering.
+11. **UX-D.2** — `danger-ghost` disabled has `disabled:bg-transparent` (no bg cue on sunken rows).
+12. **UX-D.3** — TargetTile pill chip affordance (border for disabled state).
+13. **UX-E.1/E.2** — Width-stable spinner gutter optical offset (~11px) and idle-width growth (~22px).
+14. **FH2-M2** — Arbitrary widths in TargetDetails / RecentEventsMenu / LogViewer — tokenize.
+15. **FH2-M3** — RecentEventsMenu.tsx:81 `h-8 w-8` icon sizing inconsistency.
+16. **FH2-L1** — Add `browserslist` to `package.json` documenting modern-`hsl()` browser floor.
+
+**Rule №6 footgun-hunter status:** PASSED. 1 Critical found (FH2-C1) and fixed in-slice. No unbounded-growth, recursion, or path-length-class bugs introduced by Phase 2.
+
+**Files changed in slice 5 + re-audit (24 frontend files):**
+- `web/src/theme/tokens.css` (major token rewrite)
+- `web/src/components/{Button,Input,Banner,TargetTile,SecretField,CopyToClipboard,DestructiveConfirm,OneTimeRevealBanner,AppShell,AuthLayout,AuthRepromptHost,RequireAuth,HeroCard,TypeToConfirmDialog,RunStateBadge,LogViewer}.tsx`
+- `web/src/components/settings/SettingsSidebar.tsx`
+- `web/src/pages/settings/{SettingsShell,GeneralTab,SessionsTab,SecurityTab,AboutTab}.tsx`
+- `web/src/pages/settings/targets/{VKTab,PersistentTargetTab}.tsx`
+- `web/src/pages/Dashboard.tsx`
+- `web/src/theme/ThemeToggle.tsx`
+
+**Gates at slice 5 close (after re-audit fixes):**
+- frontend typecheck: green
+- frontend lint: green (`--max-warnings 0`)
+- frontend vitest: **22/22** (DOM tests deferred to Phase 8b per `vite.config.ts:63`)
+- backend pytest: **723/723** (unchanged)
+- backend mypy: **71/71** (unchanged)
+
+**Burndown counts at slice 5 close:**
+- **35/100 findings closed (~35%)**
+- **15/16 Critical drained (~94%)** — only BA-F4 remains (Phase 5 transactional audit log)
+- Phase 1 COMPLETE (3/3), **Phase 2 COMPLETE (2/2)**
+
+**Next slice (slice 6, Phase 3 start):** UX accessibility sweep. Scope:
+- FormField primitive (label + helper + error wiring + aria-describedby threading)
+- Select primitive (replaces VKTab + PersistentTargetTab raw `<select>` sites; mirrors Input's API shape)
+- i18n sweep on hardcoded user-facing strings (UX-F2)
+- Radix DropdownMenu replacing AccountMenu's `<details>/<summary>` (UX-F3)
+- Touch-target floor: 44×44 icon buttons (UI-F4) — LogViewer / AppShell / TargetDetails / RecentEventsMenu
+- Mobile-first LiveStatsStrip (UX-F7)
+- All ~16 Phase 2 re-audit deferrals absorbed (especially SA-BLOCK-1/2, SA-RISK-1/3/4, FH2-H1/H2)
+- Recommended foundational work: adopt `tailwind-merge` (SA-RISK-3) + stand up jsdom + testing-library (SA-RISK-4) EARLY in slice 6
+
+Slice 6 is the largest single slice in the audit plan. Per-slice Rule №4 code-reviewer sufficient (no re-audit on Phase 3 tail edge per phase table; next re-audit is checkpoint #2 at Phase 5 tail edge).
+
+**Cold-resume tail for slice 6:**
+- Read `docs/audit/hex-audit-2026-05-18.md` `## Slice 5 — Phase 2 closeout` and `## 🔁 Re-audit checkpoint #1` sections for the full deferral list.
+- Inventory `grep -rn '<select' web/src` for Select primitive consumers.
+- Inventory `grep -rn '<button.*aria-label' web/src` for icon-only buttons (UI-F4 touch-target floor).
+- Spawn UX-architect for FormField + Select primitive shape + accessibility patterns.
+- Spawn UI-designer for touch-target visuals + danger button dark-mode rethink (UI-CHECKPOINT-2).
+- Address SA-RISK-3 (`tailwind-merge` adoption) and SA-RISK-4 (jsdom + testing-library) EARLY — foundational for the new primitives.
+
+---
+
+## Slice 6 + reviewer fixes — Phase 3 COMPLETE (2026-05-19)
+
+Slice 6 was the largest single slice in the audit plan — UX accessibility sweep + absorbed 16 of 16 Phase 2 re-audit deferrals. Frontend-only, zero backend touch.
+
+### Closed audit findings (slice 6)
+
+**6 original UX/UI:**
+- UX-F1 Critical — FormField compound primitive
+- UX-F2 Critical — 7 hardcoded strings extracted to `messages.ts`
+- UX-F3 Critical — AccountMenu Radix DropdownMenu migration
+- UX-F7 High — LiveStatsStrip three-tier responsive (≥md inline / sm-md secondary bar / <sm CPU chip)
+- UI-F4 High — Touch-target floor: 44×44 on TargetDetails close, RecentEventsMenu trigger, AccountMenu trigger
+- UI-F15 Low — paired with UI-F4
+
+**11 of 16 Re-audit Checkpoint #1 deferrals:**
+- SA-BLOCK-1 — Button `iconOnly` discriminated union (TS-level enforcement of required `aria-label`)
+- SA-BLOCK-2 — 4+ inline button-bypass sites migrated (DestructiveConfirm Cancel/Confirm, GeneralTab Save/Discard/Regenerate, SessionsTab Load older, SecurityTab New API Token, LogViewer floating resume-tail) + new `outline-accent` Button variant
+- SA-RISK-1 — `disabled:hover:bg-*` overrides added to every variant with `hover:bg-*`
+- SA-RISK-3 — `tailwind-merge` adopted at `cn()` boundary; closes slice-4 CRIT-1 cascade-order class
+- SA-RISK-4 — jsdom + Testing Library stood up; vitest env switched node → jsdom; `setup.ts` + ESLint test-file override
+- FH2-H1 — Select primitive (native `<select>`, typed options, mirrors Input API 1:1)
+- FH2-H2 — `--color-info` hue shifted to H=195 cyan (was byte-identical to `--color-accent` after slice-5 darkening)
+- FH2-M2 — `--width-slideout` + `--height-log-viewer` + `--height-events-menu` tokens; 4 arbitrary `[…px]` values eliminated
+- FH2-M3 — RecentEventsMenu BellSlash glyph annotated as illustration (WCAG 2.5.5 carve-out)
+- FH2-L1 — `browserslist` floor in `package.json` (Chrome 111+ / FF 113+ / Safari 16.4+ / Edge 111+)
+- UI-CHECKPOINT-2 — new `--color-on-error` (always white); dark `--color-error` darkened to clear AA
+- UI-CHECKPOINT-3 — Banner body steps down to `--color-fg-default` so title reads as rank-1
+- UX-B.2 — SettingsSidebar tier-signal invariant comment
+- UX-D.2 — dropped `disabled:bg-transparent` from `ghost` + `danger-ghost` (kept on `link` — hyperlink semantics)
+- UX-D.3 — TargetTile disabled pill border `--color-border-strong`
+
+**5 deferred to slice 10** (not in slice-6 primitive-rebuild scope):
+- UI-F8 Sparkline empty state
+- UX-F10 auth-page first-focus
+- UX-F11 SettingsSidebar mobile horizontal scroll
+- UX-E.1/E.2 width-stable spinner gutter optical asymmetry (accepted as zero-reflow trade-off)
+
+### New files
+
+- `web/src/components/FormField.tsx` — compound primitive (root + `.Input` + `.Select` + `.Control` + `.Description`).
+- `web/src/components/formFieldContext.ts` — context + hook (split out to satisfy react-refresh).
+- `web/src/components/Select.tsx` — native `<select>` primitive with typed options.
+- `web/src/test/setup.ts` — jest-dom matchers + afterEach cleanup.
+- `web/src/lib/cn.test.ts` (6 tests) — tailwind-merge precedence contract.
+- `web/src/components/Button.test.tsx` (3 tests) — jsdom smoke + iconOnly contract.
+- `web/src/components/FormField.test.tsx` (6 tests) — a11y wiring contract.
+
+### Modified files (24 frontend)
+
+`web/src/lib/cn.ts`, `web/src/theme/{tokens.css,ThemeToggle.tsx}`, `web/src/components/{Button,Banner,TargetTile,DestructiveConfirm,TargetDetails,RecentEventsMenu,LogViewer,LiveStatsStrip,AppShell}.tsx`, `web/src/components/settings/SettingsSidebar.tsx`, `web/src/pages/settings/{GeneralTab,SessionsTab,SecurityTab}.tsx`, `web/src/pages/settings/targets/{VKTab,PersistentTargetTab,CustomTab}.tsx`, `web/src/messages.ts`, `web/{vite.config.ts,eslint.config.js,package.json,package-lock.json}`.
+
+### Rule №4 code-reviewer pass
+
+Agent `aefd3416adc3d3fd3` ran post-coding review against the full slice-6 diff. **2 High + 3 Medium findings — ALL FIXED in-slice:**
+
+1. **H-1 — AccountMenu trigger missing `iconOnly`.** Trigger picked up text-button geometry (px-5 + reserved spinner gutter) instead of square 44×44. Fixed: added `iconOnly` to the Button.
+2. **H-2 — `FormField.Control` + SecretField label dangling.** `CustomTab`'s SecretField wrapped in FormField left `<label htmlFor={generated-id}>` pointing at no DOM node (SecretField owns its own input id). Fixed: reverted SecretField field to manual `<div><span>label</span><SecretField/></div>` pattern.
+3. **M-1 — `Select` caret inline-color override.** `caretStyle()` set `color: var(--color-fg-muted)` inline, freezing the caret regardless of disabled token. Fixed: removed inline `color`; caret inherits via SVG `currentColor` ← `text-*` utility.
+4. **M-2 — `RecentEventsMenu aria-haspopup="menu"` mismatch.** Popup is a custom div, not a `role="menu"` container. Fixed: changed to `aria-haspopup="dialog"`. Full Radix DropdownMenu migration deferred to slice 10.
+5. **M-3 — `@radix-ui/react-dropdown-menu` missing from `manualChunks.radix`.** Rolled into main bundle. Fixed: added to the chunk; main shrank 5 KB, radix grew 4 KB, net bundle -1.3 KB (better cacheability).
+
+### Gates at slice 6 close (post-reviewer fixes)
+
+- frontend typecheck: green
+- frontend lint: green (`--max-warnings 0`)
+- frontend vitest: **37/37** (was 22 — +15 new across cn / FormField / Button suites)
+- frontend build: **232 KB gzipped** (budget 256 KB)
+- backend pytest: **723/723** (unchanged)
+- backend mypy: **71/71** (unchanged)
+
+### Burndown after slice 6
+
+- **~52/100 findings closed (~52%)**
+- **15/16 Critical drained (~94%)** — only BA-F4 remains (Phase 5 transactional audit log)
+- Phase 1 COMPLETE (3/3), Phase 2 COMPLETE (2/2), **Phase 3 COMPLETE (1/1 — slice 6 was the single oversized phase-3 slice)**
+
+### Next slice (slice 7, Phase 4 start)
+
+Phase 4 = Auth/observability hardening. Scope (from the burndown):
+- BA-F3 — `/api/auth/reprompt` rate-limit + constant-time floor
+- BA-F5 — AEAD AAD bind `target_id`
+- BA-F6 — `last_seen_at` UPDATE coalescing (SQLite write amplification)
+- BA-F8 — `RedactionSink` regex tightening for URLs with embedded `:` / `=` / query string
+- FG2-H1 / FG2-M7 — WS handler `touch_last_seen` rate-limit + timeout wrapper (pairs with BA-F6)
+- FG2-H5 — `_kdf_salt_previous_cleanup_loop` audit-before-unlink ordering
+- FG2-M4 — `RedactionSink._buf` second-level cap on overlong URLs
+
+Surgical backend slice; per-slice Rule №4 code-reviewer sufficient (no re-audit at Phase 4 tail edge — next re-audit is checkpoint #2 at Phase 5 tail edge).
+
+**Cold-resume tail for slice 7:**
+- Read `docs/audit/hex-audit-2026-05-18.md` for the full BA + FG2 finding text in the Backend Architect + Footgun Hunter sections.
+- Spawn backend-architect (engineering-backend-architect prompt) for the rate-limit + AEAD AAD + redaction design decisions.
+- Verify the FakeSupervisor / FakeRateLimiter test parity invariants hold for any new wrapper class added.
+- All changes must respect the slice-3 locking discipline (`supervisor._lock` BEFORE `rotation_lock`) and the slice-3 queued-action pattern for any new sync→async webhook handlers.
+
+---
+
+## Slice 7 + reviewer fixes — Phase 4 COMPLETE (2026-05-19)
+
+Surgical backend slice — auth/observability hardening. Closed all 8 Phase 4 findings (BA-F3, BA-F5, BA-F6, BA-F8 + FG2-H1, FG2-H5, FG2-M4, FG2-M7) in a single pass. Zero frontend touch.
+
+### Closed audit findings (slice 7)
+
+**4 Backend Architect High:**
+- BA-F3 — `/api/auth/reprompt` rate-limit (3/IP+username/15 min — tighter than login's 5) + 0.30 s constant-time floor. 401 + Retry-After on rate-limited (matches login pattern, not 429).
+- BA-F5 — AEAD AAD v2 binds `target_id`. New `AAD_CREDENTIAL_STREAM_KEY_V2 = b"credential:stream_key:v2"`, `build_credential_aad_v2(salt, target_id)`, `encrypt_credential(...)`, `decrypt_credential(...)` with v2→v1 rolling fallback. NO schema column — fallback handles legacy rows transparently. 5 call sites swapped.
+- BA-F6 — `LastSeenCoalescer` (60 s suppression window, FIFO cap 10 k) injected into both HTTP cookie-auth and WS upgrade paths. SPA page-load's ~10-20 verify_cookie calls now collapse to one DB write.
+- BA-F8 — `_RTMP_PATH_KEY_RE` tightened (host/app stops at `?` / `#`); new `_RTMP_QUERY_KEY_RE` for query-string credential leaks with explicit param-name allowlist (reviewer M-1 fix).
+
+**1 Footgun Hunter High:**
+- FG2-H1 — closed alongside BA-F6 (the coalescer rate-limits the WS write path).
+- FG2-H5 — `_kdf_salt_previous_cleanup_once` extracted from the loop for testability; audit emits BEFORE unlink, audit failure skips unlink (next tick retries on unchanged mtime).
+
+**2 Footgun Hunter Medium:**
+- FG2-M4 — `MAX_WORKER_URL_LEN = 2048` ValueError in constructor + `MAX_BUF_LEN = 16 384` runtime cap (reviewer H-1 reordered to make the two caps independent).
+- FG2-M7 — `asyncio.wait_for(..., timeout=2.0)` wraps both HTTP and WS `touch_last_seen` calls; on TimeoutError the WS path explicitly rolls back (reviewer H-2 defensive fix).
+
+### Design phase (Rule №3)
+
+backend-architect (engineering-backend-architect persona) consulted on 5 multi-finding adjudication points: reprompt rate-limit shape, AEAD migration story, last_seen coalescing strategy, redaction regex shape, audit-before-unlink ordering. Verdicts adopted as written; one clarification — chose 401 + Retry-After over 429 to match login's failure-mode unification (architect's later "match login's shape" rationale supported either).
+
+### New files
+
+- `app/auth/last_seen_coalescer.py` — `LastSeenCoalescer` class + 3 module constants.
+- `tests/auth/test_last_seen_coalescer.py` (14 tests) — window expiry, FIFO eviction, MRU re-mark promotion, forget, type validation.
+- `tests/test_kdf_salt_previous_cleanup.py` (4 tests) — audit-before-unlink invariant for FG2-H5.
+
+### Modified files (12 app/ + 6 tests/)
+
+**App:**
+- `app/auth/deps.py` (AuthState gained `reprompt_rate_limiter` + `last_seen_coalescer` fields)
+- `app/auth/sessions.py` (SessionAuthService takes coalescer; verify_cookie/revoke wired)
+- `app/api/auth.py` (REPROMPT_TIMING_FLOOR_SECONDS=0.30 + reprompt rate-limit gate + try/finally floor)
+- `app/api/ws.py` (coalescer + wait_for wrap + explicit rollback on TimeoutError)
+- `app/api/targets.py`, `app/api/security_api.py`, `app/fanout/supervisor.py` (5 call sites swapped to encrypt_credential/decrypt_credential)
+- `app/crypto/aead.py` (v2 AAD + encrypt_credential + decrypt_credential with rolling fallback)
+- `app/crypto/__init__.py` (exports)
+- `app/fanout/redaction.py` (tighter path regex, new query regex with allowlist, MAX_WORKER_URL_LEN, MAX_BUF_LEN)
+- `app/main.py` (lifespan constructs reprompt_rate_limiter + last_seen_coalescer; _kdf_salt_previous_cleanup_once extracted)
+
+**Tests:**
+- `tests/api/conftest.py`, `tests/auth/test_deps.py`, `tests/api/test_phase9_endpoints.py` (AuthState fixtures updated)
+- `tests/auth/test_sessions.py` (SessionAuthService fixtures + new `coalescer` fixture)
+- `tests/crypto/test_aead.py` (TestBuildCredentialAadV2 + TestCredentialAeadHelpers, 7 tests)
+- `tests/fanout/test_redaction.py` (TestQueryStringRedaction + TestPathBoundaryTightening + TestWorkerUrlCap + TestBufCap, 9 tests)
+- `tests/api/test_auth.py` (3 BA-F3 tests)
+
+### Rule №4 code-reviewer pass
+
+Agent `a3c446bd2e48083a6` reviewed the full slice-7 diff. **2 High + 3 Medium — ALL FIXED in-slice:**
+
+1. **H-1 — `MAX_BUF_LEN` was dead code.** Inner branch unreachable: `force_split_threshold ≤ MAX_LINE_LEN + 2048 = 6144`, `MAX_BUF_LEN = 16 384`. Fixed: reorder to check `MAX_BUF_LEN` FIRST so the two caps are independent.
+2. **H-2 — WS path swallowed `TimeoutError` without explicit rollback.** `wait_for` cancels the in-flight UPDATE; while `AsyncSession.__aexit__` rolls back on close, the explicit `await session.rollback()` documents intent.
+3. **M-1 — `_RTMP_QUERY_KEY_RE` over-matched `?keyboard=` etc.** Swapped to an explicit param-name allowlist.
+4. **M-2 — Missing test for tampered v2 ciphertext.** Pinned: v2 row with flipped byte raises `AEADDecryptionError` (both v2 and v1 fallback attempts fail at AES-GCM tag verification).
+5. **M-3 — Missing `reset()` in one reprompt test.** Added for sibling-test consistency.
+
+### Gates at slice 7 close (post-reviewer fixes)
+
+- backend mypy: **72/72** (was 71 — +1 for `last_seen_coalescer.py`)
+- backend pytest: **767/767** (was 723 — +44 across 4 new/extended test files)
+- frontend typecheck/lint/**37 vitest**/build **232 KB** gzipped — unchanged (zero frontend touch)
+
+### Burndown after slice 7
+
+- **~60/100 findings closed (~60 %)**
+- **15/16 Critical drained (~94 %)** — only BA-F4 remains (Phase 5 transactional audit log)
+- Phase 1 COMPLETE (3/3), Phase 2 COMPLETE (2/2), Phase 3 COMPLETE (1/1 oversized slice), **Phase 4 COMPLETE (1/1 — slice 7 closed all 8 Phase-4 findings in one pass)**
+
+### Next slice (slice 8, Phase 5)
+
+Phase 5 = Transactional audit-log refactor (BA-F4, the LAST remaining Critical). Standalone slice, ~2 days, refactors ~15 audit call sites to participate in the request's transaction. Folds in FG2-M6 (retention) + BA-F11 (revoke_http_session duplicate audit). After slice 8 lands, **Re-audit Checkpoint #2 is mandatory** (per phase table — Phases 2 and 5 require re-audit).
+
+**Cold-resume tail for slice 8:**
+- Read `docs/audit/hex-audit-2026-05-18.md` for the BA-F4 finding text + the ~15 call sites listed in `[auth.py:291-293] + ~15 sites`. Grep `audit.append\(` for the inventory.
+- Spawn backend-architect for the transactional-audit design (one audit-row-per-business-transaction vs. dedicated audit-only transaction).
+- Verify the `wal_checkpoint(TRUNCATE)` semantics don't regress under the new transaction boundary.
+- Re-audit Checkpoint #2 is MANDATORY on the cumulative Phase 5 diff (Phases 2 and 5 are the two checkpoint slots per phase table). 5-lens hex-audit on Phase 5 work + Rule №6 footgun-hunter pass.
+- Phase 6 (slices 9-10) is the cleanup tail: ADR-0001/0004/0006/0007/0010/0011 docs work (SA-F1-F13), plus a Medium-cleanup pass for the remaining deferrals.
+
+---
+
+## Slice 8 — Phase 5 COMPLETE (2026-05-19)
+
+The last Critical (BA-F4) closed. Surgical backend slice — transactional audit-log refactor, zero frontend touch.
+
+### Closed audit findings (slice 8)
+
+- **BA-F4 Critical** — `AuditLogRepository` rewritten with dual contract: `append(session, ...)` adds the audit row to the caller's `AsyncSession` BEFORE commit (in-txn); `append_standalone(...)` opens its own short-lived session (lifespan + supervisor + kdf-salt cleanup). All 13 request-scoped sites refactored to in-session append before commit; every `contextlib.suppress(Exception)` around an audit call REMOVED. Per-append `wal_checkpoint(TRUNCATE)` removed from the in-txn path — replaced by the periodic retention loop.
+- **BA-F11 Medium** — `revoke_http_session` audit moved INSIDE the business txn alongside `repo.delete(token_hash)`. ONE txn, atomic commit, duplicate-audit window closed.
+- **FG2-M6 Medium** — `_audit_log_retention_loop` (6 h cadence) deletes `at < now - audit_log_retention_days` (default 365, configurable via `RESTREAM_AUDIT_LOG_RETENTION_DAYS`, floor 30 / ceiling 3650). Non-empty ticks emit `audit_log_retention_run` audit-of-the-audit row in the same txn as the delete. Idle ticks checkpoint at most once per day. Loop also drives periodic WAL checkpoint cadence.
+- **SA-F4 Medium (docs)** — ADR-0007 §"Audit log scope" amended: targets/settings CRUD IS audited (contrary to original text); new "Audit-log durability and transactional shape" section documents the BA-F4 fix.
+
+### Cascading bug-fixes embedded (not separately tracked)
+
+- `password_changed` (auth.py): "commit BEFORE audit to avoid SQLite write-lock deadlock" comment was the BA-F4 bug documented in code. Removed — one writer, one txn.
+- `_wipe_per_session_credentials` (supervisor.py): two-phase "wipe then audit" with explicit "running it in the wipe txn would deadlock" comment — was the BA-F4 bug. Now ONE `session.begin()` block.
+- `_ingest_key_previous_cleanup_loop` (main.py): two-session pattern merged into one `session.begin()` block.
+- `app_started` lifespan emit (main.py): `contextlib.suppress(Exception)` REMOVED. Boot-time audit failure is now fatal — operator sees the broken DB immediately, not via missing rows weeks later.
+
+### Design phase (Rule №3)
+
+engineering-backend-architect (agent `a7ad73912eb358c6a`) consulted on 10 adjudication points (contract shape, WAL checkpoint timing, BA-F11 window closure, password_changed ordering, passphrase_rotated merging, background-loop pattern, app_started failure semantic, supervisor _audit helper, retention policy shape + bounds, failure semantic). Verdict adopted as written.
+
+### New files
+
+- `tests/db/test_audit_log_retention.py` (4 tests) — retention loop invariants: delete + marker atomic, empty-tick silent, marker rolls back with caller, WAL checkpoint runs.
+
+### Modified files (10 app/ + 3 tests/ + 1 ADR)
+
+`app/repositories/audit_log.py` (full rewrite), `app/config.py` (new `audit_log_retention_days` field), `app/api/targets.py` (6 sites), `app/api/settings_api.py` (3 sites), `app/api/security_api.py` (2 sites — passphrase_rotated moved INSIDE rewrap session.begin block, session_revoked moved before commit), `app/api/auth.py` (2 sites), `app/api/api_tokens_api.py` (2 sites), `app/fanout/supervisor.py` (`_audit` helper + `_wipe_per_session_credentials`), `app/main.py` (lifespan + 3 background loops including new retention loop), `docs/architecture/ADR-0007-persistence.md` (new section + audit-scope correction).
+
+Tests: `tests/db/test_repositories.py::TestAuditLogRepository` rewritten (3 → 7 tests), `tests/db/test_audit_log_retention.py` NEW (4 tests), `tests/test_kdf_salt_previous_cleanup.py` (`_FakeAuditRepo.append` → `append_standalone`), `tests/api/test_phase9_endpoints.py` (2 direct-seeding sites).
+
+### Rule №4 code-reviewer pass
+
+Agent `aa6dd9841070ce64e` reviewed the full slice-8 diff against 10 specified checklist items (atomicity, FK on target_deleted, retention-loop ordering, idempotency of ingest-key loop, wipe txn bound, app_started fatal semantic, validation floors, lock-ordering preservation, prior-slice fix preservation, hidden races). **Result: ZERO findings — all 10 checklist items clear.** No in-slice fixes required.
+
+### Gates at slice 8 close
+
+- backend mypy: **72/72** (unchanged)
+- backend pytest: **775/775** (was 767 — +4 repo contract tests + +4 retention invariant tests)
+- frontend typecheck/lint/**37 vitest**/build **232 KB** gzipped — unchanged
+
+### Burndown after slice 8
+
+- **~64/100 findings closed (~64 %)**
+- **16/16 Critical drained (100 %)** — every original Critical now closed
+- Phase 1 COMPLETE (3/3), Phase 2 COMPLETE (2/2), Phase 3 COMPLETE (1/1 oversized), Phase 4 COMPLETE (1/1), **Phase 5 COMPLETE (1/1 — slice 8 closed BA-F4 + BA-F11 + FG2-M6 + SA-F4)**
+
+### Next: Re-audit Checkpoint #2 (MANDATORY)
+
+Per the phase table, Phases 2 and 5 are the two checkpoint slots. Slice 8 is the Phase-5 tail edge — a fresh hex-audit on the cumulative Phase 5 diff is required before Phase 6 work can begin.
+
+**Cold-resume tail for Re-audit Checkpoint #2:**
+- Invoke the hex-audit workflow (`memory/workflow-hex-audit.md`): 5-lens parallel agents (backend-architect, software-architect, ux-architect, ui-designer, code-reviewer) PLUS Rule №6 footgun-hunter pass. UX-architect + UI-designer have nothing in scope (slice 8 was backend-only); decide whether to skip them or do a confirmation pass.
+- Surface area: the new `AuditLogRepository` contract, the 13 refactored call sites, `_audit_log_retention_loop`, `_wipe_per_session_credentials` merged txn, `_ingest_key_previous_cleanup_loop` merged txn, `app_started` fatal-on-failure posture, `audit_log_retention_days` config field.
+- Write findings to a new file `docs/audit/hex-audit-2026-05-19.md` per the workflow contract (don't pollute the original 2026-05-18 baseline).
+- Any High/Critical findings get a slice 8.5 fix-up; Medium/Low join the slice-10 cleanup pile.
+
+### Phase 6 ahead (slices 9-10), after Checkpoint #2
+
+- **Slice 9** — ADR documentation pass: SA-F1, F2, F5-F9, F11-F13 (8 docs items).
+- **Slice 10** — Medium cleanup pile: BA-F9/F13/F15/F19, FG-F16, FG2-H2/H4/M2/M5/L2, UX-F10/F11/F12/F14, UI-F8/F14, SA-F14, CR-F8-F12 + 5 slice-6 deferrals.
+
+---
+
+## Re-audit Checkpoint #2 + Slice 8.5 fix-up — Phase 5 truly COMPLETE (2026-05-19)
+
+Per the phase table, Re-audit Checkpoint #2 was MANDATORY on Phase 5's tail edge. Ran 4 lens agents (skipped UX/UI — slice 8 was zero-frontend-diff). Findings written to `docs/audit/hex-audit-2026-05-19.md`.
+
+### Re-audit findings (32 total)
+
+- **Backend Architect** (`a53267590f13a925e`): 8 findings (0 C / 2 H / 5 M / 1 L)
+- **Software Architect** (`a140e9ad14e9184b7`): 11 findings (0 C / 3 H / 6 M / 2 L) — all docs/ADR drift
+- **Code-reviewer** (`a56fed3fd0aff3a5d`): 4 findings (0 C / 1 H / 2 M / 1 L) — surfaced CR2-Re-F1 (NEW Critical: retention loop checkpoint outside try/except = permanent loop kill)
+- **Footgun Hunter** (`a59924181eee31cec`): 9 findings (4 C / 3 H / 2 M) — Rule №6 dominated the Critical count, vindicating the lens
+
+**STRONG-signal items (≥2 lenses agreed):**
+1. `passphrase_rotated` audit lies on orphan rename (BA2-F2 + FG3-F3)
+2. Retention loop infinite spin with no degraded signal (BA2-F3 + FG3-F2)
+3. `_wipe_per_session_credentials` O(N) unbounded write-lock (BA2-F5 + FG3-F5)
+
+### Slice 8.5 fix-up (closed ALL Criticals + 4 code-level Highs in one session)
+
+Surgical backend slice — zero frontend touch. Closed:
+
+- **4 Critical**: FG3-F1 (boot-loop on WAL contention), FG3-F2/BA2-F3 (retention degraded signal), FG3-F3/BA2-F2 (passphrase 2-phase audit), FG3-F4 (audit-of-audit recursion exclusion), CR2-Re-F1 (retention loop checkpoint guard).
+- **4 High code-level**: BA2-F4 (supervisor `_audit` `checkpoint=False`), FG3-F6 (list_by_target JSON1 fallback for deleted targets), FG3-F7 (`change_password` 503 + `PASSWORD_CHANGE_RETRY` + `Retry-After`).
+- **3 Medium tangential**: CR2-Re-F2 (last_idle_checkpoint update on success only), CR2-Re-F3 (testability — `_audit_log_retention_once` helper extracted + `_AuditRetentionTickState` dataclass), BA2-F6 (retention tick heartbeat log).
+
+**BA2-F1** (reveal_credential decrypt-before-audit reorder) — analyzed, NOT fixed. Proposed reorder doesn't change forensic outcome under FastAPI's response model (both orderings yield identical observable behavior). Documented in burndown for future reference.
+
+**Deferred to slice 10** (Medium cleanup): BA2-F5/FG3-F5 STRONG (wipe O(N) — cap MAX_PER_SESSION_TARGETS or chunk), FG3-F9 (last_idle_checkpoint persistence), FG3-F10 (IntegrityError on supervisor _audit race), CR2-Re-F4 (type:ignore cleanup), BA2-F8.
+
+**Deferred to slice 9** (ADR docs cleanup): all 11 SA2-F* + BA2-F7 (env-only ADR drift documentation).
+
+### Slice 8.5 Rule №4 reviewer pass
+
+Agent `aabfc4cd22603ce48` reviewed slice 8.5 diff. **0 Critical / 2 Important / 3 test-coverage notes.** All Rule №5 burndown claims verified against actual source.
+
+In-slice fixes applied:
+- **Important #1** — `change_password` catch widened from `SQLAlchemyError` to `(SQLAlchemyError, OSError, TimeoutError)`. Atomicity already guaranteed by merged BA-F4 txn; this only improves UX disambiguation across the full failure surface.
+- **Test-coverage note #5** — added orphan-path test `test_rotate_passphrase_orphan_rename_emits_audit_and_raises` using `monkeypatch.setattr(Path, "replace", ...)` to simulate the rename failure. Verifies `started + orphaned` both land; `rotated` does NOT.
+
+Accepted (no in-slice fix): `contextlib.suppress` around orphan-emit audit is correct best-effort idiom (reviewer agreed); `capfd` structlog stream fragility is accepted trade-off; loop-vs-helper integration gap is acceptable (helper is the testable unit).
+
+### Gates at slice 8.5 close
+
+- backend mypy: **72/72** unchanged
+- backend pytest: **783/783** (was 767 at slice-7 close → 775 at slice-8 → 783 after slice 8.5; +16 across the Phase 5 expansion)
+- frontend untouched
+
+### Burndown after slice 8.5
+
+- **~75/100 findings closed (~75%)** — slice 8.5 closed 11 of the 32 re-audit findings
+- **16/16 original-audit Criticals drained (100%)** + ALL 5 re-audit Critical-class findings closed
+- **Phase 5 TRULY COMPLETE** (slice 8 + slice 8.5)
+
+### Next: Phase 6 (slices 9-10) — no more re-audit checkpoints required
+
+The workflow's two re-audit slots (Phase 2 tail + Phase 5 tail) are now consumed. Phase 6 is the asymptotic tail:
+- **Slice 9 — ADR docs cleanup**: original SA-F1/F2/F5/F6/F7/F8/F9/F11/F12/F13 (~10 items) + slice-8.5 re-audit SA2-F1 through SA2-F11 (11 items) + BA2-F7 (env-only ADR drift) ≈ ~22 docs/ADR items. Largest single-slice scope yet.
+- **Slice 10 — Medium cleanup pile**: original-audit Mediums (~12 items) + slice-8.5 re-audit Mediums/Lows (BA2-F5/FG3-F5 STRONG #3, FG3-F9, FG3-F10, BA2-F8, CR2-Re-F4) + 5 slice-6 deferrals ≈ ~20 items.
+
+### Slice 9 CLOSED (2026-05-19) — ADR documentation pass
+
+Pure-docs slice; zero code touched; backend mypy/pytest unchanged from slice 8.5 (72/72 + 783/783); frontend untouched. All 22 planned docs items closed.
+
+**Modified ADRs (7) + 2 phase memos + index:**
+- `ADR-0007` — 6 sub-fixes (SA2-F2/F3/F5/F6/F7/F10) + BA2-F7 ADR-drift acknowledgement.
+- `ADR-0005` — SA2-F1 (audit-scope pointer) + SA-F8 (NEW §"Bootstrap log-stream routing").
+- `ADR-0006` — SA2-F11 (Sqlcipher rejection cross-refs ADR-0007 + names specific events).
+- `ADR-0001` — SA-F13 (NEW §"Single-process invariants" with 7-row table: KeyMaterial, RateLimiter, RepromptStore, EventBus drainer, host_stats, Supervisor, LastSeenCoalescer).
+- `ADR-0004` — SA-F1 (§Volume layout rewritten with "What is NOT in this layout") + SA-F13 (§"Open questions" cross-refs ADR-0001 list).
+- `ADR-0003` — SA-F5 (NEW code-reconciliation sub-section quoting frozen `CircuitBreakerPolicy`).
+- `ADR-0010` — SA-F12 (§Consequences/Harder gains 6-surface env-leak bullet).
+- `ADR-0011` — SA-F2 (NEW "intentional non-implementation" sub-paragraph on `health_probe` write) + SA-F11 (NEW "No `/metrics` endpoint" cost bullet).
+- `phase-6-design-memo.md` — SA2-F9 (§Q7 slice-8 amendment).
+- `phase-9-design-memo.md` — SA2-F8 (§M slice-8 amendment).
+- `docs/architecture/README.md` — index extended.
+
+**NEW ADRs (3):**
+- `ADR-0012` MediaMTX dev-sidecar (SA-F6) — locks `start.py` spawn model + `/internal/mtx/*` webhook contract + "MUST NOT be promoted to production" gate.
+- `ADR-0013` Audit event vocabulary (SA-F7) — snake_case + `<noun>_<past-tense verb>` + outcome-in-data rule + complete catalogue of all 24 production event_types grouped by ADR-0007 scope bucket.
+- `ADR-0014` SPA URL cap + traversal-guarding (SA-F9) — 4-guard sequence (API-prefix shadow / codepoint 1024 / byte 2048 / resolve+containment) with fallthrough-vs-404 reasoning per guard; pins v1.1.3 outage shape + FG2-C3 multi-byte bypass as the "do not remove" reasons.
+
+**Burndown deltas post-slice-9:**
+- Original (`hex-audit-2026-05-18.md`): 66 [x] / 22 [ ] / 24 deferred (was 56/32/24 at slice 8.5 close).
+- Re-audit (`hex-audit-2026-05-19.md`): 25 [x] / 5 [ ] / 3 deferred (was 13/17/3 at slice 8.5 close).
+- Combined: **~91/100 findings closed (~91%)**. Remaining open are ALL slice-10 (Medium pile) + analyzed-not-fixed BA2-F1.
+
+### Cold-resume tail for slice 10 (Phase 6 closeout)
+
+- Slice 10 = Medium cleanup pile, ~20 items: BA-F9/F13/F15/F19 + FG-F16 + FG2-H2/H4/M2/M5/L2 + UX-F10/F11/F12/F14 + UI-F8/F14 + SA-F14 + CR-F8-F12 + BA2-F5/FG3-F5 STRONG (wipe O(N)) + BA2-F8 + FG3-F9 + FG3-F10 + CR2-Re-F4 + 5 slice-6 deferrals.
+- Mix of frontend + backend + tests. STRONG #3 (`_wipe_per_session_credentials` O(N) write-lock) is the highest-impact item — proposed fix is `MAX_PER_SESSION_TARGETS=10` Pydantic ceiling at target-create OR chunk merged txn.
+- **Rule №4 reviewer IS required** (slice 10 touches code). Phase table is unchanged.
+- After slice 10 closes, hex-audit burndown is fully drained. Phase 6 complete. No more slices in the named workflow.
+
+**No /compact between slice 9 and slice 10 is required** — the user may choose to compact or continue depending on remaining context budget. The cold-resume signal above is sufficient either way.
+
+### Slice 10 CLOSED (2026-05-19) — Medium cleanup pile — HEX-AUDIT TERMINAL STATE
+
+Final slice of the named workflow. Closed ~27 findings across backend (12), tests + dev launcher (3), domain feature gate (1), frontend (11), type-cleanup (1) — plus the Rule №4 reviewer pass found 0 Critical / 2 Important (one fixed in-slice, one accepted as matching existing pattern) / 1 nice-to-have.
+
+**Backend hardening (12):**
+- **FG-F16** supervisor_tasks shutdown leak — explicit cancel-then-await pattern; `list(pending)` snapshot avoids done-callback mutation race
+- **BA-F9** EventBus `dropped_recent` rolling 60s window (`_drop_timestamps: deque[float]` + lazy prune on read); `dropped_total` retained as lifetime counter
+- **BA-F13** reset_target_worker reprompt-protected — new `RepromptScope.RESET_TARGET_WORKER` + scope-validated `consume()` + frontend `useAuthReprompt("reset_target_worker")` wiring + new `bodyResetTargetWorker` copy
+- **BA-F15** `_log_ring.clear()` at start of every `_run_one_spawn` — slide-out shows current process's stderr only
+- **BA-F19** `MAX_SESSION_COOKIE_VALUE_LENGTH=256` cap in `sessions.py` + early-reject in `deps.py` (cookie-auth) AND `ws.py` (handshake) — multi-MB cookie no longer burns HMAC cycles
+- **FG2-H2** `MAX_LIFETIME_SPAWN_ATTEMPTS=1000` absolute spawn cap — `_apply_reconnect_verdict` forces OPEN past cap; `user_reset()` is a no-op past cap (escape requires worker rebuild via toggle off+on)
+- **FG2-H4** `_pending_notifies` watchdog — `_notify_with_watchdog()` wraps `bus.notify()` in 5s timeout; legitimate notify is sub-ms, so the timeout catches a wedged drainer without strong-ref-leaking dead tasks
+- **FG2-M2** host_stats pid-reuse — `ProcStatReader` extended to return 4-tuple `(utime, stime, starttime, rss)`; `_last_samples` keyed by `(pid, starttime)`; `_pid_starttimes` map enables explicit invalidation
+- **BA2-F5/FG3-F5 STRONG #3** wipe O(N) — `_WIPE_BATCH_SIZE=5` chunked txn pattern; write-lock per batch ≈ 10 statement turnarounds (well under `busy_timeout=5000ms`); per-target atomicity preserved within a batch
+- **BA2-F8** busy-warning fields trim — `_run_wal_checkpoint` signature simplified to `(reason: str)`; removed misleading `audit_event_type`/`audit_id` fields
+- **FG3-F9** boot-time idle checkpoint — retention loop runs one `_audit_log_retention_once(...)` tick on entry BEFORE first sleep; bounds the restart-heavy deployment case where 6h cadence never fires
+- **FG3-F10** supervisor `_audit` IntegrityError fallback — degrades to `target_id=None` + `data["target_id"]` + `data["fk_race"]=True` (mirrors `target_deleted` shape); outer `except Exception:` prevents fallback recursion
+
+**Test hygiene + dev launcher (3):**
+- **CR-F8** investigation: audit's "consumes 1" claim was empirically wrong; pool stayed at 2 FakeProcess with new explanatory comment (marked `[-]` analyzed-not-fixed in burndown)
+- **CR-F9** `_unquote_env_value()` matching-pair quote stripping (`"foo"` → `foo`); pre-slice-10 `.strip('"').strip("'")` was greedy on both ends
+- **CR-F11** `MEDIAMTX_EXE_SHA256` pinned in source; first-download and every-launch re-verify both consult the constant; side-car `dev/mediamtx.exe.sha256` no longer written/read (TOCTOU surface removed)
+
+**Domain feature gate (1):**
+- **SA-F14** new `youtube_backup_enabled: bool = False` config knob; threaded through `target_dto_to_domain(..., youtube_backup_enabled=)` and `Supervisor.__init__`. The per-target `backup_enabled` JSON flag is now ignored unless BOTH the row flag AND `RESTREAM_YOUTUBE_BACKUP_ENABLED=true` are set. Half-baked status is explicit + runtime-enforced.
+
+**Frontend (11):**
+- **FG2-M5** StatusStream attempt counter saturates at 30 (`2^30 ms ≫ RECONNECT_CAP_MS`)
+- **FG2-L2** `crypto.randomUUID()` instead of `Math.random()` in `makeEvent`
+- **UX-F10** AuthLayout DOM order — `<main>` before ThemeToggle (Tab lands on password)
+- **UX-F11** SettingsSidebar mobile horizontal scroll-strip — `md:contents`/`max-md:overflow-x-auto` wrapper + `md:sticky` toggle on `<aside>`; no new drawer/Radix-menu surface
+- **UX-F12** `gap-(--space-4)` token in EmptyState
+- **UX-F14** Skeleton.Tile `h-24` (was `h-32`) — matches TargetTile actual height within 4-6px
+- **UI-F8** Sparkline empty-state dashed mid-line placeholder
+- **UI-F14** hero step circles `h-8 w-8` + `text-sm` (was `h-6` + `text-2xs`)
+- **CR-F10** Dashboard EmptyState dynamic CTA link — `/settings/targets/${targets[0].type}` when targets exist; `/settings/targets` otherwise
+- **CR-F12** PersistentTargetTab `saveError` state + Banner — pre-slice-10 catch was a silent swallow
+- **Radix RecentEventsMenu migration** — Radix Popover replaces hand-rolled disclosure; bundle: `+@radix-ui/react-popover` to manualChunks "radix" chunk
+
+**Type cleanup (1):**
+- **CR2-Re-F4** `_AsyncSessionmaker = async_sessionmaker[AsyncSession]` alias under `if TYPE_CHECKING:` in `main.py`; 6 `# type: ignore[arg-type|operator]` removed across all 5 background loops + `_read_ingest_key_now`; zero runtime cost.
+
+**Rule №4 reviewer pass (slice 10):** Agent `a9a96d2a32450d08a` returned 0 Critical / 2 Important / 1 nice-to-have.
+- **IMP-2** fixed in-slice: `TargetDetails.tsx` reprompt-cancel guard uses `err instanceof ApiError` (matches 6 other call sites) instead of `err instanceof Error`.
+- **IMP-1** accepted: `reset_target_worker` uses inline reprompt check matching the existing `clear_credential` pattern in `targets.py` — divergence from the alternative `require_reprompt_grant()` factory is a pre-existing convention, not introduced by slice 10.
+- **LOW-2 / LOW-1** accepted as analysis-only.
+
+**Gates at slice 10 close:**
+- backend mypy: **72/72** unchanged
+- backend pytest: **785/785** (was 783; +2 new SA-F14 test variants for `test_backup_enabled_true_with_config_gate_open` + `test_backup_enabled_true_but_config_gate_closed_yields_false`)
+- frontend typecheck + lint clean; **37 vitest** passing; build **232 KB** gzipped (within 256 KB budget)
+
+**Burndown final state:**
+- Original (`hex-audit-2026-05-18.md`): **87 [x] / 0 [ ]** — fully drained.
+- Re-audit (`hex-audit-2026-05-19.md`): **31 [x] / 0 [ ]** — fully drained.
+- **HEX-AUDIT BURNDOWN TERMINAL STATE.** All 6 phases complete. The named workflow has reached its end-state; future regressions warrant a NEW hex-audit run (dated file referencing this baseline).
+
+### Post-slice-10 — what's next
+
+The hex-audit project is **DONE**. No more slices in the named workflow. Future work on Restream_Plus shifts to:
+- **Operator USER actions (unchanged):** orphan GHCR cleanup, deprecation labels on `:v1.0.0`-`:v1.1.2`, GHCR retention UI, Kick browser smoke-check, real-RTMP step 12b, announce v1.1.3 (still LIVE), CHANGE leaked admin password `<REDACTED — see local memory/project-restream-plus.md>`, ROTATE leaked ingest key `<REDACTED — see local memory/project-restream-plus.md>`.
+- **v1.1.4 release prep** (optional): the slice-8 + slice-8.5 + slice-9 + slice-10 cumulative diff is substantial (~30 new tests, 3 new ADRs, transactional audit-log refactor, retention loop hardening, reprompt-protected reset). When the operator authorizes the next image build, this is the version bump.
+- **Phase 13 multi-track ingest:** still deferred per ADR-0003 §"Open questions" — re-open ONLY when OBS Custom Service supports `multitrack_video_configuration_url` AND ffmpeg mainline merges BtbN's `enhanced-flv` branch.
+- **Future hex-audit:** if a future feature lands that introduces ≥40 new sites or a security-critical refactor, run a fresh hex-audit (Rule №6 makes the footgun-hunter mandatory). Create a new `docs/audit/hex-audit-YYYY-MM-DD.md` referencing both 2026-05-18 and 2026-05-19 as priors.
 

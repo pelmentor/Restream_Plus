@@ -350,6 +350,12 @@ class TestRedactionPropagates:
         self,
         fresh_credential_registry: None,
     ) -> None:
+        # Hex Audit BA-F15 (slice 10): `_log_ring` is cleared at the
+        # start of each `_run_one_spawn`, so a flapping target's
+        # post-reconnect ring shows the current process's stderr only.
+        # This test must therefore inspect the ring BEFORE the
+        # lifecycle loop respawns — feed stderr, sleep briefly for the
+        # pump to ingest it, snapshot the ring, THEN trigger exit.
         proc = FakeProcess()
         spawner = FakeProcessSpawner([proc])
         worker = FFmpegWorker(
@@ -362,12 +368,13 @@ class TestRedactionPropagates:
         await worker.start()
         await asyncio.sleep(0.05)
         proc.feed_stderr(b"error pushing to rtmp://live.twitch.tv/app/secret_key_12345\n")
-        proc.trigger_exit(rc=0)
         await asyncio.sleep(0.1)
 
         ring = worker.recent_log_lines()
         assert any(b"***REDACTED***" in line for line in ring), ring
         assert all(b"secret_key_12345" not in line for line in ring), ring
+
+        proc.trigger_exit(rc=0)
         await worker.stop(grace=timedelta(seconds=1))
 
 

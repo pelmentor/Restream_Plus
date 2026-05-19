@@ -235,10 +235,8 @@ async def test_clear_credential_with_grant_idempotent(
 
 
 @pytest.mark.asyncio
-async def test_reset_worker_calls_supervisor(
-    auth_client: httpx.AsyncClient,
-    fake_supervisor: FakeSupervisor,
-) -> None:
+async def test_reset_worker_requires_reprompt(auth_client: httpx.AsyncClient) -> None:
+    """Hex Audit BA-F13 (slice 10): no grant → 403 reprompt_required."""
     created = await auth_client.post(
         "/api/targets",
         json={"type": "twitch", "label": "x", "url": "rtmp://x"},
@@ -246,6 +244,28 @@ async def test_reset_worker_calls_supervisor(
     target_id = created.json()["id"]
     r = await auth_client.post(
         f"/api/targets/{target_id}/reset-worker?role=primary",
+    )
+    assert r.status_code == 403
+    assert r.json()["detail"] == "reprompt_required"
+
+
+@pytest.mark.asyncio
+async def test_reset_worker_calls_supervisor(
+    auth_client: httpx.AsyncClient,
+    fake_supervisor: FakeSupervisor,
+) -> None:
+    # Hex Audit BA-F13 (slice 10): the reset-worker endpoint is
+    # reprompt-protected. Tests that exercise the happy path must
+    # issue a `reset_target_worker`-scoped grant first.
+    created = await auth_client.post(
+        "/api/targets",
+        json={"type": "twitch", "label": "x", "url": "rtmp://x"},
+    )
+    target_id = created.json()["id"]
+    grant = await _issue_grant(auth_client, "reset_target_worker")
+    r = await auth_client.post(
+        f"/api/targets/{target_id}/reset-worker?role=primary",
+        headers={"X-Reprompt-Grant": grant},
     )
     assert r.status_code == 204
     assert any(

@@ -61,3 +61,23 @@ class IllegalWorkerStateTransitionError(IllegalStateTransitionError):
         )
         self.state = state
         self.action = action
+
+
+class RunBlockedByRotationError(Exception):
+    """`start_run` refused because a passphrase rotation is in flight.
+
+    Distinct from `IllegalRunStateTransitionError` so the supervisor-task
+    exception funnel (`_log_supervisor_task_exception` in `app/api/run.py`)
+    can log at info-level rather than error-level: rotation contention
+    is an expected outcome, not a bug. The REST handler maps this to
+    `RUN_ACTIVE` (HTTP 409) via the same code path it uses for the
+    advisory pre-check; the supervisor side IS the authoritative check
+    (run.py advisory check has a TOCTOU window with rotate-passphrase).
+
+    Hex Audit FG2-H3 (2026-05-18): the lock-ordering rule is now
+    `supervisor._lock` BEFORE `state.rotation_lock`. The supervisor
+    acquires rotation_lock under its own lock; rotate-passphrase
+    acquires supervisor._lock first (via `acquire_state_lock()`) to
+    check run-state, then grabs rotation_lock. Either ordering refuses
+    the other cleanly.
+    """

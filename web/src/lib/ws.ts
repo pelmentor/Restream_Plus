@@ -155,7 +155,16 @@ export class StatusStream {
         return;
       }
       const delay = Math.min(RECONNECT_BASE_MS * Math.pow(2, this.attempt), RECONNECT_CAP_MS);
-      this.attempt += 1;
+      // Hex Audit FG2-M5 (slice 10): cap the attempt counter at a
+      // saturation point so a panel left open for weeks under a
+      // permanently-unreachable backend doesn't drift toward
+      // `Number.MAX_SAFE_INTEGER`. Math.pow(2, large_int) is already
+      // clamped at RECONNECT_CAP_MS, so freezing the counter after it
+      // exceeds the saturation point loses no information.
+      const ATTEMPT_SATURATION = 30; // 2^30 ms ≫ RECONNECT_CAP_MS
+      if (this.attempt < ATTEMPT_SATURATION) {
+        this.attempt += 1;
+      }
       this.setStatus("reconnecting");
       this.reconnectTimer = window.setTimeout(() => {
         this.reconnectTimer = null;

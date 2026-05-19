@@ -8,7 +8,6 @@ type State = "idle" | "copying" | "copied" | "failed";
 
 export interface CopyToClipboardProps {
   readonly value: string;
-  readonly variant?: "inline" | "standalone";
   readonly label?: string;
 }
 
@@ -23,7 +22,7 @@ export interface CopyToClipboardProps {
  * exception to "page-scoped only" (phase-9-design-memo §E note 1.iv).
  */
 export function CopyToClipboard(props: CopyToClipboardProps): ReactNode {
-  const { value, variant = "inline", label } = props;
+  const { value, label } = props;
   const [state, setState] = useState<State>("idle");
   const [announcement, setAnnouncement] = useState("");
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -89,7 +88,11 @@ export function CopyToClipboard(props: CopyToClipboardProps): ReactNode {
         className={cn(
           "inline-flex items-center gap-(--space-1) rounded-(--radius-md)",
           "px-(--space-2) text-(length:--text-xs)",
-          variant === "standalone" ? "h-9" : "h-8",
+          // Slice-5: both variants land on control-md per UX-architect
+          // "drift sites = control-md by default" rule. Pre-slice-5 the
+          // inline variant was h-8 (32px) which sat between control-sm
+          // and control-md inconsistently.
+          "h-(--size-control-md)",
           "hover:bg-(--color-bg-elevated)",
           color,
         )}

@@ -22,7 +22,6 @@ shared with login. 3/IP/15min per ADR-0010.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Annotated, Final
@@ -38,6 +37,7 @@ from fastapi import (
     Response,
     status,
 )
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.api.deps import SettingsDep
@@ -92,6 +92,18 @@ stolen reprompt grant could distinguish "wrong current password" from
 "correct" via timing — collapsing the reprompt's defence-in-depth.
 Per Phase 6 security review H-5. The 300 ms ceiling is generous
 relative to Argon2's natural latency."""
+
+REPROMPT_TIMING_FLOOR_SECONDS: Final[float] = 0.30
+"""Slice 7 / Hex Audit BA-F3: wall-clock floor on `issue_reprompt_grant`
+so the wrong-password path and the success path are indistinguishable
+by timing.
+
+Both paths execute Argon2 verify (~100 ms). The success path also
+calls `RepromptStore.issue` (~0 ms in-memory) before returning; the
+failure path returns after verify. The natural delta is sub-millisecond
+but a 300 ms floor erases any residual signal. Reused value (mirrors
+`CHANGE_PASSWORD_TIMING_FLOOR_SECONDS`) so future Argon2 cost changes
+update both knobs together."""
 
 
 # ----------------------------------------------------------------------
@@ -166,12 +178,16 @@ async def _rehash_admin_password(
     """
     try:
         new_hash = await asyncio.to_thread(hash_password, plaintext)
+        # Hex Audit BA-F4 (slice 8): rehash + audit in ONE txn so a
+        # mid-write failure rolls back both. Background-task fire-and-
+        # forget posture is preserved (the outer except still swallows
+        # the failure into a structured-log line — no client to fail
+        # toward).
         async with sessionmaker() as session, session.begin():
             users = UsersRepository(session)
             await users.update_password_hash(user_id, new_hash)
-        with contextlib.suppress(Exception):
             audit = AuditLogRepository(sessionmaker)
-            await audit.append(event_type="password_rehashed", actor="system")
+            await audit.append(session, event_type="password_rehashed", actor="system")
     except Exception:
         _logger.exception("password_rehash_failed", user_id=user_id)
 
@@ -281,16 +297,51 @@ async def change_password(
         users = UsersRepository(session)
         await users.update_password_hash(auth.user.id, new_hash)
         await session_service.revoke_all_for_user(auth.user.id)
-        # Commit the request write BEFORE the audit so its own session
-        # doesn't deadlock on the SQLite write lock.
-        await session.commit()
+        # Hex Audit BA-F4 (slice 8): audit in the business txn. The
+        # prior "commit BEFORE audit to avoid SQLite write-lock
+        # deadlock" pattern documented the BA-F4 bug — two writers
+        # against a single-writer DB. ONE writer now: append to the
+        # same session, commit once.
+        #
+        # Slice 8.5 (Hex Audit FG3-F7): a `SQLAlchemyError` from the
+        # audit-append OR the commit rolls back the password update.
+        # Under a generic 500 path the client sees an opaque error
+        # with the normal timing floor — INDISTINGUISHABLE from a
+        # successful change in client-side behavior. Distinguish it
+        # via `PASSWORD_CHANGE_RETRY` + 503 + `Retry-After` so the SPA
+        # can render "Try again in a moment" rather than "Something
+        # went wrong" while leaving the existing session valid.
+        audit = AuditLogRepository(state.sessionmaker)
+        try:
+            await audit.append(session, event_type="password_changed", actor=auth.user.username)
+            await session.commit()
+        except (SQLAlchemyError, OSError, TimeoutError) as exc:
+            # Slice 8.5 reviewer-pass note: `SQLAlchemyError` alone is
+            # too narrow — `session.commit()` can also surface
+            # `OSError` on disk-full / fs-level WAL failures, and
+            # `TimeoutError` on async-driver wait-timeouts. The merged
+            # BA-F4 txn already guarantees ATOMICITY (no password-
+            # changed + 503 split is possible — `commit()` failure
+            # rolls back BOTH writes); this widening only improves UX
+            # disambiguation so the SPA gets the same distinguishable
+            # 503 across all transient persist failures.
+            _logger.critical(
+                "password_change_persist_failed",
+                exc_type=type(exc).__name__,
+                user_id=auth.user.id,
+                note=(
+                    "audit-append or commit failed; password update "
+                    "rolled back. Client receives 503 + Retry-After."
+                ),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=ErrorCode.PASSWORD_CHANGE_RETRY.value,
+                headers={"Retry-After": "5"},
+            ) from exc
 
         response.delete_cookie(**build_cookie_delete_kwargs(secure=settings.cookie_secure))  # type: ignore[arg-type]
         response.status_code = status.HTTP_204_NO_CONTENT
-
-        with contextlib.suppress(Exception):
-            audit = AuditLogRepository(state.sessionmaker)
-            await audit.append(event_type="password_changed", actor=auth.user.username)
         return response
     finally:
         elapsed = time.perf_counter() - start
@@ -316,6 +367,7 @@ async def issue_reprompt_grant(
     body: RepromptIssueRequest,
     auth: AuthenticatedRequestDep,
     state: AuthStateDep,
+    client_ip: ClientIpDep,
 ) -> RepromptGrantResponse:
     """Mint a single-use 60-second grant for a sensitive operation.
 
@@ -323,26 +375,67 @@ async def issue_reprompt_grant(
     success we issue a scope-bound grant id that the destructive
     handler will consume via `X-Reprompt-Grant`.
 
-    Failure modes collapse to a single 401 — wrong password or locked
-    account return the same body so a probe can't distinguish them.
-    (`password_hash` is non-optional since SCHEMA_VERSION=2, so the
-    historical "missing hash" failure mode is no longer constructible.)
+    Failure modes collapse to a single 401 — wrong password, rate-
+    limited probing, or locked account return the same body so a probe
+    can't distinguish them. Rate-limited responses additionally carry
+    a `Retry-After` header so the SPA can render a backoff countdown
+    (the header surfaces the same information the SPA would otherwise
+    infer from sustained latency anyway). (`password_hash` is
+    non-optional since SCHEMA_VERSION=2, so the historical "missing
+    hash" failure mode is no longer constructible.)
+
+    Slice 7 / Hex Audit BA-F3: rate-limited by
+    `state.reprompt_rate_limiter` (3 attempts per IP+username per
+    15 min — tighter than login's 5, since legitimate humans only trip
+    this on a typed-wrong-password during a destructive op). Wrapped
+    in a constant-time floor (`REPROMPT_TIMING_FLOOR_SECONDS`) so the
+    wrong-password and right-password paths are indistinguishable to
+    a stolen-cookie attacker probing from inside the session.
     """
     scope = _scope_or_400(body.scope)
-    verify_result = await asyncio.to_thread(
-        verify_password,
-        auth.user.password_hash.get_secret_value(),
-        body.password,
-    )
-    if not verify_result.ok:
-        raise http_exception(ErrorCode.INVALID_CREDENTIALS, status.HTTP_401_UNAUTHORIZED)
-    grant_id = state.reprompts.issue(user_id=auth.user.id, scope=scope)
-    # Approximate expiry as `now + TTL`; the store keys lifetime on
-    # monotonic-clock issuance, so this is the wall-clock equivalent.
-    return RepromptGrantResponse(
-        grant_id=grant_id,
-        expires_at=datetime.now(tz=UTC) + timedelta(seconds=REPROMPT_GRANT_TTL_SECONDS),
-    )
+    username = auth.user.username
+
+    # Step 1: rate-limit gate, BEFORE Argon2. A denied attempt spends
+    # no server CPU and the response is shaped identically to a wrong-
+    # password failure (same 401 detail), differing only in the
+    # Retry-After header the SPA needs to render a backoff timer.
+    decision = state.reprompt_rate_limiter.check(ip=client_ip, username=username)
+    if not decision.allowed:
+        _logger.info(
+            "reprompt_rate_limited",
+            ip=client_ip,
+            user_id=auth.user.id,
+            scope=scope.value,
+            retry_after_seconds=decision.retry_after_seconds,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=ErrorCode.RATE_LIMITED.value,
+            headers={"Retry-After": str(decision.retry_after_seconds)},
+        )
+
+    start = time.perf_counter()
+    try:
+        verify_result = await asyncio.to_thread(
+            verify_password,
+            auth.user.password_hash.get_secret_value(),
+            body.password,
+        )
+        if not verify_result.ok:
+            state.reprompt_rate_limiter.record_failure(ip=client_ip, username=username)
+            raise http_exception(ErrorCode.INVALID_CREDENTIALS, status.HTTP_401_UNAUTHORIZED)
+        grant_id = state.reprompts.issue(user_id=auth.user.id, scope=scope)
+        # Approximate expiry as `now + TTL`; the store keys lifetime on
+        # monotonic-clock issuance, so this is the wall-clock equivalent.
+        return RepromptGrantResponse(
+            grant_id=grant_id,
+            expires_at=datetime.now(tz=UTC) + timedelta(seconds=REPROMPT_GRANT_TTL_SECONDS),
+        )
+    finally:
+        elapsed = time.perf_counter() - start
+        remaining = REPROMPT_TIMING_FLOOR_SECONDS - elapsed
+        if remaining > 0:
+            await asyncio.sleep(remaining)
 
 
 # ----------------------------------------------------------------------

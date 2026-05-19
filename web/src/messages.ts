@@ -127,8 +127,12 @@ const messages = {
 
   dashboard: {
     emptyTitle: "Add a target to get started",
-    emptyBody: "Enable at least one platform to enable START.",
+    emptyBody: "You haven't configured any targets yet. Add one to enable START.",
     emptyCta: "Open targets",
+    disabledTitle: "Enable a target to get started",
+    disabledBody:
+      "You have configured targets, but none are enabled. Enable at least one to enable START.",
+    disabledCta: "Open targets",
     targetsHeading: "Targets",
     reconnectingTitle: "Reconnecting to control plane…",
     staleRunState:
@@ -168,10 +172,16 @@ const messages = {
     sparklineAria: "Aggregate egress over the last 60 seconds",
     unitMbps: "Mbps",
     unitPct: "%",
+    // Slice-6 UX-F7 mobile-first: <sm collapses to a single CPU chip
+    // with a synthesized aria-label exposing both signals. CPU is the
+    // emergency-recovery signal the operator can't infer from their
+    // OBS config; egress they already know.
+    compactAria: "Live stats — CPU {cpu}%, Egress {egress} Mbps",
   },
 
   targetDetails: {
     close: "Close details",
+    description: "Target details, metrics, and recent worker activity.",
     sparklineAria: "Bitrate over the last 5 minutes",
     sparklineEmptyAria: "No samples yet.",
     chartUnavailable: "Chart unavailable.",
@@ -290,6 +300,21 @@ const messages = {
     logoutAllConfirmBody:
       "You will need to sign in again on each device. This includes this browser.",
     logoutAllPhrase: "log out",
+    // Slice-6 UX-F2: extracted from inline error strings in SecurityTab.
+    passwordsDiffer: "Passwords differ.",
+    passphrasesDiffer: "Passphrases differ.",
+    samePassphrase: "Same as old.",
+    runActiveBlocksRotate:
+      "Stop the active stream before rotating the master passphrase.",
+    apiTokenAriaLabel: "API token",
+    unknownDevice: "Unknown device",
+  },
+
+  formField: {
+    // Slice-6 UX-F1: announced after the visible "*" asterisk by
+    // screen readers (asterisk alone is unreliably announced across
+    // engines). Leading space matters — concatenated after the label.
+    requiredSuffix: "(required)",
   },
 
   sessionsTab: {
@@ -332,6 +357,11 @@ const messages = {
     urlPresetLabel: "Endpoint",
     urlCustom: "Custom URL…",
     urlCustomInput: "URL",
+    createTarget: "Create target",
+    saveError: "Save failed. Try again or check the panel logs.",
+    missingKeyTitle: "No stream key yet",
+    missingKeyBody:
+      "This target is enabled but has no stream key. It will be skipped on START until you add one below.",
     streamKeySection: "Stream key",
     streamKeyEmpty: "Not configured",
     showKeyOnce: "Show key once",
@@ -356,6 +386,8 @@ const messages = {
     customEditTitle: "Edit custom target",
     customNewTitle: "Add custom target",
     customListEmptyCta: "Add custom target",
+    // Slice-6 UX-F2: extracted from inline `?? "Custom target"` fallback.
+    customDefaultLabel: "Custom target",
   },
 
   secret: {
@@ -415,6 +447,8 @@ const messages = {
     bodyRevokeApiToken: "You're about to revoke this API token.",
     bodyClearCredential:
       "You're about to clear the stream key for this target.",
+    bodyResetTargetWorker:
+      "You're about to reset this target's circuit breaker and retry now. Excessive resets can earn you a rate-limit ban from the platform.",
     passwordLabel: "Password",
     cancel: "Cancel",
     confirm: "Confirm",

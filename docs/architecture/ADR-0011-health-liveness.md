@@ -52,8 +52,7 @@ server itself is wedged.
 
 Returns 200 only when **all** of the following hold:
 
-- DB read+write health check: `SELECT 1` succeeds and a write to a
-  dedicated `health_probe` row succeeds within 100 ms.
+- DB read health check: `SELECT 1` succeeds within 100 ms.
 - Schema version matches expected (per ADR-0007).
 - nginx-rtmp loopback reachable: TCP connect to `127.0.0.1:1935`
   succeeds within 50 ms (a cached result is returned for the last 2 s
@@ -61,6 +60,40 @@ Returns 200 only when **all** of the following hold:
 - Supervisor heartbeat: a `monotonic_ns` value updated by the
   supervisor task each tick is within `STALL_TIMEOUT * 2` of `time.monotonic_ns()`.
 - Passphrase is loaded (i.e., we are not in ADR-0010 paste-mode-locked).
+
+**`health_probe` write canary — intentional non-implementation (slice 9
+— SA-F2 ADR closure).** An earlier draft of this ADR included a
+"write to a dedicated `health_probe` row" step. The implemented
+`/readyz` handler deliberately does NOT perform that write, for three
+reasons:
+
+1. **`/readyz` is unauthenticated and exempted from the rate limiter.**
+   A reverse proxy + a friendly LB will hammer this endpoint at 1 Hz
+   indefinitely. Each call writing to the DB would mean one row
+   churn per second, forever, just for liveness — competing with the
+   real audit-log writes for WAL contention without telling us
+   anything new (WAL contention manifests in the same audit-write
+   path the canary is "guarding").
+2. **The supervisor heartbeat check above already covers the
+   "DB writes are progressing" case indirectly.** The supervisor
+   updates an in-process `monotonic_ns` value each tick; that value
+   stalling means the supervisor task is wedged, which is what a
+   write-canary would be trying to detect. The cheaper in-process
+   atomic does the job without touching the DB.
+3. **The audit log itself is the canary.** Slice 8's transactional
+   refactor (ADR-0007 §"Audit-log durability and transactional
+   shape") makes audit writes part of every business-state mutation.
+   A degraded DB surfaces as 500/503 from the request path AND as
+   the `audit_log_retention_stuck` critical log AND as the
+   `audit_log_retention_tick` heartbeat ceasing — three signals an
+   operator can correlate, none of which need a synthetic canary
+   row.
+
+The `/readyz` write check is therefore a *non-implementation*: the
+ADR-text intent was "verify the DB can write", the implementation
+intent is "verify it via the writes we already do, not via a
+synthetic probe that adds load without signal". Future-maintainer
+trap closed by naming it here.
 
 Non-200 case returns 503 with a structured body:
 
@@ -117,6 +150,21 @@ no extra logic; it serves the same handler.
   `atomic_int64` per task group, updated each iteration.
 - Three endpoints to keep aligned. The shared `HealthReport` struct
   prevents drift.
+- **No `/metrics` endpoint (slice 9 — SA-F11 ADR closure).** The
+  appliance ships without Prometheus scrape support. Operators who
+  want Grafana dashboards have to glue a translator: either subscribe
+  a small daemon to the WebSocket `host.stats` envelope and expose a
+  derived `/metrics` outside the container, or move to a sidecar
+  exporter that polls `/api/about` + the host's `/proc/<pid>/stat`.
+  Neither is shipped. The cost is: no out-of-the-box Prometheus, no
+  histogram views of request latency, no time-series of breaker
+  state. We accept this because (a) the dashboard already shows
+  CPU% + aggregate Mbps live, (b) `/readyz`'s per-check payload is
+  the structured signal a probe needs, and (c) adding `/metrics`
+  forces an auth-posture decision (cookie won't work for Prometheus;
+  bearer token means a new ADR) and an `EventBus` fan-in layer (see
+  ADR-0003 §"Open questions"). Both are deferred until a Grafana
+  wiring is concrete, not speculative.
 
 **Rejected alternatives:**
 

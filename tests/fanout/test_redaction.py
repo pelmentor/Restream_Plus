@@ -16,7 +16,9 @@ import string
 
 import pytest
 from app.fanout.redaction import (
+    MAX_BUF_LEN,
     MAX_LINE_LEN,
+    MAX_WORKER_URL_LEN,
     REDACTION_PLACEHOLDER,
     RedactionSink,
 )
@@ -248,3 +250,98 @@ class TestProperty:
         out += b"".join(sink.feed(payload[midpoint:]))
         out += b"".join(sink.flush())
         assert key.encode() not in out
+
+
+# --- Slice 7 / Hex Audit BA-F8 + FG2-M4 ----------------------------------------
+
+
+class TestQueryStringRedaction:
+    """The path-only regex misses keys surfaced as query-string params
+    (`?streamKey=...` / `?auth_key=...`). The query regex closes that
+    bypass (Hex Audit BA-F8, slice 7)."""
+
+    def test_question_mark_key_param(self) -> None:
+        sink = RedactionSink(worker_url="rtmp://example/app/dummy12345")
+        out = b"".join(sink.feed(b"ffmpeg https://x?streamKey=AbCdEfGh12345 done\n"))
+        assert b"AbCdEfGh12345" not in out
+        assert REDACTION_PLACEHOLDER in out
+
+    def test_ampersand_key_param(self) -> None:
+        sink = RedactionSink(worker_url="rtmp://example/app/dummy12345")
+        out = b"".join(sink.feed(b"url https://x?other=v&auth_key=SecretSecret123 ok\n"))
+        assert b"SecretSecret123" not in out
+
+    def test_capitalised_key_param(self) -> None:
+        """The query regex is case-insensitive on the param name."""
+        sink = RedactionSink(worker_url="rtmp://example/app/dummy12345")
+        out = b"".join(sink.feed(b"x?STREAMKEY=PrivateKey123456 plus tail\n"))
+        assert b"PrivateKey123456" not in out
+
+    def test_short_value_not_redacted(self) -> None:
+        """The 8-char minimum on the value avoids redacting innocuous
+        short parameters."""
+        sink = RedactionSink(worker_url="rtmp://example/app/dummy12345")
+        # `key=short` is below the 8-char value threshold.
+        out = b"".join(sink.feed(b"?streamKey=short tail\n"))
+        assert b"short" in out
+
+    def test_param_name_without_key_not_redacted(self) -> None:
+        """`?expires=12345678` looks like a session-expiry timestamp,
+        not a credential — the param name must literally contain
+        `key` (case-insensitive)."""
+        sink = RedactionSink(worker_url="rtmp://example/app/dummy12345")
+        out = b"".join(sink.feed(b"?expires=12345678 tail\n"))
+        assert b"12345678" in out
+
+
+class TestPathBoundaryTightening:
+    """Path regex now stops host/app at `?` and `#` so a trailing query
+    string can't extend the "app" capture past the URL boundary."""
+
+    def test_path_does_not_swallow_query_string(self) -> None:
+        sink = RedactionSink(worker_url="rtmp://example/app/dummy12345")
+        # The legitimate path key is `LiveKey1234567` (>=8 chars). The
+        # `?streamKey=...` is a separate param. Both should redact
+        # cleanly via their respective passes.
+        out = b"".join(sink.feed(b"url rtmp://h/app/LiveKey1234567?streamKey=OtherSecret9999 ok\n"))
+        assert b"LiveKey1234567" not in out
+        assert b"OtherSecret9999" not in out
+
+
+class TestWorkerUrlCap:
+    """FG2-M4: refuse an oversized `worker_url` at construction time so
+    the force-split lookahead can't be inflated."""
+
+    def test_max_length_url_accepted(self) -> None:
+        # Exactly at the cap is OK.
+        url = "rtmp://h/" + "a" * (MAX_WORKER_URL_LEN - len("rtmp://h/"))
+        assert len(url) == MAX_WORKER_URL_LEN
+        sink = RedactionSink(worker_url=url)
+        assert sink is not None
+
+    def test_one_byte_over_cap_rejected(self) -> None:
+        oversize = "rtmp://h/" + "a" * (MAX_WORKER_URL_LEN - len("rtmp://h/") + 1)
+        assert len(oversize) == MAX_WORKER_URL_LEN + 1
+        with pytest.raises(ValueError, match="worker_url must be at most"):
+            RedactionSink(worker_url=oversize)
+
+
+class TestBufCap:
+    """FG2-M4 second cap: a runaway producer emitting no newlines must
+    still be bounded. The buffer can never grow past MAX_BUF_LEN before
+    force-split fires."""
+
+    def test_no_newline_runaway_is_bounded(self) -> None:
+        sink = RedactionSink(worker_url="rtmp://host/app/dummykey12345")
+        # Feed 10x MAX_BUF_LEN bytes with no newline. The sink must
+        # emit chunks instead of growing _buf without bound.
+        payload = b"x" * (MAX_BUF_LEN * 10)
+        out_chunks: list[bytes] = []
+        out_chunks.extend(sink.feed(payload))
+        # At least one forced emission should have happened.
+        assert len(out_chunks) > 0
+        # The cumulative `_buf` size is bounded by MAX_LINE_LEN +
+        # url_len after each force-split; the URL is short so the
+        # ceiling is well under MAX_BUF_LEN * 2.
+        assert len(sink._buf) <= MAX_LINE_LEN + len("rtmp://host/app/dummykey12345")
+        out_chunks.extend(sink.flush())

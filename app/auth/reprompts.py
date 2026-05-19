@@ -37,6 +37,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final
@@ -53,6 +54,18 @@ prompt and click the destructive button."""
 REPROMPT_GRANT_ID_BYTES: Final[int] = 32
 """`secrets.token_urlsafe(32)` → 43 chars URL-safe. Grant IDs are
 opaque to the client and never reused."""
+
+MAX_TRACKED_GRANTS: Final[int] = 10_000
+"""Hex Audit footgun-hunter FG2-C4 (2026-05-18): hard cap on the
+`_grants` dict. Sibling of `LoginRateLimiter.MAX_TRACKED_BUCKETS` —
+an authenticated client bug (runaway useEffect, malicious script)
+that re-issues grants in a tight loop would otherwise grow the dict
+without bound between `prune_expired` ticks (30 s per Phase-6
+lifespan). FIFO eviction by insertion order via `OrderedDict.popitem(last=False)`:
+the oldest unconsumed grant is dropped when the cap is hit. 10 000
+× 43-byte grant IDs + RepromptGrant payload ≈ a few MB — comfortably
+above any legitimate operator's working set (one operator, one
+session, one or two reprompts pending at a time)."""
 
 
 class RepromptScope(StrEnum):
@@ -83,6 +96,15 @@ class RepromptScope(StrEnum):
     publishing inside the container, while a platform stream key
     enables publishing to the third-party platform under the
     operator's identity. Scope-separation per ADR-0005."""
+    RESET_TARGET_WORKER = "reset_target_worker"
+    """Hex Audit BA-F13 (slice 10): the per-target 'Retry now' endpoint
+    at `POST /api/targets/{target_id}/reset-worker` clears a FAILED_OPEN
+    breaker counter and re-enters the reconnect loop. Without a reprompt,
+    a stolen-cookie attacker can spam the reset on a flapping target,
+    defeating the circuit breaker's "no noisy neighbor" protection
+    (ADR-0003 §Reconnect policy) and earning the operator an IP-ban
+    from the target platform. Scope-bound so a reveal-stream-key grant
+    cannot be re-used as a reset grant."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,7 +134,11 @@ class RepromptStore:
 
     Periodic `prune_expired()` calls keep the dict from growing
     unboundedly under abandoned grants. The main app's lifespan task
-    schedules this in Phase 6; for tests, call it explicitly.
+    schedules this in Phase 6; for tests, call it explicitly. A
+    second defence — `MAX_TRACKED_GRANTS` FIFO eviction in `issue` —
+    closes the gap between prune ticks against an authenticated
+    client bug or malicious in-loop reprompt-issuer
+    (Hex Audit FG2-C4).
 
     Failure modes for `consume` collapse to a single False return —
     "wrong user" and "wrong scope" and "expired" are indistinguishable
@@ -124,12 +150,18 @@ class RepromptStore:
         *,
         ttl_seconds: float = REPROMPT_GRANT_TTL_SECONDS,
         clock: object = None,
+        max_grants: int = MAX_TRACKED_GRANTS,
     ) -> None:
         if ttl_seconds <= 0:
             raise ValueError("ttl_seconds must be > 0")
+        if max_grants <= 0:
+            raise ValueError("max_grants must be > 0")
         self._ttl = ttl_seconds
         self._clock = clock if callable(clock) else time.monotonic
-        self._grants: dict[str, RepromptGrant] = {}
+        self._max_grants = max_grants
+        # OrderedDict so the cap is enforced with cheap FIFO eviction
+        # (`popitem(last=False)` drops the oldest insertion).
+        self._grants: OrderedDict[str, RepromptGrant] = OrderedDict()
 
     def issue(self, *, user_id: str, scope: RepromptScope) -> str:
         """Mint a new grant. Returns the opaque grant ID."""
@@ -138,6 +170,13 @@ class RepromptStore:
         if not user_id:
             raise ValueError("user_id must be a non-empty string")
         grant_id = secrets.token_urlsafe(REPROMPT_GRANT_ID_BYTES)
+        # FG2-C4: evict the oldest entry BEFORE inserting so the dict
+        # size invariant holds at all observation points. A legitimate
+        # operator never hits this cap (one human, max ~2 grants in
+        # flight); the cap is purely a defence against runaway issuers
+        # in the 30 s window between `prune_expired` ticks.
+        if len(self._grants) >= self._max_grants:
+            self._grants.popitem(last=False)
         self._grants[grant_id] = RepromptGrant(
             user_id=user_id, scope=scope, issued_at=self._clock()
         )
@@ -191,6 +230,7 @@ class RepromptStore:
 
 
 __all__ = [
+    "MAX_TRACKED_GRANTS",
     "REPROMPT_GRANT_ID_BYTES",
     "REPROMPT_GRANT_TTL_SECONDS",
     "RepromptScope",

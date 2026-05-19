@@ -34,7 +34,7 @@ export function RequireAuth({ children }: { children: ReactNode }): ReactNode {
   if (isPending) {
     return (
       <div className="min-h-screen grid place-items-center p-(--space-4)">
-        <div className="w-full max-w-[400px] space-y-4">
+        <div className="w-full max-w-(--width-dialog-md) space-y-4">
           <Skeleton.Row className="h-6 w-1/2" />
           <Skeleton.Tile />
         </div>

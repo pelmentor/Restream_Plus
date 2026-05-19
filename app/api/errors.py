@@ -82,6 +82,16 @@ class ErrorCode(StrEnum):
     NOT_FOUND = "not_found"
     BAD_REQUEST = "bad_request"
 
+    # Slice 8.5 (Hex Audit FG3-F7): persist-failure code for
+    # change-password, distinguishable from generic 500. The merged-
+    # txn refactor (BA-F4) means an audit-write failure rolls back the
+    # password update; the user retried experiences "looks like 500
+    # but old password still works", which is a confusion-prone UX.
+    # 503 + Retry-After + this distinct code lets the SPA show
+    # "Try again in a moment" instead of a generic "Something went
+    # wrong".
+    PASSWORD_CHANGE_RETRY = "password_change_retry"  # noqa: S105
+
 
 # Frozen tuple form for the test that pins the Phase 6 shipping set.
 # Codes added by future phases append to this; renames break the

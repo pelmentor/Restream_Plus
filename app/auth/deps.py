@@ -46,9 +46,14 @@ from app.auth.key_material import (
     KeyMaterialState,
     ServiceLockedError,
 )
+from app.auth.last_seen_coalescer import LastSeenCoalescer
 from app.auth.rate_limit import LoginRateLimiter, extract_client_ip
 from app.auth.reprompts import RepromptScope, RepromptStore
-from app.auth.sessions import SessionAuthService, session_cookie_name
+from app.auth.sessions import (
+    MAX_SESSION_COOKIE_VALUE_LENGTH,
+    SessionAuthService,
+    session_cookie_name,
+)
 from app.config import AppSettings
 from app.repositories.api_tokens import ApiTokensRepository
 from app.repositories.sessions import HttpSessionsRepository
@@ -113,7 +118,20 @@ class AuthState:
                                  Kept distinct from `rate_limiter` so
                                  unlock probing does not lock out future
                                  logins (Phase 6 design memo §Q5).
+      - `reprompt_rate_limiter` — separate sliding-window store for
+                                 /api/auth/reprompt attempts (3/IP/15min,
+                                 tighter than login's 5 since the user
+                                 is already authenticated and the only
+                                 threat is a stolen-cookie attacker
+                                 brute-forcing the admin password from
+                                 inside the session). Hex Audit BA-F3
+                                 (slice 7).
       - `reprompts`            — single shared in-memory grant store.
+      - `last_seen_coalescer`  — process-wide write-coalescer for
+                                 `sessions.last_seen_at`, shared by
+                                 HTTP auth and the WS upgrade path
+                                 (Hex Audit BA-F6 / FG2-H1 / FG2-M7,
+                                 slice 7).
       - `trusted_proxies`      — frozen tuple from settings.
     """
 
@@ -121,7 +139,9 @@ class AuthState:
     sessionmaker: async_sessionmaker[AsyncSession]
     rate_limiter: LoginRateLimiter
     unlock_rate_limiter: LoginRateLimiter
+    reprompt_rate_limiter: LoginRateLimiter
     reprompts: RepromptStore
+    last_seen_coalescer: LastSeenCoalescer
     trusted_proxies: Sequence[IpNetwork]
     rotation_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     """Phase 9: process-wide lock held by the rotate-passphrase handler.
@@ -225,13 +245,17 @@ def get_session_service(
     per-request limiter. Embedding it here makes ADR-0005's
     brute-force defence a structural property of every login —
     `SessionAuthService` cannot be constructed without one (Phase 3
-    security review CRIT).
+    security review CRIT). The `last_seen_coalescer` is similarly
+    process-wide; injected here so HTTP cookie verification shares
+    the same suppression window as the WS upgrade path (Hex Audit
+    BA-F6 / FG2-H1 / FG2-M7, slice 7).
     """
     return SessionAuthService(
         users=UsersRepository(session),
         sessions=HttpSessionsRepository(session),
         keys=keys,
         rate_limiter=state.rate_limiter,
+        last_seen_coalescer=state.last_seen_coalescer,
     )
 
 
@@ -298,6 +322,12 @@ async def get_current_user_via_cookie(
     cookie_name = session_cookie_name(secure=secure)
     cookie_value = request.cookies.get(cookie_name)
     if not cookie_value:
+        return None
+    # Hex Audit BA-F19 (slice 10): reject over-long cookie values BEFORE
+    # the HMAC; treat as anonymous (same as a missing cookie). The HMAC
+    # itself enforces this internally but we short-circuit here so the
+    # work cost stays O(1).
+    if len(cookie_value) > MAX_SESSION_COOKIE_VALUE_LENGTH:
         return None
     result = await session_service.verify_cookie(cookie_value)
     if result is None:

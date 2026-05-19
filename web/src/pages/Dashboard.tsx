@@ -92,19 +92,44 @@ export function Dashboard(): ReactNode {
   }
 
   if (enabledTargets.length === 0) {
+    // Two distinct empty states: never-configured vs all-disabled.
+    // The original copy ("Add a target") was wrong for the latter
+    // case — the user already added them, they just need to enable
+    // one. Conflating the two left operators stuck staring at a CTA
+    // that told them to do something they'd already done.
+    const noTargetsAtAll = targets.length === 0;
+    const title = noTargetsAtAll
+      ? t("dashboard.emptyTitle")
+      : t("dashboard.disabledTitle");
+    const body = noTargetsAtAll
+      ? t("dashboard.emptyBody")
+      : t("dashboard.disabledBody");
+    const cta = noTargetsAtAll
+      ? t("dashboard.emptyCta")
+      : t("dashboard.disabledCta");
+    // Hex Audit CR-F10 (slice 10): link target dynamically derived from
+    // the operator's actual targets in the "all disabled" case (jump
+    // straight to the type they have configured), defaults to the
+    // settings index in the "never configured" case (lets them pick
+    // a platform). Pre-slice-10 hardcoded `/twitch` even if the
+    // operator had only a YouTube target — a tap-and-stare moment
+    // that surfaced as the audit finding.
+    const ctaLink = noTargetsAtAll
+      ? "/settings/targets"
+      : `/settings/targets/${targets[0]?.type ?? "twitch"}`;
     return (
       <>
         <ReconnectingBanner />
         <EmptyState
           icon={Broadcast}
-          title={t("dashboard.emptyTitle")}
-          description={t("dashboard.emptyBody")}
+          title={title}
+          description={body}
           action={
             <Link
-              to="/settings/targets/twitch"
-              className="inline-flex h-9 items-center rounded-md bg-(--color-accent) px-(--space-4) text-(length:--text-sm) font-medium text-white hover:bg-(--color-accent-strong)"
+              to={ctaLink}
+              className="inline-flex h-(--size-control-md) items-center rounded-md bg-(--color-accent) px-(--space-4) text-(length:--text-sm) font-medium text-(--color-on-accent) hover:bg-(--color-accent-strong)"
             >
-              {t("dashboard.emptyCta")}
+              {cta}
             </Link>
           }
         />

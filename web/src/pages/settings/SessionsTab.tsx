@@ -1,8 +1,8 @@
 import { type ReactNode } from "react";
 
+import { Button } from "@/components/Button";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { useRunHistory } from "@/hooks/useRunHistory";
-import { cn } from "@/lib/cn";
 import { t } from "@/messages";
 
 export function SessionsTab(): ReactNode {
@@ -71,19 +71,15 @@ export function SessionsTab(): ReactNode {
               </tbody>
             </table>
             {q.hasNextPage && (
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="md"
+                className="mt-(--space-4) self-start"
                 onClick={() => void q.fetchNextPage()}
-                disabled={q.isFetchingNextPage}
-                className={cn(
-                  "mt-(--space-4) self-start h-10 rounded-(--radius-md) px-(--space-4)",
-                  "text-(length:--text-sm) font-medium",
-                  "border border-(--color-border-subtle) text-(--color-fg-default) hover:bg-(--color-bg-sunken)",
-                  q.isFetchingNextPage && "opacity-50 cursor-not-allowed",
-                )}
+                loading={q.isFetchingNextPage}
               >
-                {q.isFetchingNextPage ? t("sessionsTab.loading") : t("sessionsTab.loadOlder")}
-              </button>
+                {t("sessionsTab.loadOlder")}
+              </Button>
             )}
           </>
         )}

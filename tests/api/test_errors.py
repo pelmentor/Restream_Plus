@@ -49,6 +49,12 @@ PHASE_6_CODES_FROZEN: frozenset[str] = frozenset(
         "same_passphrase",
         "run_active",
         "session_not_found",
+        # Slice 8.5 (Hex Audit FG3-F7): distinguishable code on
+        # change-password persist-failure (audit-append or commit
+        # raised after the in-txn refactor in slice 8). 503 +
+        # Retry-After lets the SPA render "Try again in a moment"
+        # instead of the generic 500.
+        "password_change_retry",
     }
 )
 """The shipping set of stable error codes through Phase 9. New codes

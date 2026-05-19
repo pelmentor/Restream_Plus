@@ -1,7 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
 
+import { Button } from "@/components/Button";
 import { CopyToClipboard } from "@/components/CopyToClipboard";
+import { FormField } from "@/components/FormField";
 import { OneTimeRevealBanner } from "@/components/OneTimeRevealBanner";
 import { SecretField } from "@/components/SecretField";
 import { Slider } from "@/components/Slider";
@@ -141,21 +143,24 @@ export function GeneralTab(): ReactNode {
       )}
 
       <SettingsSection title={t("general.ingestSection")}>
-        <Field label={t("general.ingestUrlLabel")} helper={t("general.ingestUrlHelper")}>
+        <FormField
+          label={t("general.ingestUrlLabel")}
+          helper={t("general.ingestUrlHelper")}
+        >
           <div className="flex items-center gap-(--space-2)">
             <div
               className={cn(
-                "h-10 flex-1 min-w-0 rounded-(--radius-md) border bg-(--color-bg-sunken)",
+                "h-(--size-control-lg) flex-1 min-w-0 rounded-(--radius-md) border bg-(--color-bg-sunken)",
                 "border-(--color-border-subtle) px-(--space-3)",
                 "flex items-center font-mono text-(length:--text-sm) text-(--color-fg-strong) truncate",
               )}
             >
               {ingestUrl}
             </div>
-            <CopyToClipboard value={ingestUrl} variant="standalone" />
+            <CopyToClipboard value={ingestUrl} />
           </div>
-        </Field>
-        <Field label={t("general.ingestKeyLabel")}>
+        </FormField>
+        <FormField label={t("general.ingestKeyLabel")}>
           <SecretField
             variant="masked"
             last4={data.ingest_key_last4}
@@ -171,19 +176,20 @@ export function GeneralTab(): ReactNode {
             onHide={() => setRevealed(null)}
             ariaLabel={t("general.ingestKeyLabel")}
           />
+          {/* Slice-6 SA-BLOCK-2: regenerate button migrated to
+              `danger-ghost` variant (closes the one-off inline outline-
+              error pattern; reviewer slice-4 CRIT-1 made this exact
+              one-off pattern the canary). */}
           <div className="mt-(--space-2)">
-            <button
-              type="button"
+            <Button
+              variant="danger-ghost"
+              size="md"
               onClick={() => setConfirmRotate(true)}
-              className={cn(
-                "h-9 rounded-(--radius-md) px-(--space-3) text-(length:--text-sm) font-medium",
-                "border border-(--color-error) text-(--color-error) hover:bg-(--color-error-faint)",
-              )}
             >
               {t("general.regenerate")}
-            </button>
+            </Button>
           </div>
-        </Field>
+        </FormField>
       </SettingsSection>
 
       <form onSubmit={onSave}>
@@ -191,34 +197,32 @@ export function GeneralTab(): ReactNode {
           title={t("general.runBehaviorSection")}
           footer={
             <>
-              <button
-                type="button"
+              {/* Slice-6 SA-BLOCK-2: inline Discard + Save replaced by
+                  Button primitive. `loading={update.isPending}` is the
+                  single source of truth — drop the `?:` saving label
+                  (spinner conveys state; width-stable gutter prevents
+                  reflow per slice-5 UI-F3). */}
+              <Button
+                variant="ghost"
+                size="md"
                 disabled={!isDirty}
                 onClick={() => form.reset()}
-                className={cn(
-                  "h-10 rounded-(--radius-md) px-(--space-4) text-(length:--text-sm)",
-                  "text-(--color-fg-default) hover:bg-(--color-bg-sunken)",
-                  !isDirty && "opacity-50 cursor-not-allowed",
-                )}
               >
                 {t("settings.discard")}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="submit"
-                disabled={!isDirty || update.isPending}
-                className={cn(
-                  "h-10 rounded-(--radius-md) px-(--space-4) text-(length:--text-sm) font-medium text-white",
-                  "bg-(--color-accent) hover:bg-(--color-accent-strong)",
-                  (!isDirty || update.isPending) &&
-                    "opacity-50 cursor-not-allowed",
-                )}
+                variant="primary"
+                size="md"
+                disabled={!isDirty}
+                loading={update.isPending}
               >
-                {update.isPending ? t("settings.saving") : t("settings.save")}
-              </button>
+                {t("settings.save")}
+              </Button>
             </>
           }
         >
-          <Field
+          <FormField
             label={t("general.idleTimeoutLabel")}
             helper={t("general.idleTimeoutHelper")}
           >
@@ -232,8 +236,8 @@ export function GeneralTab(): ReactNode {
               valueText={t("slider.seconds", { n: form.watch("idle") })}
               displayValue={`${form.watch("idle")} s`}
             />
-          </Field>
-          <Field
+          </FormField>
+          <FormField
             label={t("general.logRetentionLabel")}
             helper={t("general.logRetentionHelper")}
           >
@@ -247,7 +251,7 @@ export function GeneralTab(): ReactNode {
               valueText={`${form.watch("logs")}`}
               displayValue={`${form.watch("logs")}`}
             />
-          </Field>
+          </FormField>
           {update.isError && (
             <p className="text-(length:--text-xs) text-(--color-error)">
               {t("settings.sectionSaveFailed")}
@@ -270,26 +274,3 @@ export function GeneralTab(): ReactNode {
   );
 }
 
-function Field({
-  label,
-  helper,
-  children,
-}: {
-  readonly label: string;
-  readonly helper?: ReactNode;
-  readonly children: ReactNode;
-}): ReactNode {
-  return (
-    <div className="flex flex-col gap-(--space-2)">
-      <span className="text-(length:--text-sm) font-medium text-(--color-fg-strong)">
-        {label}
-      </span>
-      {children}
-      {helper !== undefined && (
-        <p className="text-(length:--text-xs) text-(--color-fg-muted)">
-          {helper}
-        </p>
-      )}
-    </div>
-  );
-}

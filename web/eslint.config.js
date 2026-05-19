@@ -57,7 +57,7 @@ export default tseslint.config(
         {
           noStrings: true,
           ignoreProps: true,
-          allowedStrings: ["·", "—", "→", "←", " ", ":"],
+          allowedStrings: ["·", "—", "→", "←", " ", ":", "*"],
         },
       ],
     },
@@ -71,6 +71,17 @@ export default tseslint.config(
         tsconfigRootDir: import.meta.dirname,
       },
       globals: { ...globals.node },
+    },
+  },
+
+  // Slice-6 SA-RISK-4: component tests assert against literal accessible
+  // names (`getByRole({ name: "Save" })`) and render literal children to
+  // verify the contract — the i18n-only convention does not apply inside
+  // tests, where strings ARE the fixtures.
+  {
+    files: ["src/**/*.test.{ts,tsx}", "src/test/**/*.{ts,tsx}"],
+    rules: {
+      "react/jsx-no-literals": "off",
     },
   },
 );

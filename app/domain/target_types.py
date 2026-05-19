@@ -55,6 +55,15 @@ TARGET_TYPE_SPECS: Final[dict[TargetType, TargetTypeSpec]] = {
     TargetType.TWITCH: TargetTypeSpec(
         type=TargetType.TWITCH,
         display_label="Twitch",
+        # `live.twitch.tv/app` is Twitch's "intelligent ingest" hostname
+        # that historically smart-routes to the nearest regional server.
+        # It is NOT in OBS's bundled `services.json` — they only ship the
+        # 46 regional URLs. The smart-routing default fails for some
+        # operators (the regional list lives in `targetTypeSpecs.ts` so
+        # operators can pick a specific region when the default fails).
+        # When we ship the OBS Auto Stream Configuration adapter we'll
+        # route through `https://ingest.twitch.tv/api/v3/GetClientConfiguration`
+        # to negotiate the best regional URL automatically.
         default_url="rtmp://live.twitch.tv/app",
         backup_supported=False,
         credential_lifetime=CredentialLifetime.PERSISTENT,

@@ -126,9 +126,19 @@ ignore = [
   "S101",   # use of `assert` — we use it for invariants in non-test paths
   "B008",   # function call in default argument — FastAPI Depends pattern
 ]
+# `×` (U+00D7 MULTIPLICATION SIGN) is used deliberately in user-facing
+# strings and audit messages ("5× retry attempts", "1080×1920"). It is
+# semantically distinct from the ASCII letter `x`, so we allow it.
+allowed-confusables = ["×"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S", "ERA"]
+# `start.py` is the dev-only Windows launcher: it invokes .bat files via
+# shell=True (S602), looks up nginx/MediaMTX binaries by name (S607), and
+# downloads pinned tarballs over HTTPS (S310). These are dev-host
+# behaviors, never reached by the production container's entrypoint, and
+# each call site is auditor-reviewed in source.
+"start.py" = ["S"]
 
 [tool.ruff.format]
 quote-style = "double"

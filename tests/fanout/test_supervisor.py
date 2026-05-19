@@ -122,113 +122,24 @@ class TestRunLifecycle:
             await sup.wait_ready(timeout=2.0)
             await sup.start_run()
             assert sup.run_state() is RunState.ARMED
-            await sup.stop_run(reason="user_stop")
+            await sup.stop_run(reason="publish_idle")
             assert sup.run_state() is RunState.OFFLINE
             await sup.stop(grace=timedelta(seconds=1))
             await sup_task
 
-    async def test_obs_publish_began_transitions_to_live(
+    async def test_obs_publish_began_while_armed_transitions_to_live(
         self,
         sessionmaker_factory: async_sessionmaker[AsyncSession],
         key_material_ready: KeyMaterial,
         fresh_credential_registry: None,
     ) -> None:
+        # ADR-0015 auto-run-on-publish: with explicit `start_run()`
+        # we land in ARMED first; a Began drains us into LIVE. An
+        # Ended now drives the full auto-stop (LIVE → STOPPING →
+        # OFFLINE) immediately — no grace, no LIVE→ARMED interlude.
         kek = key_material_ready.require_ready().stream_key_kek
         await _seed_target(sessionmaker_factory, kek=kek)
 
-        spawner = FakeProcessSpawner([FakeProcess()])
-        sup = Supervisor(
-            sessionmaker=sessionmaker_factory,
-            key_material=key_material_ready,
-            process_spawner=spawner,
-            credential_registry=get_credential_registry(),
-            ingest_loopback_url=_LOOPBACK_URL,
-            worker_factory=_worker_factory_for_tests(spawner),
-        )
-        bus = EventBus()
-
-        async with asyncio.TaskGroup() as tg:
-            sup_task = tg.create_task(sup.run(bus))
-            await sup.wait_ready(timeout=2.0)
-            await sup.start_run()
-            # Slice 3: notify_obs_publish_* enqueues; drain happens
-            # under _lock on the call_soon-scheduled task. We drain
-            # explicitly here to keep the assertion deterministic
-            # rather than relying on event-loop tick ordering.
-            sup.notify_obs_publish_began()
-            await sup._drain_pending_actions()
-            assert sup.run_state() is RunState.LIVE
-            sup.notify_obs_publish_ended()
-            await sup._drain_pending_actions()
-            assert sup.run_state() is RunState.ARMED
-            await sup.stop(grace=timedelta(seconds=1))
-            await sup_task
-
-    async def test_obs_publish_began_before_start_promotes_to_live(
-        self,
-        sessionmaker_factory: async_sessionmaker[AsyncSession],
-        key_material_ready: KeyMaterial,
-        fresh_credential_registry: None,
-    ) -> None:
-        # Reverse ordering: webhook arrives while we're OFFLINE (operator
-        # started OBS BEFORE clicking START on the panel). Slice 3: the
-        # action sits in the pending-action deque while we're OFFLINE;
-        # start_run's post-ARMED drain consumes it and transitions
-        # ARMED → LIVE so the dashboard reflects reality instead of
-        # hanging on "WAITING FOR OBS".
-        kek = key_material_ready.require_ready().stream_key_kek
-        await _seed_target(sessionmaker_factory, kek=kek)
-
-        spawner = FakeProcessSpawner([FakeProcess()])
-        sup = Supervisor(
-            sessionmaker=sessionmaker_factory,
-            key_material=key_material_ready,
-            process_spawner=spawner,
-            credential_registry=get_credential_registry(),
-            ingest_loopback_url=_LOOPBACK_URL,
-            worker_factory=_worker_factory_for_tests(spawner),
-        )
-        bus = EventBus()
-
-        async with asyncio.TaskGroup() as tg:
-            sup_task = tg.create_task(sup.run(bus))
-            await sup.wait_ready(timeout=2.0)
-            # OBS publishes BEFORE the operator presses START on the panel.
-            sup.notify_obs_publish_began()
-            # State is still OFFLINE — the deque holds the action; the
-            # state machine is not advanced by enqueue-side ops.
-            assert sup.run_state() is RunState.OFFLINE
-            await sup.start_run()
-            # start_run's post-ARMED drain consumed the queued action,
-            # auto-promoting ARMED → LIVE.
-            assert sup.run_state() is RunState.LIVE, (
-                "start_run drained the pending OBS_PUBLISH_BEGAN and " "auto-promoted past ARMED"
-            )
-            await sup.stop_run(reason="user_stop")
-            assert sup.run_state() is RunState.OFFLINE
-            await sup.stop(grace=timedelta(seconds=1))
-            await sup_task
-
-    async def test_obs_publish_ended_before_stop_clears_flag(
-        self,
-        sessionmaker_factory: async_sessionmaker[AsyncSession],
-        key_material_ready: KeyMaterial,
-        fresh_credential_registry: None,
-    ) -> None:
-        # If OBS unpublishes while we're OFFLINE (e.g. the lifecycle
-        # webhook arrives between two runs), the flag must clear so the
-        # NEXT start_run doesn't false-promote to LIVE on a stale signal.
-        kek = key_material_ready.require_ready().stream_key_kek
-        await _seed_target(sessionmaker_factory, kek=kek)
-
-        # Hex Audit CR-F8 (slice 10): the test exercises start_run
-        # → ARMED → stop_run. start_run spawns one ffmpeg child;
-        # depending on event-loop scheduling the lifecycle loop may
-        # respawn once before stop_requested is observed (the
-        # original code-reviewer comment "consumes 1" turned out to
-        # be wrong — empirical run shows up to 2 spawns happen
-        # before the stop unwind completes). Pool size restored to
-        # 2 with this comment as the authoritative explanation.
         spawner = FakeProcessSpawner([FakeProcess(), FakeProcess()])
         sup = Supervisor(
             sessionmaker=sessionmaker_factory,
@@ -243,22 +154,143 @@ class TestRunLifecycle:
         async with asyncio.TaskGroup() as tg:
             sup_task = tg.create_task(sup.run(bus))
             await sup.wait_ready(timeout=2.0)
-            # Slice 3: both signals queue. start_run's drain consumes
-            # them FIFO: Began → flag True (still OFFLINE, transition
-            # illegal, no state change); Ended → flag False. Net
-            # result: start_run reaches ARMED and the drain leaves
-            # state at ARMED (no promotion to LIVE).
+            await sup.start_run()
+            sup.notify_obs_publish_began()
+            await sup._drain_pending_actions()
+            assert sup.run_state() is RunState.LIVE
+            sup.notify_obs_publish_ended()
+            await sup._drain_pending_actions()
+            # ADR-0015: immediate teardown on publish-end.
+            assert sup.run_state() is RunState.OFFLINE
+            await sup.stop(grace=timedelta(seconds=1))
+            await sup_task
+
+    async def test_obs_publish_began_while_offline_auto_starts(
+        self,
+        sessionmaker_factory: async_sessionmaker[AsyncSession],
+        key_material_ready: KeyMaterial,
+        fresh_credential_registry: None,
+    ) -> None:
+        # ADR-0015: the drain itself drives OFFLINE → STARTING → ARMED
+        # → LIVE when a publish arrives in the cold state. Operator
+        # never has to press anything — OBS publishing IS the trigger.
+        kek = key_material_ready.require_ready().stream_key_kek
+        await _seed_target(sessionmaker_factory, kek=kek)
+
+        spawner = FakeProcessSpawner([FakeProcess()])
+        sup = Supervisor(
+            sessionmaker=sessionmaker_factory,
+            key_material=key_material_ready,
+            process_spawner=spawner,
+            credential_registry=get_credential_registry(),
+            ingest_loopback_url=_LOOPBACK_URL,
+            worker_factory=_worker_factory_for_tests(spawner),
+        )
+        bus = EventBus()
+
+        async with asyncio.TaskGroup() as tg:
+            sup_task = tg.create_task(sup.run(bus))
+            await sup.wait_ready(timeout=2.0)
+            assert sup.run_state() is RunState.OFFLINE
+            sup.notify_obs_publish_began()
+            await sup._drain_pending_actions()
+            assert sup.run_state() is RunState.LIVE, (
+                "auto-start drove OFFLINE → STARTING → ARMED → LIVE "
+                "in a single drain cycle (ADR-0015)"
+            )
+            await sup.stop(grace=timedelta(seconds=1))
+            await sup_task
+
+    async def test_obs_publish_ended_while_offline_is_noop(
+        self,
+        sessionmaker_factory: async_sessionmaker[AsyncSession],
+        key_material_ready: KeyMaterial,
+        fresh_credential_registry: None,
+    ) -> None:
+        # An Ended that arrives in OFFLINE (e.g., MediaMTX runOnNotReady
+        # fires after a brief mis-keyed publish that didn't auto-start)
+        # is a flag clear with no state-machine action.
+        kek = key_material_ready.require_ready().stream_key_kek
+        await _seed_target(sessionmaker_factory, kek=kek)
+
+        spawner = FakeProcessSpawner([FakeProcess()])
+        sup = Supervisor(
+            sessionmaker=sessionmaker_factory,
+            key_material=key_material_ready,
+            process_spawner=spawner,
+            credential_registry=get_credential_registry(),
+            ingest_loopback_url=_LOOPBACK_URL,
+            worker_factory=_worker_factory_for_tests(spawner),
+        )
+        bus = EventBus()
+
+        async with asyncio.TaskGroup() as tg:
+            sup_task = tg.create_task(sup.run(bus))
+            await sup.wait_ready(timeout=2.0)
+            sup.notify_obs_publish_ended()
+            await sup._drain_pending_actions()
+            assert sup.run_state() is RunState.OFFLINE
+            await sup.stop(grace=timedelta(seconds=1))
+            await sup_task
+
+    async def test_obs_bounce_during_spawn_audits_started_then_stopped(
+        self,
+        sessionmaker_factory: async_sessionmaker[AsyncSession],
+        key_material_ready: KeyMaterial,
+        fresh_credential_registry: None,
+    ) -> None:
+        # Reviewer N-1 (slice-11 auto-run-on-publish): the sharpest
+        # edge of ADR-0015 — OBS bounces (Began + Ended both queued)
+        # while start_run is mid-spawn. The drain that runs after the
+        # ARMED transition processes Began→LIVE→Ended→STOPPING→OFFLINE
+        # in one cycle. The audit log MUST show `run_started` BEFORE
+        # `run_stopped` (the run_started audit was moved before the
+        # post-ARMED drain precisely for this).
+        from app.repositories.audit_log import AuditLogRepository
+
+        kek = key_material_ready.require_ready().stream_key_kek
+        await _seed_target(sessionmaker_factory, kek=kek)
+
+        # Two FakeProcesses: one for the spawn, one possible respawn
+        # before the stop-unwind observes the cancel signal.
+        spawner = FakeProcessSpawner([FakeProcess(), FakeProcess()])
+        sup = Supervisor(
+            sessionmaker=sessionmaker_factory,
+            key_material=key_material_ready,
+            process_spawner=spawner,
+            credential_registry=get_credential_registry(),
+            ingest_loopback_url=_LOOPBACK_URL,
+            worker_factory=_worker_factory_for_tests(spawner),
+        )
+        bus = EventBus()
+
+        async with asyncio.TaskGroup() as tg:
+            sup_task = tg.create_task(sup.run(bus))
+            await sup.wait_ready(timeout=2.0)
             sup.notify_obs_publish_began()
             sup.notify_obs_publish_ended()
             await sup.start_run()
-            assert sup.run_state() is RunState.ARMED, (
-                "queue drain processed Began-then-Ended; flag is "
-                "False at the post-ARMED drain checkpoint, no "
-                "auto-promotion to LIVE"
-            )
-            await sup.stop_run(reason="user_stop")
+            # Drain processed Began→LIVE then Ended→auto-stop. State
+            # lands at OFFLINE; no LIVE pill ever surfaces externally.
+            assert sup.run_state() is RunState.OFFLINE
             await sup.stop(grace=timedelta(seconds=1))
             await sup_task
+
+        async with sessionmaker_factory() as session:
+            rows = await AuditLogRepository(sessionmaker_factory).list_recent(session)
+        events = [r.event_type for r in rows]
+        # Order check: run_started must precede run_stopped in the
+        # audit log (list_recent returns newest-first; reverse for
+        # chronological reading).
+        chronological = list(reversed(events))
+        start_idx = next((i for i, e in enumerate(chronological) if e == "run_started"), None)
+        stop_idx = next((i for i, e in enumerate(chronological) if e == "run_stopped"), None)
+        assert start_idx is not None, f"run_started missing from {chronological}"
+        assert stop_idx is not None, f"run_stopped missing from {chronological}"
+        assert start_idx < stop_idx, (
+            f"audit ordering must be run_started → run_stopped; "
+            f"got run_started@{start_idx}, run_stopped@{stop_idx} in {chronological}"
+        )
 
 
 class TestVKCredentialWipe:
@@ -293,7 +325,7 @@ class TestVKCredentialWipe:
             sup_task = tg.create_task(sup.run(bus))
             await sup.wait_ready(timeout=2.0)
             await sup.start_run()
-            await sup.stop_run(reason="user_stop")
+            await sup.stop_run(reason="publish_idle")
             await sup.stop(grace=timedelta(seconds=1))
             await sup_task
 
@@ -653,7 +685,7 @@ class TestSlice3SupervisorRace:
             assert sup._obs_is_publishing is True
 
             # Now stop_run; the synthetic Ended must clear the flag.
-            await sup.stop_run(reason="user_stop")
+            await sup.stop_run(reason="publish_idle")
             assert sup.run_state() is RunState.OFFLINE
             assert sup._obs_is_publishing is False
             await sup.stop(grace=timedelta(seconds=1))

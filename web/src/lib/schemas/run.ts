@@ -75,10 +75,3 @@ export const RunStateView = z.object({
 });
 export type RunStateViewT = z.infer<typeof RunStateView>;
 
-export const RunActionAcceptedResponse = z.object({
-  accepted: z.literal(true),
-  previous_state: RunState,
-});
-export type RunActionAcceptedResponseT = z.infer<
-  typeof RunActionAcceptedResponse
->;

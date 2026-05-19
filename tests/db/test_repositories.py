@@ -603,6 +603,6 @@ class TestSessionsHistoryRepository:
     async def test_notes_patch_merges_with_existing(self, session: AsyncSession) -> None:
         repo = SessionsHistoryRepository(session)
         run = await repo.start(notes={"a": 1})
-        ended = await repo.end(run.id, end_reason="user_stop", notes_patch={"b": 2})
+        ended = await repo.end(run.id, end_reason="publish_idle", notes_patch={"b": 2})
         assert ended is not None
         assert ended.notes == {"a": 1, "b": 2}

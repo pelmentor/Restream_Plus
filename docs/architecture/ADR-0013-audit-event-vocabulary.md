@@ -123,8 +123,8 @@ omitted from the per-event tables below.
 
 | event_type | data_json shape | Emitted from | Notes |
 | --- | --- | --- | --- |
-| `run_started` | `{"target_count": <int>}` | `app/fanout/supervisor.py::_audit` (helper) | one row per START |
-| `run_stopped` | `{"reason": "operator" \| "idle_timeout" \| "control_plane_crash"}` | `app/fanout/supervisor.py::_audit` | one row per STOP transition |
+| `run_started` | `{"run_id": <uuid>, "target_count": <int>, "worker_count": <int>}` | `app/fanout/supervisor.py::_audit` (helper) | one row per cold start; ADR-0015 auto-run-on-publish means every start is publish-driven, so a separate `trigger` field is omitted |
+| `run_stopped` | `{"reason": "publish_idle" \| "control_plane_crash" \| "normal" \| "error"}` | `app/fanout/supervisor.py::_audit` | one row per stop. `publish_idle` is the auto-stop on OBS publish-end (ADR-0015, no grace window); `normal` is graceful lifespan shutdown; `error` is the start-time spawn failure path; `control_plane_crash` is the lifespan-on-exception path |
 | `interrupted_session_recovered` | `{"session_id": <int>, "estimated_end_at": <iso>}` | `app/db/schema_init.py` (boot-time recovery) | F# BA-D1; written if the prior `sessions_history` row had `ended_at IS NULL` |
 
 #### Secret lifecycle events

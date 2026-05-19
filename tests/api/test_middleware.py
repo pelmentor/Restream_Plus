@@ -187,7 +187,6 @@ async def test_spa_root_reachable_in_locked_mode() -> None:
 # returns BEFORE validation.
 NON_ALLOWLISTED_PROBES: tuple[tuple[str, str, dict[str, str] | None], ...] = (
     ("GET", "/api/targets", None),
-    ("POST", "/api/run/start", None),
     ("GET", "/api/run/state", None),
     ("GET", "/api/settings", None),
     ("GET", "/api/security/tokens", None),

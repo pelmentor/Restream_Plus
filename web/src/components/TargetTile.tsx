@@ -104,11 +104,20 @@ interface VisualState {
 function visualFor(state: TargetUiStateT): VisualState {
   switch (state) {
     case "disabled":
+      // Slice-5 UI-F11: opacity-60 crushed label contrast. Switch to
+      // explicit disabled tokens (bg-disabled + fg-muted ≈ 4.6:1 light
+      // / 5:1 dark per UI-designer memo Q2).
+      // Slice-6 UX-D.3: pill gets an explicit border so the chip
+      // affordance survives the near-isoluminant bg-sunken-on-bg-disabled
+      // surface relationship. `border-strong` clears 3:1 against
+      // bg-disabled in both themes; `border-disabled` would be too close.
       return {
         label: t("tile.statusDisabled"),
-        pillClass: "bg-(--color-bg-sunken) text-(--color-fg-muted)",
-        borderClass: "border border-(--color-border-subtle)",
-        containerOpacityClass: "opacity-60",
+        pillClass:
+          "bg-(--color-bg-sunken) text-(--color-fg-muted) " +
+          "border border-(--color-border-strong)",
+        borderClass: "border border-(--color-border-disabled)",
+        containerOpacityClass: "bg-(--color-bg-disabled) text-(--color-fg-muted)",
         icon: Prohibit,
         iconWeight: "regular",
         iconSpinClass: "",

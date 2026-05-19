@@ -41,6 +41,7 @@ export const RepromptScope = z.enum([
   "delete_target",
   "revoke_api_token",
   "clear_credential",
+  "reset_target_worker",
 ]);
 export type RepromptScopeT = z.infer<typeof RepromptScope>;
 

@@ -247,6 +247,87 @@ async def test_unauthenticated_reprompt_returns_401(client: httpx.AsyncClient) -
 
 
 # ----------------------------------------------------------------------
+# Slice 7 / Hex Audit BA-F3 — reprompt rate-limit + timing floor
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reprompt_rate_limited_after_threshold(
+    auth_client: httpx.AsyncClient,
+) -> None:
+    """Pre-fill the reprompt rate-limit bucket so the next attempt is
+    denied without Argon2. The response carries `Retry-After` and the
+    detail body matches the same shape as a wrong-password 401
+    (so a stolen-cookie attacker can't distinguish them by body)."""
+    state = auth_client._transport.app.state.auth  # type: ignore[attr-defined]
+    state.reprompt_rate_limiter.reset()  # isolate from any sibling state
+    # Pre-charge the limiter to the failure threshold. The limiter is
+    # keyed by `ip` + `username`; the test client's peer IP is
+    # `testclient` and the user is `admin`.
+    for _ in range(3):
+        state.reprompt_rate_limiter.record_failure(ip="testclient", username="admin")
+
+    r = await auth_client.post(
+        "/api/auth/reprompt",
+        json={"password": ADMIN_PASSWORD, "scope": "delete_target"},
+    )
+    assert r.status_code == 401
+    assert r.json()["detail"] == "rate_limited"
+    # Retry-After surfaces the worst-case bucket wait in whole seconds.
+    assert int(r.headers["Retry-After"]) >= 1
+
+
+@pytest.mark.asyncio
+async def test_reprompt_wrong_password_records_rate_limit_failure(
+    auth_client: httpx.AsyncClient,
+) -> None:
+    """Wrong-password attempts feed the limiter so brute-force probing
+    locks out after the threshold."""
+    state = auth_client._transport.app.state.auth  # type: ignore[attr-defined]
+    state.reprompt_rate_limiter.reset()  # isolate from sibling tests
+    # 3 wrong-password attempts. Each is a 401 invalid_credentials, but
+    # each also records a failure under (ip, username).
+    for _ in range(3):
+        r = await auth_client.post(
+            "/api/auth/reprompt",
+            json={"password": "definitely-wrong", "scope": "delete_target"},
+        )
+        assert r.status_code == 401
+        assert r.json()["detail"] == "invalid_credentials"
+
+    # 4th attempt — even with the CORRECT password — is rate-limited.
+    r = await auth_client.post(
+        "/api/auth/reprompt",
+        json={"password": ADMIN_PASSWORD, "scope": "delete_target"},
+    )
+    assert r.status_code == 401
+    assert r.json()["detail"] == "rate_limited"
+    assert "Retry-After" in r.headers
+
+
+@pytest.mark.asyncio
+async def test_reprompt_timing_floor_padded_on_wrong_password(
+    auth_client: httpx.AsyncClient,
+) -> None:
+    """Wrong-password path is padded to the timing floor so it cannot
+    be distinguished from the success path by wall-clock timing."""
+    from app.api.auth import REPROMPT_TIMING_FLOOR_SECONDS
+
+    state = auth_client._transport.app.state.auth  # type: ignore[attr-defined]
+    state.reprompt_rate_limiter.reset()
+
+    start = asyncio.get_event_loop().time()
+    r = await auth_client.post(
+        "/api/auth/reprompt",
+        json={"password": "wrong-pw", "scope": "delete_target"},
+    )
+    elapsed = asyncio.get_event_loop().time() - start
+    assert r.status_code == 401
+    # Sleep granularity on Windows is ~16 ms; allow a small tolerance.
+    assert elapsed >= REPROMPT_TIMING_FLOOR_SECONDS - 0.05
+
+
+# ----------------------------------------------------------------------
 # /api/auth/change-password — reprompt-protected
 # ----------------------------------------------------------------------
 
@@ -302,3 +383,54 @@ async def test_change_password_e2e(
 
     # Wait briefly for any background tasks (rehash) to settle.
     await asyncio.sleep(0.05)
+
+
+@pytest.mark.asyncio
+async def test_change_password_persist_failure_returns_503_with_retry_after(
+    auth_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Slice 8.5 (Hex Audit FG3-F7): when the audit-append OR the
+    commit in `change_password` raises `SQLAlchemyError`, the client
+    must receive a distinguishable 503 + `Retry-After` rather than a
+    generic 500. This lets the SPA render "Try again in a moment"
+    while leaving the user's session valid — and signals that the
+    password update was rolled back (the merged-txn BA-F4 invariant
+    means the password was NOT changed when this error fires).
+    """
+    from sqlalchemy.exc import OperationalError
+
+    from app.repositories.audit_log import AuditLogRepository
+
+    # Issue a reprompt grant.
+    issue = await auth_client.post(
+        "/api/auth/reprompt",
+        json={"password": ADMIN_PASSWORD, "scope": "change_password"},
+    )
+    assert issue.status_code == 200, issue.text
+    grant_id = issue.json()["grant_id"]
+
+    # Force the audit-append to raise — simulates a DB-locked /
+    # operational error during the change-password persist.
+    original_append = AuditLogRepository.append
+
+    async def _boom(*args: object, **kwargs: object) -> object:
+        raise OperationalError("simulated db lock", params={}, orig=Exception("locked"))
+
+    monkeypatch.setattr(AuditLogRepository, "append", _boom)
+
+    try:
+        r = await auth_client.post(
+            "/api/auth/change-password",
+            json={
+                "current_password": ADMIN_PASSWORD,
+                "new_password": "another-brand-new-password",
+            },
+            headers={"X-Reprompt-Grant": grant_id},
+        )
+    finally:
+        monkeypatch.setattr(AuditLogRepository, "append", original_append)
+
+    assert r.status_code == 503, r.text
+    assert r.json()["detail"] == "password_change_retry"
+    assert r.headers.get("Retry-After") == "5"

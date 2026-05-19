@@ -93,16 +93,40 @@ Multi-stage Dockerfile, three stages:
 │                               # everything else cleartext (no platform
 │                               # uses our DB; encryption is for the
 │                               # secrets-stolen-DB-dump scenario)
-├── ingest.key                  # the OBS ingest key (regeneratable via UI)
+├── restream.db-wal             # WAL log (managed by SQLite)
+├── restream.db-shm             # shared-memory file (managed by SQLite)
+├── .kdf_salt                   # 16 random bytes per ADR-0006; root_key
+│                               # derivation salt; rotated alongside the
+│                               # master passphrase via the rewrap flow
+├── .kdf_salt.previous          # 24 h-lived backup salt during the
+│                               # post-rotation grace window
 ├── logs/
-│   ├── nginx-access.log
+│   ├── nginx-access.log        # redacted format strips `/live/<key>`
 │   ├── nginx-error.log
-│   ├── control-plane.log
-│   └── target-<id>.log
+│   └── target-<id>.log         # per-target ffmpeg stderr via RedactionSink
 └── tls/                        # optional, if user supplies own cert
     ├── server.crt
     └── server.key
 ```
+
+**What is NOT in this layout (slice 9 — SA-F1 ADR closure):**
+
+- **`/data/ingest.key`** does NOT exist. The original ADR text named
+  a file by that name; the actual implementation since v1.0.0 stores
+  the active ingest key (and its rotation `previous` value + grace
+  window) in the singleton `settings` row inside `restream.db`. The
+  key is mutable from the UI without any filesystem touch; the
+  encrypted backup includes it for free.
+- **`/data/logs/control-plane.log`** does NOT exist. The Python
+  control plane writes structlog JSON to **stderr** (per ADR-0005
+  §"Bootstrap log-stream routing"), and s6-overlay v3's logger
+  service redirects that stderr into `s6-log`'s own
+  `/run/s6/services/control-plane/log/current` (timestamped, rotated
+  by s6 — not under `/data/`). Operators read it via `docker logs`
+  or by tailing the s6-log directory inside the container; the
+  application-managed `/data/logs/control-plane.log` named in the
+  original ADR draft was never wired and is removed from the
+  inventory here.
 
 ## Consequences
 
@@ -143,8 +167,12 @@ Multi-stage Dockerfile, three stages:
   ADR is wrong — and per F# SA-C.image, the move would be **more than
   one decision**. The single-image / loopback assumption is wired
   into nginx-rtmp's `allow play 127.0.0.1`, the KEK living in-process
-  with the supervisor, and the s6 service topology. Calling this
-  decision "reversible" understates the cost. Treat it as load-bearing.
+  with the supervisor, the s6 service topology, AND the full list of
+  in-memory singletons inventoried in **ADR-0001 §"Single-process
+  invariants"** (KeyMaterial, RateLimiter, RepromptStore, EventBus
+  drainer, host_stats sampler, Supervisor, LastSeenCoalescer). Calling
+  this decision "reversible" understates the cost. Treat it as
+  load-bearing.
 - If GHCR's pull rate limits become a problem (they aren't, for a
   hobbyist user), we'd publish to Docker Hub in parallel via the same
   GHA workflow.

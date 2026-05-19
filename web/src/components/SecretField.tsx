@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Eye, EyeSlash, Lock } from "@phosphor-icons/react";
 
+import { Button } from "./Button";
+import { Input } from "./Input";
 import { cn } from "@/lib/cn";
 import { t } from "@/messages";
 
@@ -83,10 +85,12 @@ function MaskedField(props: MaskedFieldProps): ReactNode {
         aria-readonly="true"
         aria-label={ariaLabel}
         className={cn(
-          "flex h-10 items-center rounded-(--radius-md) border bg-(--color-bg-base)",
+          // Slice-5: bumped from h-10 (40px) to control-lg (44px) so the
+          // display row matches the trailing reveal Button's h-11.
+          "flex h-(--size-control-lg) items-center rounded-(--radius-md) border bg-(--color-bg-base)",
           "border-(--color-border-subtle) px-(--space-3)",
           "font-mono text-(length:--text-sm) text-(--color-fg-strong) tabular-nums",
-          disabled && "bg-(--color-bg-sunken) text-(--color-fg-muted)",
+          disabled && "bg-(--color-bg-disabled) text-(--color-fg-muted)",
         )}
       >
         <span className="flex-1 truncate">{display}</span>
@@ -97,20 +101,18 @@ function MaskedField(props: MaskedFieldProps): ReactNode {
         )}
       </div>
       {!disabled && onRequestReveal !== undefined && last4 !== null && (
-        <button
+        <Button
           type="button"
           onClick={isRevealed ? onHide : onRequestReveal}
           aria-label={isRevealed ? t("secret.hideAria") : t("secret.revealAria")}
           aria-pressed={isRevealed}
-          className={cn(
-            "absolute top-1/2 right-1 -translate-y-1/2",
-            "inline-flex h-11 w-11 items-center justify-center rounded-(--radius-md)",
-            "text-(--color-fg-muted) hover:text-(--color-accent)",
-            "focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent)",
-          )}
+          variant="ghost"
+          size="lg"
+          iconOnly
+          className="absolute top-1/2 right-1 -translate-y-1/2 text-(--color-fg-muted)"
         >
           <Icon className="h-5 w-5" weight="regular" aria-hidden="true" />
-        </button>
+        </Button>
       )}
       {disabled && (
         <p className="mt-(--space-1) text-(length:--text-xs) text-(--color-fg-muted)">
@@ -132,43 +134,36 @@ function EntryField(props: EntryFieldProps): ReactNode {
   } = props;
   const [revealed, setRevealed] = useState(initiallyRevealed);
   return (
-    <div className="relative">
-      <input
-        type={revealed ? "text" : "password"}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        aria-label={ariaLabel}
-        autoComplete={autoComplete}
-        spellCheck={false}
-        data-1p-ignore="true"
-        disabled={disabled}
-        className={cn(
-          "h-10 w-full rounded-(--radius-md) border bg-(--color-bg-base) px-(--space-3) pr-12",
-          "border-(--color-border-subtle)",
-          "font-mono text-(length:--text-sm) text-(--color-fg-strong) tabular-nums",
-          "focus:border-(--color-accent) focus:outline-none",
-          disabled && "cursor-not-allowed bg-(--color-bg-sunken)",
-        )}
-      />
-      <button
-        type="button"
-        onClick={() => setRevealed((v) => !v)}
-        aria-label={revealed ? t("secret.hideAria") : t("secret.revealAria")}
-        aria-pressed={revealed}
-        className={cn(
-          "absolute top-1/2 right-1 -translate-y-1/2",
-          "inline-flex h-11 w-11 items-center justify-center rounded-(--radius-md)",
-          "text-(--color-fg-muted) hover:text-(--color-accent)",
-          "focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent)",
-        )}
-      >
-        {revealed ? (
-          <Eye className="h-5 w-5" weight="regular" aria-hidden="true" />
-        ) : (
-          <EyeSlash className="h-5 w-5" weight="regular" aria-hidden="true" />
-        )}
-      </button>
-    </div>
+    <Input
+      type={revealed ? "text" : "password"}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      aria-label={ariaLabel}
+      autoComplete={autoComplete}
+      spellCheck={false}
+      data-1p-ignore="true"
+      disabled={disabled}
+      mono
+      size="lg"
+      trailing={
+        <Button
+          type="button"
+          onClick={() => setRevealed((v) => !v)}
+          aria-label={revealed ? t("secret.hideAria") : t("secret.revealAria")}
+          aria-pressed={revealed}
+          variant="ghost"
+          size="lg"
+          iconOnly
+          className="text-(--color-fg-muted)"
+        >
+          {revealed ? (
+            <Eye className="h-5 w-5" weight="regular" aria-hidden="true" />
+          ) : (
+            <EyeSlash className="h-5 w-5" weight="regular" aria-hidden="true" />
+          )}
+        </Button>
+      }
+    />
   );
 }
 
@@ -186,7 +181,7 @@ function PasteOnlyField(props: PasteOnlyFieldProps): ReactNode {
   }, []);
   return (
     <div>
-      <input
+      <Input
         ref={ref}
         type="password"
         value={value}
@@ -196,13 +191,8 @@ function PasteOnlyField(props: PasteOnlyFieldProps): ReactNode {
         spellCheck={false}
         data-1p-ignore="true"
         disabled={disabled}
-        className={cn(
-          "h-10 w-full rounded-(--radius-md) border bg-(--color-bg-base) px-(--space-3)",
-          "border-(--color-border-subtle)",
-          "font-mono text-(length:--text-sm) text-(--color-fg-strong) tabular-nums",
-          "focus:border-(--color-accent) focus:outline-none",
-          disabled && "cursor-not-allowed bg-(--color-bg-sunken)",
-        )}
+        mono
+        size="lg"
       />
       {helper && (
         <p className="mt-(--space-1) text-(length:--text-xs) text-(--color-fg-muted)">

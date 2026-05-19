@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -126,6 +128,16 @@ class FakeSupervisor:
 
     async def reset_target_worker(self, target_id: str, role: WorkerRole) -> None:
         self.calls.append(("reset_target_worker", {"target_id": target_id, "role": role.value}))
+
+    @asynccontextmanager
+    async def acquire_state_lock(self) -> AsyncIterator[None]:
+        """Mirror of `Supervisor.acquire_state_lock` for rotate-passphrase
+        ordering tests. The fake has no underlying state to protect, so
+        the cm is a no-op — but the rotate-passphrase handler imports
+        `supervisor.acquire_state_lock` and asserting the call shape
+        matches production is the whole point of FakeSupervisor."""
+        self.calls.append(("acquire_state_lock", {}))
+        yield
 
     def notify_obs_publish_began(self) -> None:
         self.calls.append(("notify_obs_publish_began", {}))

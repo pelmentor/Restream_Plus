@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 
+import { Button } from "./Button";
+import { Input } from "./Input";
 import { apiFetch, ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import {
@@ -110,7 +112,8 @@ function scopeBodyKey(
   | "reprompt.bodyChangePassword"
   | "reprompt.bodyDeleteTarget"
   | "reprompt.bodyRevokeApiToken"
-  | "reprompt.bodyClearCredential" {
+  | "reprompt.bodyClearCredential"
+  | "reprompt.bodyResetTargetWorker" {
   switch (scope) {
     case "reveal_stream_key":
       return "reprompt.bodyRevealStreamKey";
@@ -128,6 +131,8 @@ function scopeBodyKey(
       return "reprompt.bodyRevokeApiToken";
     case "clear_credential":
       return "reprompt.bodyClearCredential";
+    case "reset_target_worker":
+      return "reprompt.bodyResetTargetWorker";
   }
 }
 
@@ -190,7 +195,7 @@ function AuthRepromptDialog(props: AuthRepromptDialogProps): ReactNode {
         <Dialog.Content
           className={cn(
             "fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2",
-            "w-[90vw] max-w-[400px] rounded-(--radius-lg) border bg-(--color-bg-base)",
+            "w-[90vw] max-w-(--width-dialog-md) rounded-(--radius-lg) border bg-(--color-bg-base)",
             "border-(--color-border-subtle) p-(--space-6) shadow-(--shadow-lg)",
           )}
         >
@@ -220,7 +225,7 @@ function AuthRepromptDialog(props: AuthRepromptDialogProps): ReactNode {
               >
                 {t("reprompt.passwordLabel")}
               </label>
-              <input
+              <Input
                 id="reprompt-password"
                 type="password"
                 value={password}
@@ -228,12 +233,7 @@ function AuthRepromptDialog(props: AuthRepromptDialogProps): ReactNode {
                 autoComplete="current-password"
                 autoFocus
                 disabled={inFlight}
-                className={cn(
-                  "mt-(--space-1) h-10 w-full rounded-(--radius-md) border",
-                  "border-(--color-border-subtle) bg-(--color-bg-base) px-(--space-3)",
-                  "text-(length:--text-sm) text-(--color-fg-strong)",
-                  "focus:border-(--color-accent) focus:outline-none",
-                )}
+                className="mt-(--space-1)"
               />
               <div
                 aria-live="polite"
@@ -242,28 +242,18 @@ function AuthRepromptDialog(props: AuthRepromptDialogProps): ReactNode {
                 {error}
               </div>
               <div className="mt-(--space-5) flex justify-end gap-(--space-3)">
-                <button
-                  type="button"
-                  onClick={onCancel}
-                  className={cn(
-                    "h-10 rounded-(--radius-md) px-(--space-4) text-(length:--text-sm)",
-                    "text-(--color-fg-default) hover:bg-(--color-bg-sunken)",
-                  )}
-                >
+                <Button variant="ghost" size="md" onClick={onCancel}>
                   {t("reprompt.cancel")}
-                </button>
-                <button
+                </Button>
+                <Button
                   type="submit"
-                  disabled={inFlight || password.length === 0}
-                  className={cn(
-                    "h-10 rounded-(--radius-md) px-(--space-4) text-(length:--text-sm) font-medium text-white",
-                    "bg-(--color-accent) hover:bg-(--color-accent-strong)",
-                    (inFlight || password.length === 0) &&
-                      "opacity-50 cursor-not-allowed",
-                  )}
+                  variant="primary"
+                  size="md"
+                  loading={inFlight}
+                  disabled={password.length === 0}
                 >
                   {inFlight ? t("reprompt.confirming") : t("reprompt.confirm")}
-                </button>
+                </Button>
               </div>
             </form>
           )}

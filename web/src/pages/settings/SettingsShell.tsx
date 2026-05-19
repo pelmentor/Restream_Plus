@@ -33,10 +33,23 @@ export function useSettingsStatusAnnouncer(): StatusAnnouncerCtx {
  * 800 px main), single column on mobile.
  */
 export function SettingsShell(): ReactNode {
+  // Hex Audit UX-F11 (slice 10): on mobile (< md), the sidebar stacks
+  // ABOVE the main content. With 9 nav rows it pushes the content
+  // off-screen and forces the operator to scroll past the nav on every
+  // tab change. Two production patterns considered: (a) hamburger that
+  // hides the sidebar, (b) horizontal scroll-strip. The strip is the
+  // smaller-surface fix — no new drawer component, no Radix DropdownMenu
+  // dependency, no focus-trap interaction with the existing AppShell
+  // header. The sidebar `<aside>` already lays out as a vertical column
+  // on its own; the wrapper here gives it `overflow-x-auto +
+  // max-w-full` on mobile so it scrolls horizontally while preserving
+  // its desktop layout via the md:grid-cols-[…] media query.
   return (
     <div className="grid gap-(--space-8) md:grid-cols-[240px_minmax(0,1fr)]">
-      <SettingsSidebar />
-      <main className="min-w-0 max-w-[800px]" aria-label={t("settings.sidebarHeading")}>
+      <div className="md:contents max-md:-mx-(--space-4) max-md:overflow-x-auto max-md:px-(--space-4)">
+        <SettingsSidebar />
+      </div>
+      <main className="min-w-0 max-w-(--width-content)" aria-label={t("settings.sidebarHeading")}>
         <div
           id="settings-status-region"
           role="status"

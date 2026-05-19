@@ -20,6 +20,13 @@ Allowlist (path-prefix match):
     /healthz, /readyz   — readiness probes; report locked state in body
     /internal/rtmp/*    — nginx webhooks; rejected by their own handler
                           in locked mode (they 503 so OBS publishes deny)
+    /internal/mtx/*     — MediaMTX dev-sidecar webhooks; mirror the
+                          /internal/rtmp/ allowlist so an in-flight
+                          publish at unlock time can still emit its
+                          `not_ready` lifecycle signal and clear
+                          `_obs_is_publishing`. The auth handler 503s
+                          internally on locked state — same belt-and-
+                          suspenders posture as /internal/rtmp/.
     SPA root + assets   — covered via `STATIC_PATH_PREFIXES` when Phase 7
                           mounts the SPA; the unlock UI must be reachable
                           to render the unlock screen at all.
@@ -53,9 +60,15 @@ DEFAULT_ALLOWLIST: Final[tuple[str, ...]] = (
     "/readyz",
     "/healthz",
     # Tightened from `/internal/` per security review M-1: only the
-    # nginx-rtmp webhooks need locked-mode reachability. A future
-    # `/internal/debug` would NOT be allowlisted by accident.
+    # ingest-server webhooks need locked-mode reachability. Both the
+    # nginx-rtmp (production) and MediaMTX (dev) hooks 503 internally
+    # on locked state; a future `/internal/debug` would NOT be
+    # allowlisted by accident. Hex Audit Backend F12 (2026-05-18)
+    # added `/internal/mtx/` so a publish that was in flight at
+    # unlock time can still emit `not_ready` and reset the
+    # supervisor's `_obs_is_publishing` flag.
     "/internal/rtmp/",
+    "/internal/mtx/",
 )
 
 STATIC_PATH_PREFIXES: Final[tuple[str, ...]] = (

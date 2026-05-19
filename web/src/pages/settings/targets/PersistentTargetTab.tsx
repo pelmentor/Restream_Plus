@@ -2,7 +2,11 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
 
+import { Banner } from "@/components/Banner";
+import { Button } from "@/components/Button";
 import { DestructiveConfirm } from "@/components/DestructiveConfirm";
+import { FormField } from "@/components/FormField";
+import { Input } from "@/components/Input";
 import { SecretField } from "@/components/SecretField";
 import { TypeToConfirmDialog } from "@/components/TypeToConfirmDialog";
 import { SettingsSection } from "@/components/settings/SettingsSection";
@@ -17,7 +21,6 @@ import {
 } from "@/hooks/useTargetsAdmin";
 import { useTargets } from "@/hooks/useTargets";
 import { ApiError } from "@/lib/api";
-import { cn } from "@/lib/cn";
 import { TARGET_TYPE_SPECS } from "@/lib/targetTypeSpecs";
 import type { TargetT, TargetTypeT } from "@/lib/schemas/targets";
 import { t } from "@/messages";
@@ -73,6 +76,12 @@ function TargetFormSurface(props: TargetFormSurfaceProps): ReactNode {
   const reprompt = useAuthReprompt();
   const navigate = useNavigate();
   const [deleteOpen, setDeleteOpen] = useState(false);
+  // Hex Audit CR-F12 (slice 10): surface server-side save failures
+  // (4xx / 5xx / network) to the operator instead of silently
+  // returning the form to idle. Pre-slice-10 the catch swallowed
+  // errors and the only signal was the absence of a redirect/toast,
+  // which an operator easily missed.
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const form = useForm<FormShape>({
     defaultValues: {
@@ -91,6 +100,7 @@ function TargetFormSurface(props: TargetFormSurfaceProps): ReactNode {
   }, [existing?.id]);
 
   const onSave = form.handleSubmit(async (vals) => {
+    setSaveError(null);
     try {
       if (existing === null) {
         await create.mutateAsync({
@@ -107,8 +117,16 @@ function TargetFormSurface(props: TargetFormSurfaceProps): ReactNode {
         });
       }
       form.reset(vals);
-    } catch {
-      /* inline */
+    } catch (err) {
+      // Hex Audit CR-F12 (slice 10): show the error so the operator
+      // can react. ApiError carries the wire-level ErrorCode the
+      // backend returned; anything else (network/timeout) collapses
+      // to a generic "try again" message.
+      if (err instanceof ApiError) {
+        setSaveError(err.message || t("targetTab.saveError"));
+      } else {
+        setSaveError(t("targetTab.saveError"));
+      }
     }
   });
 
@@ -125,46 +143,59 @@ function TargetFormSurface(props: TargetFormSurfaceProps): ReactNode {
 
   const presetSelected = form.watch("url");
 
+  // For a new target the form is pre-filled with valid defaults
+  // (label, URL, enabled=true) so `formState.isDirty` is false out of
+  // the gate. Gating Save on `isDirty` would force the user to type
+  // an arbitrary change before they can create the target — a trap
+  // discovered by the operator post-v1.1.3. We require dirty only on
+  // updates, where a no-op Save is genuinely wasted work.
+  const submitLocked = existing !== null && !form.formState.isDirty;
+
   return (
     <form onSubmit={onSave}>
+      {/* Hex Audit CR-F12 (slice 10): save-failure banner. Cleared on
+          every submit attempt; re-populated on catch. */}
+      {saveError !== null && (
+        <Banner variant="error" className="mb-(--space-4)">
+          {saveError}
+        </Banner>
+      )}
       <SettingsSection
         title={t("targetTab.identitySection")}
         footer={
-          <button
+          <Button
             type="submit"
-            disabled={!form.formState.isDirty || form.formState.isSubmitting}
-            className={cn(
-              "h-10 rounded-(--radius-md) px-(--space-4) text-(length:--text-sm) font-medium text-white",
-              "bg-(--color-accent) hover:bg-(--color-accent-strong)",
-              (!form.formState.isDirty || form.formState.isSubmitting) &&
-                "opacity-50 cursor-not-allowed",
-            )}
+            variant="primary"
+            size="md"
+            disabled={submitLocked}
+            loading={form.formState.isSubmitting}
           >
-            {form.formState.isSubmitting ? t("settings.saving") : t("settings.save")}
-          </button>
+            {form.formState.isSubmitting
+              ? t("settings.saving")
+              : existing === null
+                ? t("targetTab.createTarget")
+                : t("settings.save")}
+          </Button>
         }
       >
-        <label className="block">
-          <span className="text-(length:--text-sm) font-medium text-(--color-fg-strong)">
-            {t("targetTab.labelInput")}
-          </span>
-          <input
+        <FormField label={t("targetTab.labelInput")}>
+          <FormField.Input
             type="text"
             {...form.register("label", { required: true, maxLength: 128 })}
-            className={cn(
-              "mt-(--space-1) h-10 w-full rounded-(--radius-md) border bg-(--color-bg-base)",
-              "border-(--color-border-subtle) px-(--space-3)",
-              "text-(length:--text-sm) text-(--color-fg-strong)",
-              "focus:border-(--color-accent) focus:outline-none",
-            )}
           />
-        </label>
-        <label className="block">
-          <span className="text-(length:--text-sm) font-medium text-(--color-fg-strong)">
-            {t("targetTab.urlPresetLabel")}
-          </span>
-          {presetUrls.length > 0 ? (
-            <select
+        </FormField>
+        {/* Slice-6: preset URL Select; when no presets ship OR the
+            operator picks "__custom__", a sibling Input collects the
+            raw URL. The "__custom__" sentinel stays at the caller level
+            per UX-architect memo §2.2 — a primitive that knew about
+            sentinel values would leak target-spec semantics into the
+            design system. The custom Input renders OUTSIDE the
+            FormField (avoids two controls under one `htmlFor`) and uses
+            its placeholder as its own label, matching the pre-slice-6
+            UX. */}
+        {presetUrls.length > 0 && (
+          <FormField label={t("targetTab.urlPresetLabel")}>
+            <FormField.Select
               value={
                 presetUrls.includes(presetSelected) ? presetSelected : "__custom__"
               }
@@ -175,35 +206,22 @@ function TargetFormSurface(props: TargetFormSurfaceProps): ReactNode {
                   form.setValue("url", e.target.value, { shouldDirty: true });
                 }
               }}
-              className={cn(
-                "mt-(--space-1) h-10 w-full rounded-(--radius-md) border bg-(--color-bg-base)",
-                "border-(--color-border-subtle) px-(--space-3)",
-                "text-(length:--text-sm) text-(--color-fg-strong)",
-                "focus:border-(--color-accent) focus:outline-none",
-              )}
-            >
-              {presetUrls.map((u) => (
-                <option key={u} value={u}>
-                  {u}
-                </option>
-              ))}
-              <option value="__custom__">{t("targetTab.urlCustom")}</option>
-            </select>
-          ) : null}
-          {(!presetUrls.includes(presetSelected) || presetUrls.length === 0) && (
-            <input
-              type="text"
-              {...form.register("url", { required: true, maxLength: 2048 })}
-              placeholder={t("targetTab.urlCustomInput")}
-              className={cn(
-                "mt-(--space-2) h-10 w-full rounded-(--radius-md) border bg-(--color-bg-base)",
-                "border-(--color-border-subtle) px-(--space-3)",
-                "font-mono text-(length:--text-sm) text-(--color-fg-strong)",
-                "focus:border-(--color-accent) focus:outline-none",
-              )}
+              options={[
+                ...presetUrls.map((u) => ({ value: u, label: u })),
+                { value: "__custom__", label: t("targetTab.urlCustom") },
+              ]}
             />
-          )}
-        </label>
+          </FormField>
+        )}
+        {(!presetUrls.includes(presetSelected) || presetUrls.length === 0) && (
+          <Input
+            type="text"
+            mono
+            aria-label={t("targetTab.urlCustomInput")}
+            {...form.register("url", { required: true, maxLength: 2048 })}
+            placeholder={t("targetTab.urlCustomInput")}
+          />
+        )}
         <label className="flex items-center gap-(--space-3)">
           <input
             type="checkbox"
@@ -218,7 +236,25 @@ function TargetFormSurface(props: TargetFormSurfaceProps): ReactNode {
 
       {existing !== null && (
         <>
-          <StreamKeySection target={existing} />
+          {/* Stream key is hidden for disabled targets — a disabled
+           * target can't broadcast, so credential management for it
+           * is noise. Re-enable to manage the key. Danger zone stays
+           * visible so the user can always delete a stale target,
+           * including disabled ones. Gated on the SAVED state
+           * (`existing.enabled`) not the form-watched value so the
+           * visibility transition is atomic with Save — no flicker
+           * mid-edit. */}
+          {existing.enabled && (
+            <>
+              {!existing.has_credential &&
+                TARGET_TYPE_SPECS[type].persistentStreamKey && (
+                  <Banner variant="warn" title={t("targetTab.missingKeyTitle")}>
+                    {t("targetTab.missingKeyBody")}
+                  </Banner>
+                )}
+              <StreamKeySection target={existing} />
+            </>
+          )}
           <DangerZone
             target={existing}
             onDeleteClick={() => setDeleteOpen(true)}
@@ -323,25 +359,24 @@ function StreamKeySection({ target }: { readonly target: TargetT }): ReactNode {
         ariaLabel={t("targetTab.streamKeySection")}
       />
       <div className="flex flex-wrap gap-(--space-2)">
-        <button
+        <Button
           type="button"
+          variant="secondary"
+          size="md"
           onClick={() => setChanging((v) => !v)}
-          className={cn(
-            "h-9 rounded-(--radius-md) px-(--space-3) text-(length:--text-sm) font-medium",
-            "border border-(--color-border-subtle) text-(--color-fg-default) hover:bg-(--color-bg-sunken)",
-          )}
         >
           {t("targetTab.changeKey")}
-        </button>
+        </Button>
         {target.has_credential && (
           <DestructiveConfirm
             trigger={
-              <button
+              <Button
                 type="button"
-                className="h-9 rounded-(--radius-md) px-(--space-3) text-(length:--text-sm) text-(--color-error) hover:bg-(--color-error-faint)"
+                variant="danger-ghost"
+                size="md"
               >
                 {t("targetTab.clearKey")}
-              </button>
+              </Button>
             }
             body={
               <>
@@ -365,28 +400,27 @@ function StreamKeySection({ target }: { readonly target: TargetT }): ReactNode {
             ariaLabel={t("targetTab.streamKeySection")}
           />
           <div className="mt-(--space-3) flex justify-end gap-(--space-2)">
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="md"
               onClick={() => {
                 setChanging(false);
                 setNewKey("");
               }}
-              className="h-9 rounded-(--radius-md) px-(--space-3) text-(length:--text-sm) text-(--color-fg-default) hover:bg-(--color-bg-sunken)"
             >
               {t("common.cancel")}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="primary"
+              size="md"
               onClick={() => void onSaveKey()}
-              disabled={!newKey.trim() || setCred.isPending}
-              className={cn(
-                "h-9 rounded-(--radius-md) px-(--space-3) text-(length:--text-sm) font-medium text-white",
-                "bg-(--color-accent) hover:bg-(--color-accent-strong)",
-                (!newKey.trim() || setCred.isPending) && "opacity-50 cursor-not-allowed",
-              )}
+              disabled={!newKey.trim()}
+              loading={setCred.isPending}
             >
               {t("targetTab.saveKey")}
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -403,16 +437,15 @@ function DangerZone({
 }): ReactNode {
   return (
     <SettingsSection title={t("targetTab.dangerZone")}>
-      <button
+      <Button
         type="button"
+        variant="danger"
+        size="md"
         onClick={onDeleteClick}
-        className={cn(
-          "self-start h-10 rounded-(--radius-md) px-(--space-4) text-(length:--text-sm) font-medium text-white",
-          "bg-(--color-error) hover:bg-(--color-error)/85",
-        )}
+        className="self-start"
       >
         {t("targetTab.deleteTarget")} {target.label !== "" && `“${target.label}”`}
-      </button>
+      </Button>
     </SettingsSection>
   );
 }

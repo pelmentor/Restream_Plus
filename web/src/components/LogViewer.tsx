@@ -17,13 +17,14 @@ export interface LogViewerProps {
  * Design-system §6.12. Mono, virtualized-less (cap at 200 visible lines)
  * with auto-scroll + Pause-tail toggle.
  *
- * Per phase-8-design-memo §N: 20-row max-height inside the slide-out
- * (max-h-[450px]). Caller can override with `maxHeightClass`.
+ * Per phase-8-design-memo §N: 20-row max-height inside the slide-out.
+ * Slice-6 FH2-M2: arbitrary `max-h-[450px]` tokenized to
+ * `--height-log-viewer`. Caller can override with `maxHeightClass`.
  */
 export function LogViewer({
   title,
   lines,
-  maxHeightClass = "max-h-[450px]",
+  maxHeightClass = "max-h-(--height-log-viewer)",
   onCopyAll,
   onDownload,
 }: LogViewerProps): ReactNode {
@@ -128,13 +129,17 @@ export function LogViewer({
           )}
         </div>
         {userScrolling && (
-          <button
-            type="button"
+          // Slice-6 SA-BLOCK-2 cleanup: floating resume-tail CTA
+          // migrated to Button primitive. `rounded-full` retained for
+          // visual continuity with the "pill" floating-action shape.
+          <Button
+            variant="primary"
+            size="sm"
             onClick={onResumeTail}
-            className="absolute bottom-(--space-3) right-(--space-3) rounded-full bg-(--color-accent) text-white px-(--space-3) py-(--space-1) text-(length:--text-xs) shadow-(--shadow-md)"
+            className="absolute bottom-(--space-3) right-(--space-3) rounded-full shadow-(--shadow-md)"
           >
             {t("logViewer.resumeTail")}
-          </button>
+          </Button>
         )}
       </div>
     </div>

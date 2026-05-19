@@ -1,6 +1,8 @@
 import { useState, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
 
+import { Button } from "@/components/Button";
+import { FormField } from "@/components/FormField";
 import { SecretField } from "@/components/SecretField";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { useAuthReprompt, REPROMPT_CANCELLED } from "@/hooks/useAuthReprompt";
@@ -12,7 +14,6 @@ import {
 } from "@/hooks/useTargetsAdmin";
 import { useTargets } from "@/hooks/useTargets";
 import { ApiError } from "@/lib/api";
-import { cn } from "@/lib/cn";
 import type { TargetT } from "@/lib/schemas/targets";
 import { t } from "@/messages";
 
@@ -34,16 +35,15 @@ export function CustomTab(): ReactNode {
             <p className="text-(length:--text-sm) text-(--color-fg-muted)">
               {t("targetTab.customEmpty")}
             </p>
-            <button
+            <Button
               type="button"
+              variant="primary"
+              size="md"
               onClick={() => setEditing("new")}
-              className={cn(
-                "mt-(--space-3) h-10 rounded-(--radius-md) px-(--space-4)",
-                "bg-(--color-accent) text-white font-medium hover:bg-(--color-accent-strong)",
-              )}
+              className="mt-(--space-3)"
             >
               {t("targetTab.customListEmptyCta")}
-            </button>
+            </Button>
           </div>
         ) : (
           <>
@@ -52,16 +52,15 @@ export function CustomTab(): ReactNode {
                 <CustomRow key={c.id} target={c} onEdit={() => setEditing(c)} />
               ))}
             </ul>
-            <button
+            <Button
               type="button"
+              variant="primary"
+              size="md"
               onClick={() => setEditing("new")}
-              className={cn(
-                "self-start h-10 rounded-(--radius-md) px-(--space-4) font-medium text-white",
-                "bg-(--color-accent) hover:bg-(--color-accent-strong)",
-              )}
+              className="self-start"
             >
               {t("targetTab.addCustomTarget")}
-            </button>
+            </Button>
           </>
         )}
       </SettingsSection>
@@ -92,13 +91,14 @@ function CustomRow({
           {target.url}
         </p>
       </div>
-      <button
+      <Button
         type="button"
+        variant="link"
+        size="sm"
         onClick={onEdit}
-        className="text-(length:--text-sm) text-(--color-accent) hover:underline"
       >
         {t("security.customRowEdit")}
-      </button>
+      </Button>
     </li>
   );
 }
@@ -122,7 +122,7 @@ function CustomEditor({
     streamKey: string;
   }>({
     defaultValues: {
-      label: existing?.label ?? "Custom target",
+      label: existing?.label ?? t("targetTab.customDefaultLabel"),
       url: existing?.url ?? "",
       enabled: existing?.enabled ?? true,
       streamKey: "",
@@ -172,67 +172,44 @@ function CustomEditor({
       footer={
         <>
           {existing && (
-            <button
+            <Button
               type="button"
+              variant="danger-ghost"
+              size="md"
               onClick={() => void onDelete()}
-              className="h-10 rounded-(--radius-md) px-(--space-4) text-(length:--text-sm) text-(--color-error) hover:bg-(--color-error-faint)"
             >
               {t("targetTab.deleteTarget")}
-            </button>
+            </Button>
           )}
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-10 rounded-(--radius-md) px-(--space-4) text-(length:--text-sm) text-(--color-fg-default) hover:bg-(--color-bg-sunken)"
-          >
+          <Button type="button" variant="ghost" size="md" onClick={onClose}>
             {t("common.cancel")}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="primary"
+            size="md"
             onClick={() => void onSave()}
-            disabled={form.formState.isSubmitting}
-            className={cn(
-              "h-10 rounded-(--radius-md) px-(--space-4) font-medium text-white",
-              "bg-(--color-accent) hover:bg-(--color-accent-strong)",
-              form.formState.isSubmitting && "opacity-50 cursor-not-allowed",
-            )}
+            loading={form.formState.isSubmitting}
           >
             {t("settings.save")}
-          </button>
+          </Button>
         </>
       }
     >
-      <label className="block">
-        <span className="text-(length:--text-sm) font-medium text-(--color-fg-strong)">
-          {t("targetTab.labelInput")}
-        </span>
-        <input
+      <FormField label={t("targetTab.labelInput")}>
+        <FormField.Input
           type="text"
           {...form.register("label", { required: true, maxLength: 128 })}
-          className={cn(
-            "mt-(--space-1) h-10 w-full rounded-(--radius-md) border bg-(--color-bg-base)",
-            "border-(--color-border-subtle) px-(--space-3)",
-            "text-(length:--text-sm) text-(--color-fg-strong)",
-            "focus:border-(--color-accent) focus:outline-none",
-          )}
         />
-      </label>
-      <label className="block">
-        <span className="text-(length:--text-sm) font-medium text-(--color-fg-strong)">
-          {t("targetTab.urlCustomInput")}
-        </span>
-        <input
+      </FormField>
+      <FormField label={t("targetTab.urlCustomInput")}>
+        <FormField.Input
           type="text"
+          mono
           placeholder="rtmps://example.com/app"
           {...form.register("url", { required: true, maxLength: 2048 })}
-          className={cn(
-            "mt-(--space-1) h-10 w-full rounded-(--radius-md) border bg-(--color-bg-base)",
-            "border-(--color-border-subtle) px-(--space-3)",
-            "font-mono text-(length:--text-sm) text-(--color-fg-strong)",
-            "focus:border-(--color-accent) focus:outline-none",
-          )}
         />
-      </label>
+      </FormField>
       <div className="flex items-center gap-(--space-3)">
         <input
           type="checkbox"
@@ -243,19 +220,23 @@ function CustomEditor({
           {t("targetTab.enabledLabel")}
         </span>
       </div>
-      <label className="block">
+      {/* Slice-6 reviewer H-2: SecretField owns its own input id +
+          `aria-label`, so wrapping it in FormField would create a
+          dangling `<label htmlFor>` pointing to a generated id that
+          doesn't exist in the rendered DOM. Render the visible label
+          inline and let SecretField's internal ariaLabel handle SR
+          announcement. */}
+      <div className="flex flex-col gap-(--space-1)">
         <span className="text-(length:--text-sm) font-medium text-(--color-fg-strong)">
           {t("targetTab.streamKeySection")}
         </span>
-        <div className="mt-(--space-1)">
-          <SecretField
-            variant="entry"
-            value={form.watch("streamKey")}
-            onChange={(v) => form.setValue("streamKey", v, { shouldDirty: true })}
-            ariaLabel={t("targetTab.streamKeySection")}
-          />
-        </div>
-      </label>
+        <SecretField
+          variant="entry"
+          value={form.watch("streamKey")}
+          onChange={(v) => form.setValue("streamKey", v, { shouldDirty: true })}
+          ariaLabel={t("targetTab.streamKeySection")}
+        />
+      </div>
     </SettingsSection>
   );
 }

@@ -377,22 +377,85 @@ class TestSettingsRepository:
         assert rotated.ingest_key_rotated_at is not None
         assert rotated.ingest_key_grace_until is not None
 
+    # ------------------------------------------------------------------
+    # Hex Audit BA-F1 (2026-05-18): clear_ingest_key_previous_after_grace
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_clear_previous_noop_when_no_rotation(self, session: AsyncSession) -> None:
+        """Fresh DB has no previous key — the clear is a no-op."""
+        repo = SettingsRepository(session)
+        cleared = await repo.clear_ingest_key_previous_after_grace()
+        assert cleared is False
+
+    @pytest.mark.asyncio
+    async def test_clear_previous_noop_within_grace(self, session: AsyncSession) -> None:
+        """Inside the grace window the row is preserved."""
+        repo = SettingsRepository(session)
+        await repo.rotate_ingest_key(
+            new_key="rotated-1", grace_until=_now() + timedelta(hours=24)
+        )
+        cleared = await repo.clear_ingest_key_previous_after_grace()
+        assert cleared is False
+        after = await repo.get()
+        assert after.ingest_key_previous is not None
+        assert after.ingest_key_grace_until is not None
+
+    @pytest.mark.asyncio
+    async def test_clear_previous_after_grace_expired(self, session: AsyncSession) -> None:
+        """Past the grace boundary, both columns null out atomically."""
+        repo = SettingsRepository(session)
+        # Rotate with a grace already 5 s in the past.
+        await repo.rotate_ingest_key(
+            new_key="rotated-2", grace_until=_now() - timedelta(seconds=5)
+        )
+        cleared = await repo.clear_ingest_key_previous_after_grace()
+        assert cleared is True
+        after = await repo.get()
+        assert after.ingest_key_previous is None
+        assert after.ingest_key_grace_until is None
+        # Current key untouched — only the previous-half drops.
+        assert after.ingest_key_current == "rotated-2"
+
+    @pytest.mark.asyncio
+    async def test_clear_previous_idempotent(self, session: AsyncSession) -> None:
+        """A second call after a successful clear returns False
+        (predicate now mismatches)."""
+        repo = SettingsRepository(session)
+        await repo.rotate_ingest_key(
+            new_key="rotated-3", grace_until=_now() - timedelta(seconds=1)
+        )
+        assert await repo.clear_ingest_key_previous_after_grace() is True
+        assert await repo.clear_ingest_key_previous_after_grace() is False
+
+    @pytest.mark.asyncio
+    async def test_clear_previous_rejects_naive_now(self, session: AsyncSession) -> None:
+        from datetime import datetime as _dt
+
+        repo = SettingsRepository(session)
+        with pytest.raises(ValueError, match="timezone-aware"):
+            await repo.clear_ingest_key_previous_after_grace(now=_dt(2026, 1, 1))
+
 
 # --- Audit log ---------------------------------------------------------------
 
 
 class TestAuditLogRepository:
     @pytest.mark.asyncio
-    async def test_append_persists_and_decodes_data(
+    async def test_append_in_session_persists_and_decodes_data(
         self,
         sessionmaker: async_sessionmaker[AsyncSession],
     ) -> None:
+        """Hex Audit BA-F4 (slice 8): in-session `append` flushes the
+        row into the caller's transaction; the caller commits."""
         repo = AuditLogRepository(sessionmaker)
-        dto = await repo.append(
-            event_type="login_succeeded",
-            actor="admin",
-            data={"ip": "127.0.0.1", "ua": "curl/8"},
-        )
+        async with sessionmaker() as s, s.begin():
+            dto = await repo.append(
+                s,
+                event_type="login_succeeded",
+                actor="admin",
+                data={"ip": "127.0.0.1", "ua": "curl/8"},
+            )
         assert isinstance(dto, AuditLogEntryDTO)
         assert dto.event_type == "login_succeeded"
         assert dto.data == {"ip": "127.0.0.1", "ua": "curl/8"}
@@ -401,28 +464,94 @@ class TestAuditLogRepository:
         assert any(r.id == dto.id for r in rows)
 
     @pytest.mark.asyncio
-    async def test_append_runs_wal_checkpoint(
+    async def test_append_standalone_persists_and_decodes_data(
+        self,
+        sessionmaker: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Standalone path opens its own txn — used by lifespan/supervisor."""
+        repo = AuditLogRepository(sessionmaker)
+        dto = await repo.append_standalone(
+            event_type="supervisor_started",
+            actor="system",
+            data={"build_at": "2026-05-19T00:00:00+00:00"},
+        )
+        assert dto.event_type == "supervisor_started"
+        async with sessionmaker() as s:
+            rows = await repo.list_recent(s)
+        assert any(r.id == dto.id for r in rows)
+
+    @pytest.mark.asyncio
+    async def test_in_session_append_rolls_back_with_caller(
+        self,
+        sessionmaker: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Hex Audit BA-F4 (slice 8): if the caller's txn rolls back,
+        the audit row rolls back too — that's the load-bearing
+        transactional invariant the slice exists to guarantee."""
+        repo = AuditLogRepository(sessionmaker)
+        try:
+            async with sessionmaker() as s, s.begin():
+                await repo.append(
+                    s,
+                    event_type="phantom_event_should_not_persist",
+                    actor="admin",
+                )
+                raise RuntimeError("simulated business-write failure")
+        except RuntimeError:
+            pass
+        async with sessionmaker() as s:
+            rows = await repo.list_recent(s)
+        assert not any(r.event_type == "phantom_event_should_not_persist" for r in rows)
+
+    @pytest.mark.asyncio
+    async def test_standalone_append_runs_wal_checkpoint(
         self,
         sessionmaker: async_sessionmaker[AsyncSession],
         db_path: Path,
     ) -> None:
-        """After append, wal_checkpoint(TRUNCATE) must shrink the WAL.
-
-        We force-write 50 rows, then assert the WAL file is small (close
-        to zero bytes) after the final append, which only happens if
-        each append triggered a truncating checkpoint.
-        """
+        """Standalone path keeps the per-append `wal_checkpoint(TRUNCATE)`
+        posture (the in-session path defers checkpoint to the periodic
+        retention loop)."""
         repo = AuditLogRepository(sessionmaker)
         for i in range(50):
-            await repo.append(event_type="run_started", data={"i": i})
+            await repo.append_standalone(event_type="run_started", data={"i": i})
         wal_path = db_path.with_name(db_path.name + "-wal")
         assert wal_path.exists()
-        # A TRUNCATE checkpoint after every append keeps the WAL file
-        # roughly empty between appends. We allow up to 4 KB to absorb
-        # SQLite's internal headers and per-write framing.
         assert (
             wal_path.stat().st_size < 4 * 1024
         ), f"WAL not being checkpointed: {wal_path.stat().st_size} bytes"
+
+    @pytest.mark.asyncio
+    async def test_delete_older_than_returns_rowcount_and_strips_rows(
+        self,
+        sessionmaker: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Retention helper deletes rows with `at < cutoff` and reports
+        the number affected (Hex Audit FG2-M6, slice 8)."""
+        repo = AuditLogRepository(sessionmaker)
+        cutoff = datetime(2026, 5, 1, tzinfo=UTC)
+        old_at = datetime(2026, 4, 1, tzinfo=UTC)
+        new_at = datetime(2026, 6, 1, tzinfo=UTC)
+        async with sessionmaker() as s, s.begin():
+            await repo.append(s, event_type="ancient", actor="system", at=old_at)
+            await repo.append(s, event_type="ancient", actor="system", at=old_at)
+            await repo.append(s, event_type="fresh", actor="system", at=new_at)
+        async with sessionmaker() as s, s.begin():
+            deleted = await repo.delete_older_than(s, cutoff=cutoff)
+        assert deleted == 2
+        async with sessionmaker() as s:
+            rows = await repo.list_recent(s, limit=100)
+        assert all(r.event_type == "fresh" for r in rows if r.event_type in {"ancient", "fresh"})
+
+    @pytest.mark.asyncio
+    async def test_delete_older_than_rejects_naive_datetime(
+        self,
+        sessionmaker: async_sessionmaker[AsyncSession],
+    ) -> None:
+        repo = AuditLogRepository(sessionmaker)
+        async with sessionmaker() as s, s.begin():
+            with pytest.raises(ValueError, match="timezone-aware"):
+                await repo.delete_older_than(s, cutoff=datetime(2026, 5, 1))  # noqa: DTZ001
 
     @pytest.mark.asyncio
     async def test_list_by_target_filters_correctly(
@@ -436,8 +565,14 @@ class TestAuditLogRepository:
         target = targets_repo_dto
 
         repo = AuditLogRepository(sessionmaker)
-        await repo.append(event_type="failed_open_tripped", actor="system", target_id=target.id)
-        await repo.append(event_type="login_succeeded", actor="admin")
+        async with sessionmaker() as s, s.begin():
+            await repo.append(
+                s,
+                event_type="failed_open_tripped",
+                actor="system",
+                target_id=target.id,
+            )
+            await repo.append(s, event_type="login_succeeded", actor="admin")
         async with sessionmaker() as s:
             scoped = await repo.list_by_target(s, target.id)
         assert len(scoped) == 1

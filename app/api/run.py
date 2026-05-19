@@ -33,6 +33,7 @@ from app.api.schemas import (
     WorkerSnapshotView,
 )
 from app.auth.deps import AuthenticatedRequestDep, AuthStateDep
+from app.domain.errors import IllegalRunStateTransitionError, RunBlockedByRotationError
 from app.domain.run_state import RunAction, is_legal
 from app.domain.target import Target
 
@@ -162,6 +163,14 @@ def _spawn_supervisor_task(request: Request, coro: Coroutine[Any, Any, Any], *, 
     reference on `app.state.supervisor_tasks` so the task isn't
     garbage-collected before it completes (asyncio's task ref is
     weak — same fix as `supervisor.py::_pending_notifies`).
+
+    Hex Audit BA-F2 (2026-05-18): the task done-callback also funnels
+    exceptions through `_log_supervisor_task_exception`. Without this,
+    a supervisor crash during the scheduled coroutine vanished behind
+    the 202 we already returned — no log line, no bus event, only an
+    asyncio "task exception was never retrieved" warning at process
+    exit. Now the failure is named in structlog with the task name
+    so an oncall has a hook to grep on.
     """
     bucket: set[asyncio.Task[Any]] | None = getattr(request.app.state, "supervisor_tasks", None)
     if bucket is None:
@@ -170,6 +179,57 @@ def _spawn_supervisor_task(request: Request, coro: Coroutine[Any, Any, Any], *, 
     task = asyncio.create_task(coro, name=name)
     bucket.add(task)
     task.add_done_callback(bucket.discard)
+    task.add_done_callback(_log_supervisor_task_exception)
+
+
+def _log_supervisor_task_exception(task: asyncio.Task[Any]) -> None:
+    """Done-callback that surfaces supervisor-coroutine failures.
+
+    Three branches:
+      1. Cancelled — silent, propagation is the caller's concern.
+      2. `IllegalRunStateTransitionError` — info-level. This is the
+         expected outcome when two concurrent operators click START
+         (or STOP) in the narrow window before the supervisor lock
+         resolves the actual state: one task wins, the other races
+         past the REST-side legality pre-check and is rejected inside
+         `supervisor.start_run`'s `if self._run_state is not OFFLINE`.
+         Logging at info keeps the noise low while leaving a grep-able
+         trail (`event=supervisor_task_race_lost`).
+      3. Any other exception — exception-level. A credential-decrypt
+         storm or unrecoverable spawn error is interesting; we want
+         the traceback in stderr.
+    """
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is None:
+        return
+    if isinstance(exc, IllegalRunStateTransitionError):
+        _logger.info(
+            "supervisor_task_race_lost",
+            task_name=task.get_name(),
+            state=exc.state.value,
+            action=exc.action.value,
+        )
+        return
+    if isinstance(exc, RunBlockedByRotationError):
+        # Slice 3 (Hex Audit FG2-H3): expected outcome when
+        # rotate-passphrase grabbed the rotation_lock between the
+        # REST advisory pre-check (line ~125) and the supervisor's
+        # authoritative check inside `_lock`. Log at info, same as
+        # the race-lost branch — operator UI will show the run
+        # didn't start; the bus event from the rejected attempt is
+        # the user-facing signal.
+        _logger.info(
+            "supervisor_task_rotation_blocked",
+            task_name=task.get_name(),
+        )
+        return
+    _logger.error(
+        "supervisor_task_failed",
+        task_name=task.get_name(),
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
 
 
 __all__ = ["router"]

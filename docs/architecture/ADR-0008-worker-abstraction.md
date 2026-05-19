@@ -229,3 +229,18 @@ itself reap our children — we must do it explicitly. This is the
   text matches the URL-with-key pattern), the redactor adds an
   allowlist for known-safe substrings — but the default is
   redact-then-confirm, never the inverse.
+
+- **2026-05-18: `-c copy` lock survives the Phase 13 multi-track
+  exploration.** A full architecture pass on accepting Enhanced RTMP
+  multi-track ingest + forwarding multi-track to Twitch was deferred
+  pending two upstream unblocks (OBS Custom Service
+  `multitrack_video_configuration_url` support + ffmpeg mainline
+  merging enhanced-flv multitrack encode). See
+  ADR-0003 §"Open questions" entry of the same date for the full
+  reasoning. Net for this ADR: there is no transcoding tier on the
+  roadmap, and the server-computed `FFMPEG_BASE_ARGS` chain
+  ending in `-c copy` remains the single source of truth. When the
+  upstream blockers clear and Phase 13 reopens, the *track-selection*
+  computation (`-map 0:v:<chosen-idx>` based on a per-target
+  `max_height` setting) is the only addition this ADR would absorb;
+  the `-c copy` lock itself does not loosen.

@@ -30,19 +30,24 @@ followed by an audit row.
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextlib
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Final, Protocol
+from enum import Enum
+from typing import Any, Final, Protocol
 
 import structlog
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.key_material import KeyMaterial
-from app.crypto.aead import build_credential_aad, decrypt
+from app.crypto.aead import decrypt_credential
 from app.domain.credential_policy import CredentialLifetime, lifetime_for
-from app.domain.errors import IllegalRunStateTransitionError
+from app.domain.errors import IllegalRunStateTransitionError, RunBlockedByRotationError
 from app.domain.health import aggregate_target_health
 from app.domain.run_state import RunAction, RunState
 from app.domain.run_state import transition as run_transition
@@ -93,8 +98,60 @@ DROP_ALERT_INTERVAL_SECONDS: Final[float] = 5.0
 storm doesn't itself flood the bus."""
 
 
+PENDING_ACTIONS_CAP: Final[int] = 64
+"""Slice 3 (Hex Audit BA-F7 / FG-F5 / FG2-C2 / FG2-H6): bound on the
+deferred-action deque. nginx-rtmp + MediaMTX should only ever enqueue
+a handful of items (each represents a real OBS publish/unpublish
+event); a runaway webhook storm that exceeds this cap drops the
+oldest entry and emits a single structlog warning. The cap is large
+enough that legitimate operation never hits it (a Began/Ended pair
+per OBS session is the norm) but small enough that an unbounded
+producer cannot use this as a memory-exhaustion vector."""
+
+
+_WIPE_BATCH_SIZE: Final[int] = 5
+"""Hex Audit BA2-F5 / FG3-F5 STRONG (slice 10): per-batch cap on
+`_wipe_per_session_credentials` to bound the SQLite write-lock
+duration per txn. With 30+ VK targets the pre-slice-10 single-txn
+version held the write lock for ~2× target_count statement
+turnarounds; per-batch commits release the lock between batches so a
+concurrent OBS `on_publish` webhook insert against `sessions` doesn't
+wait on the entire wipe. 5 targets per batch ≈ 10 statement
+turnarounds — well under `busy_timeout=5000ms` even on a slow disk."""
+
+
 def _utc_now() -> datetime:
     return datetime.now(tz=UTC)
+
+
+class _PendingActionKind(str, Enum):
+    """Slice 3: discriminator for the deferred-action queue. The
+    webhook handlers enqueue one of these on every nginx-rtmp /
+    MediaMTX signal; the supervisor drains them under `_lock`.
+
+    Only the two OBS-publish lifecycle signals need the deferred-
+    action treatment today. Other supervisor inputs (REST start/stop,
+    enable_target, disable_target) already run on the request task
+    that's awaiting the supervisor coroutine, so they don't suffer
+    the sync-webhook race we're closing here.
+    """
+
+    OBS_PUBLISH_BEGAN = "obs_publish_began"
+    OBS_PUBLISH_ENDED = "obs_publish_ended"
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingAction:
+    """One queued OBS-publish signal awaiting drain under `_lock`.
+
+    `at` is the wall-clock arrival time (clock-of-record, same source
+    as `_run_state_changed_at`). The supervisor logs the arrival-to-
+    drain latency at the warning threshold (currently `>1.0 s`) so a
+    pathologically slow drain becomes observable instead of silent.
+    """
+
+    kind: _PendingActionKind
+    at: datetime
 
 
 class WorkerFactory(Protocol):
@@ -118,20 +175,43 @@ class Supervisor:
         process_spawner: ProcessSpawner,
         credential_registry: CredentialRegistry,
         ingest_loopback_url: str,
+        rotation_lock: asyncio.Lock | None = None,
         clock: Callable[[], datetime] = _utc_now,
         monotonic_clock_ns: Callable[[], int] = time.monotonic_ns,
         worker_factory: WorkerFactory | None = None,
         host_stats_sampler_factory: (Callable[[WorkerPidProvider], HostStatsSampler] | None) = None,
         host_stats_tick: float = HOST_STATS_TICK_SECONDS,
+        youtube_backup_enabled: bool = False,
     ) -> None:
         self._sessionmaker = sessionmaker
         self._key_material = key_material
         self._process_spawner = process_spawner
         self._credential_registry = credential_registry
         self._ingest_loopback_url = ingest_loopback_url
+        # Hex Audit SA-F14 (slice 10): explicit gate on the half-baked
+        # YouTube primary+backup-worker feature. Threaded into every
+        # `target_dto_to_domain` call below.
+        self._youtube_backup_enabled = youtube_backup_enabled
         self._clock = clock
         self._monotonic_clock_ns = monotonic_clock_ns
         self._worker_factory = worker_factory or self._default_worker_factory
+        # Slice 3 (Hex Audit FG2-H3 / BA-F7): rotation_lock is the
+        # auth-layer asyncio.Lock that rotate-passphrase holds for the
+        # duration of the re-wrap (`app/auth/deps.py::AuthState.rotation_lock`).
+        # The supervisor injects it so `start_run` can acquire it
+        # atomically with the OFFLINE pre-check (closes the TOCTOU
+        # between the REST handler's advisory check and the actual
+        # credential read).
+        #
+        # Lock ordering rule: `supervisor._lock` is acquired BEFORE
+        # `rotation_lock`, never the reverse. Rotate-passphrase honours
+        # this via `acquire_state_lock()` (below) which takes
+        # `supervisor._lock` first.
+        #
+        # Defaulted for test convenience — Supervisor() with no
+        # rotation_lock gets a private Lock that nothing else touches.
+        # Production wires `auth_state.rotation_lock` from main.py.
+        self._rotation_lock = rotation_lock if rotation_lock is not None else asyncio.Lock()
         # Optional — when None, the supervisor skips the host-stats loop
         # entirely (used by tests that don't exercise host metrics).
         # Factory receives `self` so the sampler can enumerate worker
@@ -167,10 +247,44 @@ class Supervisor:
         # Strong-reference set for fire-and-forget bus-notify tasks
         # so they aren't GC'd before completion (Python's task ref is weak).
         self._pending_notifies: set[asyncio.Task[None]] = set()
-        # Pending audit-row writes for credential decrypt failures —
-        # written outside the open DB session in `_load_runnable_targets`
-        # to avoid SQLite write-lock contention.
-        self._decrypt_failures: list[str] = []
+        # NOTE: decrypt failures used to live on `self` so the drain
+        # loop in `start_run` could run them outside the load session.
+        # Hex Audit footgun-hunter FG2-C5 (2026-05-18) showed that an
+        # interrupted `start_run` leaked the list into the next attempt,
+        # producing duplicate audit rows under repeated KEK-mismatch
+        # restarts. `_load_runnable_targets` now returns the failure
+        # list as a local; no cross-call instance state.
+
+        # Tracks whether OBS is currently publishing to the local RTMP
+        # ingest, INDEPENDENT of `_run_state`. The two are decoupled on
+        # purpose: an operator can start OBS BEFORE clicking START on
+        # the panel (a common ordering), in which case the auth webhook
+        # fires while we're still OFFLINE. With only `_run_state` to
+        # check, we'd silently drop that publish signal — and the next
+        # ARMED transition (from clicking START) would have no way to
+        # learn that OBS is already up, leaving the run wedged on
+        # ARMED's "WAITING FOR OBS" body forever. The flag is the
+        # ordering-independent record.
+        #
+        # Slice 3 (Hex Audit BA-F7 / FG-F5 / FG2-C2 / FG2-H6): the flag
+        # is now ONLY written by the drain path under `_lock`. The
+        # webhook handlers (`notify_obs_publish_*`) append to
+        # `_pending_actions` and never touch state directly. This is
+        # the single-owner invariant — no more lock-free races with
+        # `start_run` / `stop_run` mutating the same fields.
+        self._obs_is_publishing: bool = False
+        # Slice 3: deferred OBS-publish signals awaiting drain.
+        # Bounded at `PENDING_ACTIONS_CAP`; overflow drops the oldest
+        # entry (FIFO) and emits a warning so a runaway webhook source
+        # is observable, not silent. The deque + GIL-atomic
+        # `append`/`popleft` make webhook-side ops O(1) lock-free; the
+        # drain side acquires `_lock` to apply queued actions.
+        self._pending_actions: collections.deque[_PendingAction] = collections.deque()
+        # Strong-reference set for fire-and-forget drain tasks, mirroring
+        # `_pending_notifies` for bus notifications. Without it the
+        # `call_soon`-spawned drain coroutine is reachable only via
+        # asyncio's weak ref and can be GC'd before completion.
+        self._pending_drain_tasks: set[asyncio.Task[None]] = set()
 
     # ------------------------------------------------------------------
     # Lifecycle — owned by the FastAPI lifespan
@@ -246,72 +360,119 @@ class Supervisor:
         in `CredentialRegistry`, composes the output URL, and spawns one
         FFmpegWorker per (target, role). On any error during spawn:
         rollback (stop already-started workers) and transition to ERROR.
+
+        Slice 3 (Hex Audit FG2-H3): rotation_lock is acquired atomically
+        with the OFFLINE pre-check, under `supervisor._lock`. This
+        closes the TOCTOU between the REST handler's advisory
+        `state.rotation_lock.locked()` check and the actual credential
+        decrypt: rotate-passphrase either has to wait for our
+        `_lock` (advisory check still meaningful but unauthoritative)
+        OR it grabbed rotation_lock first (in which case we refuse
+        with `RunBlockedByRotationError`).
         """
         async with self._lock:
             if self._run_state is not RunState.OFFLINE:
                 raise IllegalRunStateTransitionError(
                     state=self._run_state, action=RunAction.START_REQUESTED
                 )
-            await self._set_run_state(
-                RunState.STARTING,
-                RunAction.START_REQUESTED,
-                cause="user pressed START",
-            )
-
+            # Slice 3: authoritative rotation gate. The REST-side check
+            # at `app/api/run.py::start_run` is advisory (UX hint); a
+            # rotation that landed between that check and now would
+            # leave workers holding stale DerivedKeys. By acquiring
+            # rotation_lock here, the only way for rotate-passphrase
+            # to start during our run is to grab `_lock` first — which
+            # is impossible while we hold it.
+            if self._rotation_lock.locked():
+                raise RunBlockedByRotationError(
+                    "passphrase rotation in progress; refuse to start a run"
+                )
+            await self._rotation_lock.acquire()
             try:
-                await self._open_run_session()
-                pairs = await self._load_runnable_targets()
-                # Flush any decrypt failure audit rows now that the
-                # _load_runnable_targets session has closed (the audit
-                # repo opens its own session; running it inside would
-                # contend on the SQLite write lock).
-                while self._decrypt_failures:
-                    failed_id = self._decrypt_failures.pop(0)
-                    with contextlib.suppress(Exception):
-                        await self._audit(
-                            "credential_decrypt_failed",
-                            target_id=failed_id,
-                            data={"reason": "aead_authentication_failed_or_kek_mismatch"},
-                        )
-                self._targets = {t.id: dom for (t, dom, _) in pairs}
-                self._target_to_workers = {t.id: set() for (t, _, _) in pairs}
-                for t_dto, t_dom, cred_plaintext in pairs:
-                    if not t_dom.enabled:
-                        continue
-                    if cred_plaintext is None:
-                        continue
-                    await self._spawn_workers_for_target(
-                        target_dto=t_dto,
-                        target_dom=t_dom,
-                        plaintext_key=cred_plaintext,
-                    )
                 await self._set_run_state(
-                    RunState.ARMED,
-                    RunAction.WORKERS_SPAWNED,
-                    cause="all enabled targets have running workers",
+                    RunState.STARTING,
+                    RunAction.START_REQUESTED,
+                    cause="user pressed START",
                 )
-                await self._audit(
-                    "run_started",
-                    data={
-                        "run_id": self._current_run_id,
-                        "target_count": len(self._target_to_workers),
-                        "worker_count": len(self._workers),
-                    },
-                )
-            except BaseException:
-                # Spawn failed; tear down anything we did spawn and
-                # transition to ERROR so the user must clear it.
-                with contextlib.suppress(Exception):
-                    await self._tear_down_all_workers(grace=WORKER_GRACE)
-                with contextlib.suppress(Exception):
+
+                try:
+                    await self._open_run_session()
+                    pairs, decrypt_failures = await self._load_runnable_targets()
+                    # Flush any decrypt failure audit rows now that the
+                    # _load_runnable_targets session has closed (the audit
+                    # repo opens its own session; running it inside would
+                    # contend on the SQLite write lock). The list is a
+                    # local — FG2-C5: no cross-call leak even on a mid-flow
+                    # raise after _load_runnable_targets returns.
+                    for failed_id in decrypt_failures:
+                        with contextlib.suppress(Exception):
+                            await self._audit(
+                                "credential_decrypt_failed",
+                                target_id=failed_id,
+                                data={"reason": "aead_authentication_failed_or_kek_mismatch"},
+                            )
+                    self._targets = {t.id: dom for (t, dom, _) in pairs}
+                    self._target_to_workers = {t.id: set() for (t, _, _) in pairs}
+                    for t_dto, t_dom, cred_plaintext in pairs:
+                        if not t_dom.enabled:
+                            continue
+                        if cred_plaintext is None:
+                            continue
+                        await self._spawn_workers_for_target(
+                            target_dto=t_dto,
+                            target_dom=t_dom,
+                            plaintext_key=cred_plaintext,
+                        )
                     await self._set_run_state(
-                        RunState.ERROR,
-                        RunAction.UNRECOVERABLE_FAILED,
-                        cause="failure during start_run",
+                        RunState.ARMED,
+                        RunAction.WORKERS_SPAWNED,
+                        cause="all enabled targets have running workers",
                     )
-                with contextlib.suppress(Exception):
-                    await self._close_run_session(reason="error")
-                raise
+                    # Slice 3: drain queued OBS-publish signals that
+                    # arrived during STARTING (e.g., operator started
+                    # OBS BEFORE clicking START, or webhooks fired
+                    # during the multi-second worker spawn). The drain
+                    # is the single source of truth for the ARMED↔LIVE
+                    # transition and the `_obs_is_publishing` flag —
+                    # there is no longer an "auto-promote after ARMED"
+                    # special case based on a lock-free flag read.
+                    await self._drain_pending_actions_locked()
+                    await self._audit(
+                        "run_started",
+                        data={
+                            "run_id": self._current_run_id,
+                            "target_count": len(self._target_to_workers),
+                            "worker_count": len(self._workers),
+                        },
+                    )
+                except BaseException:
+                    # Spawn failed; tear down anything we did spawn and
+                    # transition to ERROR so the user must clear it.
+                    #
+                    # Hex Audit BA-F10 (slice 3): the ERROR-path used
+                    # to leak `_obs_is_publishing = True` into the next
+                    # `start_run` (the flag wasn't cleared on this
+                    # path). Now we synthesise an `OBS_PUBLISH_ENDED`
+                    # action and drain — the drain clears the flag
+                    # under `_lock` exactly the way a real webhook
+                    # would, so there's only one writer.
+                    with contextlib.suppress(Exception):
+                        await self._tear_down_all_workers(grace=WORKER_GRACE)
+                    self._enqueue_synthetic_action(
+                        _PendingActionKind.OBS_PUBLISH_ENDED
+                    )
+                    with contextlib.suppress(Exception):
+                        await self._drain_pending_actions_locked()
+                    with contextlib.suppress(Exception):
+                        await self._set_run_state(
+                            RunState.ERROR,
+                            RunAction.UNRECOVERABLE_FAILED,
+                            cause="failure during start_run",
+                        )
+                    with contextlib.suppress(Exception):
+                        await self._close_run_session(reason="error")
+                    raise
+            finally:
+                self._rotation_lock.release()
 
     async def stop_run(self, *, grace: timedelta = WORKER_GRACE, reason: str = "user_stop") -> None:
         """Active state → STOPPING → (drain workers) → OFFLINE.
@@ -329,6 +490,13 @@ class Supervisor:
             # run sticks halfway through teardown.
             if self._run_state in (RunState.OFFLINE, RunState.STOPPING, RunState.ERROR):
                 return
+            # Slice 3 (FG2-H6): drain queued OBS signals BEFORE the
+            # STOPPING transition. A Began that arrived during LIVE but
+            # hasn't drained yet should still register (so the audit
+            # log captures the publish-attempt before the stop) — and
+            # an Ended from the user closing OBS during the stop should
+            # also drain so we don't carry a stale Began over.
+            await self._drain_pending_actions_locked()
             await self._set_run_state(
                 RunState.STOPPING,
                 RunAction.STOP_REQUESTED,
@@ -352,6 +520,21 @@ class Supervisor:
                     RunAction.WORKERS_DRAINED,
                     cause="all workers drained",
                 )
+            # Slice 3 (FG2-H6 / BA-F7): synthesise an OBS_PUBLISH_ENDED
+            # and drain it. The drain is the single writer of
+            # `_obs_is_publishing` — so the explicit `= False` is gone,
+            # replaced by the same code path a real `runOnNotReady`
+            # webhook would take. This closes the race where a webhook
+            # `Began` could land AFTER `_obs_is_publishing = False`
+            # but BEFORE the next `start_run`, leaving the flag True
+            # for the next attempt.
+            #
+            # MediaMTX's `runOnNotReady` SHOULD also fire — but we
+            # don't depend on that ordering; the synthetic Ended is
+            # the authoritative wipe.
+            self._enqueue_synthetic_action(_PendingActionKind.OBS_PUBLISH_ENDED)
+            with contextlib.suppress(Exception):
+                await self._drain_pending_actions_locked()
             with contextlib.suppress(Exception):
                 await self._audit("run_stopped", data={"reason": reason})
             if teardown_exc is not None:
@@ -392,29 +575,73 @@ class Supervisor:
         await worker.user_reset()
 
     # ------------------------------------------------------------------
-    # nginx-rtmp webhook signals (Phase 6 wires the HTTP route)
+    # nginx-rtmp / MediaMTX webhook signals (Phase 6 wires the HTTP route)
     # ------------------------------------------------------------------
 
     def notify_obs_publish_began(self) -> None:
-        """ARMED → LIVE on first OBS publish."""
-        if self._run_state is not RunState.ARMED:
-            return
-        try:
-            self._run_state = run_transition(self._run_state, RunAction.OBS_PUBLISH_BEGAN)
-        except IllegalRunStateTransitionError:
-            return
-        self._publish_run_state(RunState.ARMED, "OBS started publishing")
+        """Record an OBS publish; transitions handled by the drain path.
+
+        Slice 3 (Hex Audit BA-F7 / FG-F5 / FG2-C2 / FG2-H6): this is
+        now a non-blocking enqueue. The webhook handler (`on_publish`
+        in `app/api/internal_rtmp.py` and `on_auth` in
+        `app/api/internal_mtx.py`) returns to nginx-rtmp / MediaMTX
+        in microseconds. The supervisor drains queued actions under
+        `_lock` at safe checkpoints (top of `stop_run`, after
+        `STARTING → ARMED` in `start_run`) and also schedules an
+        immediate drain task via `_schedule_drain` so steady-state
+        webhook signals are applied within one event-loop tick.
+
+        The previous arrangement mutated `_run_state` and
+        `_obs_is_publishing` directly from this method, lock-free,
+        from request handlers. That raced with `start_run` and
+        `stop_run` which mutate the same fields under `_lock`. The
+        queue + drain pattern means there is ONE writer to those
+        fields (the drain, under `_lock`); webhook signals are
+        observed in FIFO order.
+
+        OBS-started-BEFORE-START ordering is preserved: the action
+        sits in the deque while we're OFFLINE; `start_run`'s post-
+        ARMED drain consumes it and transitions ARMED → LIVE.
+        """
+        self._enqueue_action(_PendingActionKind.OBS_PUBLISH_BEGAN)
+        self._schedule_drain()
 
     def notify_obs_publish_ended(self) -> None:
-        """LIVE → ARMED on OBS publish end (per ADR-0003 idle-timeout
-        is upstream of this; this signal is for the immediate transition)."""
-        if self._run_state is not RunState.LIVE:
-            return
-        try:
-            self._run_state = run_transition(self._run_state, RunAction.OBS_PUBLISH_ENDED)
-        except IllegalRunStateTransitionError:
-            return
-        self._publish_run_state(RunState.LIVE, "OBS stopped publishing")
+        """Record OBS unpublish; transitions handled by the drain path.
+
+        See `notify_obs_publish_began` — same shape, same single-writer
+        invariant. Per ADR-0003 the idle-timeout fallback is upstream
+        of this; this signal is for the immediate transition.
+        """
+        self._enqueue_action(_PendingActionKind.OBS_PUBLISH_ENDED)
+        self._schedule_drain()
+
+    # ------------------------------------------------------------------
+    # Lifecycle locking (rotate-passphrase ordering helper)
+    # ------------------------------------------------------------------
+
+    @asynccontextmanager
+    async def acquire_state_lock(self) -> AsyncIterator[None]:
+        """Acquire `supervisor._lock` for a single brief critical section.
+
+        Slice 3 (Hex Audit FG2-H3): exposed exclusively for
+        `rotate-passphrase` (`app/api/security_api.py`) so it can
+        honour the supervisor-lock-before-rotation-lock ordering
+        invariant. The rotate-passphrase handler takes this lock
+        briefly to check `run_state() == OFFLINE` and acquire
+        `state.rotation_lock` atomically — once rotation_lock is held,
+        the supervisor's own `start_run` will refuse via
+        `RunBlockedByRotationError`, so the supervisor-lock can be
+        released for the duration of the multi-second re-wrap.
+
+        Do NOT widen the caller set without a design memo. The lock
+        protects the entire state-machine + worker-construction
+        critical section; holders that don't follow the ordering rule
+        (rotation_lock AFTER supervisor._lock, never the reverse) can
+        deadlock the run-control path.
+        """
+        async with self._lock:
+            yield
 
     # ------------------------------------------------------------------
     # Read surface
@@ -545,7 +772,22 @@ class Supervisor:
 
     async def _load_runnable_targets(
         self,
-    ) -> list[tuple[TargetDTO, Target, str | None]]:
+    ) -> tuple[list[tuple[TargetDTO, Target, str | None]], list[str]]:
+        """Load enabled targets and decrypt their credentials.
+
+        Returns:
+            `(pairs, decrypt_failures)`. `pairs` is the per-target tuple
+            list; `decrypt_failures` is a list of target ids whose
+            credential decrypt raised (the caller writes one audit row
+            per id once the load session closes — running the audit
+            repo inside the same session would contend on the SQLite
+            write lock).
+
+            Per Hex Audit FG2-C5 (2026-05-18): the failure list is a
+            local return value (not instance state) so an interrupted
+            `start_run` cannot leak entries into the next attempt.
+        """
+        decrypt_failures: list[str] = []
         derived = self._key_material.require_ready()
         async with self._sessionmaker() as session:
             targets_repo = TargetsRepository(session)
@@ -554,16 +796,21 @@ class Supervisor:
             results: list[tuple[TargetDTO, Target, str | None]] = []
             for t_dto in enabled:
                 cred = await creds_repo.get_for_target(t_dto.id)
-                t_dom = target_dto_to_domain(t_dto, cred)
+                t_dom = target_dto_to_domain(
+                    t_dto, cred, youtube_backup_enabled=self._youtube_backup_enabled
+                )
                 plaintext: str | None = None
                 if cred is not None:
-                    aad = build_credential_aad(cred.salt)
                     try:
-                        plaintext_bytes = decrypt(
+                        # Hex Audit BA-F5 (slice 7): rolling-migration
+                        # decrypt — tries v2 AAD (binds target_id),
+                        # falls back to v1 for legacy rows.
+                        plaintext_bytes = decrypt_credential(
                             derived.stream_key_kek,
                             cred.nonce,
                             cred.ciphertext,
-                            aad,
+                            cred.salt,
+                            t_dto.id,
                         )
                     except Exception:
                         _logger.exception(
@@ -574,12 +821,12 @@ class Supervisor:
                         # event first-class rather than only a log line
                         # (post-Phase-5 review fix L3). Skip the target;
                         # supervisor proceeds with the rest.
-                        self._decrypt_failures.append(t_dto.id)
+                        decrypt_failures.append(t_dto.id)
                         plaintext = None
                     else:
                         plaintext = plaintext_bytes.decode("utf-8", errors="strict")
                 results.append((t_dto, t_dom, plaintext))
-            return results
+            return results, decrypt_failures
 
     async def _reload_target(
         self, target_id: str
@@ -592,16 +839,20 @@ class Supervisor:
             if t_dto is None:
                 return None, None, None
             cred = await creds_repo.get_for_target(target_id)
-            t_dom = target_dto_to_domain(t_dto, cred)
+            t_dom = target_dto_to_domain(
+                t_dto, cred, youtube_backup_enabled=self._youtube_backup_enabled
+            )
             plaintext: str | None = None
             if cred is not None:
-                aad = build_credential_aad(cred.salt)
                 try:
-                    plaintext_bytes = decrypt(
+                    # Hex Audit BA-F5 (slice 7): rolling-migration
+                    # decrypt — tries v2 AAD, falls back to v1.
+                    plaintext_bytes = decrypt_credential(
                         derived.stream_key_kek,
                         cred.nonce,
                         cred.ciphertext,
-                        aad,
+                        cred.salt,
+                        target_id,
                     )
                 except Exception:
                     _logger.exception("credential_decrypt_failed", target_id=target_id)
@@ -617,18 +868,34 @@ class Supervisor:
         ]
         if not per_session_targets:
             return
-        # Phase 1: delete inside a single short transaction.
-        cleared_target_ids: list[str] = []
-        async with self._sessionmaker() as session, session.begin():
-            creds_repo = CredentialsRepository(session)
-            for t in per_session_targets:
-                if await creds_repo.delete_for_target(t.id):
-                    cleared_target_ids.append(t.id)
-        # Phase 2: audit AFTER the wipe transaction commits. Audit
-        # uses its own short-lived transaction; running it inside the
-        # wipe txn would deadlock on the SQLite write lock.
-        for tid in cleared_target_ids:
-            await self._audit("vk_session_credential_cleared", target_id=tid)
+        # Hex Audit BA-F4 (slice 8): delete + audit in ONE txn so a
+        # successful wipe is always paired with a forensic record.
+        #
+        # Hex Audit BA2-F5 / FG3-F5 STRONG (slice 10): chunk the wipe
+        # so the SQLite write-lock duration is bounded per
+        # `WIPE_BATCH_SIZE` regardless of operator-configured target
+        # count. With 30+ VK targets, the pre-slice-10 single-txn
+        # version held the write lock for ~2× target_count statement
+        # turnarounds; concurrent OBS `on_publish` webhook inserts
+        # against `sessions` could trip `busy_timeout=5000` and drop
+        # the publish. Per-chunk commits release the lock between
+        # batches so the webhook never waits more than one chunk's
+        # worth of writes. Atomicity is preserved per-target (the
+        # delete + audit pair within one batch is one txn); cross-
+        # target atomicity was never a requirement (each VK session
+        # credential is independent of the others).
+        audit_repo = AuditLogRepository(self._sessionmaker)
+        for batch_start in range(0, len(per_session_targets), _WIPE_BATCH_SIZE):
+            batch = per_session_targets[batch_start : batch_start + _WIPE_BATCH_SIZE]
+            async with self._sessionmaker() as session, session.begin():
+                creds_repo = CredentialsRepository(session)
+                for t in batch:
+                    if await creds_repo.delete_for_target(t.id):
+                        await audit_repo.append(
+                            session,
+                            event_type="vk_session_credential_cleared",
+                            target_id=t.id,
+                        )
 
     async def _open_run_session(self) -> None:
         async with self._sessionmaker() as session, session.begin():
@@ -652,12 +919,65 @@ class Supervisor:
         target_id: str | None = None,
         data: Mapping[str, object] | None = None,
     ) -> None:
+        """Standalone audit emission for supervisor lifecycle events.
+
+        Used by `supervisor_started`, `run_started`, `run_stopped`,
+        `worker_failed_open`, `credential_decrypt_failed` — i.e.,
+        state-machine events that don't share a caller's business
+        transaction.
+
+        Slice 8.5 (Hex Audit BA2-F4): passes `checkpoint=False`. The
+        supervisor's hot path can fire `_audit` multiple times per
+        second during a flapping run (`worker_failed_open` per
+        breaker trip); per-event `wal_checkpoint(TRUNCATE)` against a
+        write-locked DB is the exact pattern BA-F4 (slice 8) aimed to
+        remove from the canonical path. Checkpoint cadence is owned
+        by the retention loop's 6 h / 24 h idle cadence.
+
+        Site-specific audits that DO have a caller session (e.g.,
+        `vk_session_credential_cleared` inside the wipe txn) call
+        `audit_repo.append(session, ...)` directly — they do NOT route
+        through this helper.
+
+        Hex Audit FG3-F10 (slice 10): on `IntegrityError` (the FK race
+        where the target was DELETEd between worker-event arrival and
+        the audit append's flush), retry with `target_id=None` and
+        push the original id into `data` — same shape as the
+        `target_deleted` row. The forensic record survives; the FK
+        violation does not propagate up the supervisor's hot path.
+        """
         repo = AuditLogRepository(self._sessionmaker)
-        await repo.append(
-            event_type=event_type,
-            target_id=target_id,
-            data=dict(data) if data is not None else None,
-        )
+        data_dict = dict(data) if data is not None else None
+        try:
+            await repo.append_standalone(
+                event_type=event_type,
+                target_id=target_id,
+                data=data_dict,
+                checkpoint=False,
+            )
+        except IntegrityError:
+            # Defensive degradation per FG3-F10. Move target_id into the
+            # payload so the audit log retains the identifier as a
+            # JSON-blob value even though the FK column ends up NULL
+            # (post-DELETE the row is gone and the FK reference cannot
+            # land).
+            fallback_data = dict(data_dict) if data_dict is not None else {}
+            if target_id is not None:
+                fallback_data.setdefault("target_id", target_id)
+                fallback_data.setdefault("fk_race", True)
+            try:
+                await repo.append_standalone(
+                    event_type=event_type,
+                    target_id=None,
+                    data=fallback_data,
+                    checkpoint=False,
+                )
+            except Exception:
+                _logger.exception(
+                    "supervisor_audit_fallback_failed",
+                    event_type=event_type,
+                    original_target_id=target_id,
+                )
 
     # ------------------------------------------------------------------
     # Internal: per-worker event pump
@@ -789,12 +1109,185 @@ class Supervisor:
 
     def _spawn_notify_task(self, bus: EventBus) -> None:
         try:
-            task = asyncio.create_task(bus.notify())
+            task = asyncio.create_task(self._notify_with_watchdog(bus))
         except RuntimeError:
             # Loop is shutting down; final batch is acceptable to lose.
             return
         self._pending_notifies.add(task)
         task.add_done_callback(self._pending_notifies.discard)
+
+    async def _notify_with_watchdog(self, bus: EventBus) -> None:
+        """Wrap `bus.notify()` in a wall-clock timeout.
+
+        Hex Audit FG2-H4 (slice 10): defence against a wedged
+        `_pending_notifies` set growing unbounded if a downstream
+        deadlock kept `notify()` from ever returning. The legitimate
+        `notify()` is an `async with cond: cond.notify_all()` — sub-
+        millisecond. A 5-second timeout is several orders of magnitude
+        higher than any plausible legitimate case AND short enough that
+        a stuck task does not sit in `_pending_notifies` for the
+        process lifetime.
+        """
+        try:
+            await asyncio.wait_for(bus.notify(), timeout=5.0)
+        except TimeoutError:
+            _logger.warning("supervisor_notify_watchdog_fired", timeout_s=5.0)
+
+    # ------------------------------------------------------------------
+    # Internal: pending-action queue drain (Slice 3 — Hex Audit BA-F7 /
+    # FG-F5 / FG2-C2 / FG2-H6)
+    #
+    # `notify_obs_publish_*` enqueues `_PendingAction` items here; the
+    # drain runs under `_lock` so all state-machine writes are
+    # serialised through one owner. The webhook side never blocks on
+    # the lock — `_enqueue_action` is `deque.append + len()`, both
+    # O(1) and GIL-atomic; `_schedule_drain` is `loop.call_soon`.
+    # ------------------------------------------------------------------
+
+    def _enqueue_action(self, kind: _PendingActionKind) -> None:
+        """Append a webhook-arrived OBS-publish signal.
+
+        Bounded at `PENDING_ACTIONS_CAP`; an overflow drops the oldest
+        entry (preserving most-recent signal) and emits one warning
+        per drop so a runaway producer is observable.
+        """
+        if len(self._pending_actions) >= PENDING_ACTIONS_CAP:
+            dropped = self._pending_actions.popleft()
+            _logger.warning(
+                "pending_action_dropped_at_cap",
+                dropped_kind=dropped.kind.value,
+                cap=PENDING_ACTIONS_CAP,
+            )
+        self._pending_actions.append(_PendingAction(kind=kind, at=self._clock()))
+
+    def _enqueue_synthetic_action(self, kind: _PendingActionKind) -> None:
+        """Same as `_enqueue_action` but tagged for internally-generated
+        signals (stop_run cleanup, start_run ERROR-path).
+
+        Today both shapes share the queue identically; the separation
+        exists to make `grep`-able tracing easy: every synthetic
+        injection has a single call site, so a future bug ("why is
+        the queue showing two Ended signals after stop_run?") can be
+        traced back to the originating internal path without
+        confusing it with a real MediaMTX `runOnNotReady`. Cap
+        behavior is the same.
+        """
+        if len(self._pending_actions) >= PENDING_ACTIONS_CAP:
+            dropped = self._pending_actions.popleft()
+            _logger.warning(
+                "pending_action_dropped_at_cap_synthetic",
+                dropped_kind=dropped.kind.value,
+                cap=PENDING_ACTIONS_CAP,
+            )
+        self._pending_actions.append(_PendingAction(kind=kind, at=self._clock()))
+
+    def _schedule_drain(self) -> None:
+        """Schedule an out-of-line drain task; mirrors `_notify_bus_soon`.
+
+        Webhook callers MUST stay synchronous and non-blocking — the
+        `call_soon` here ensures the actual `_drain_pending_actions`
+        runs on the event loop ASAP without making the webhook itself
+        await `_lock`. If no loop is running (test setup with a bare
+        Supervisor and no `tg.create_task(sup.run(bus))`), the drain
+        is skipped — tests in that shape call `_drain_pending_actions`
+        directly to assert state.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.call_soon(self._spawn_drain_task)
+
+    def _spawn_drain_task(self) -> None:
+        try:
+            task = asyncio.create_task(
+                self._drain_pending_actions(), name="supervisor-drain"
+            )
+        except RuntimeError:
+            # Loop shutting down — anything still queued at process
+            # exit is acceptable to lose (a clean stop_run already
+            # drained the last meaningful state).
+            return
+        self._pending_drain_tasks.add(task)
+        # Order matters: log first, then discard. CPython today
+        # holds the task on its call stack while iterating
+        # done-callbacks so registration order doesn't risk GC,
+        # but matching the `app/api/run.py::_spawn_supervisor_task`
+        # precedent keeps the pattern uniform and immune to any
+        # future change in callback dispatch semantics.
+        task.add_done_callback(self._log_drain_task_exception)
+        task.add_done_callback(self._pending_drain_tasks.discard)
+
+    @staticmethod
+    def _log_drain_task_exception(task: asyncio.Task[Any]) -> None:
+        """Surface drain-task crashes via structlog, same pattern as
+        `app/api/run.py::_log_supervisor_task_exception`. Without this
+        a coroutine exception inside the drain would only show up as
+        an asyncio `task exception was never retrieved` warning at
+        process exit — invisible to operators in normal logging.
+        """
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is None:
+            return
+        _logger.error(
+            "supervisor_drain_failed",
+            task_name=task.get_name(),
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+
+    async def _drain_pending_actions(self) -> None:
+        """Acquire `_lock` and apply all queued actions.
+
+        Public-ish entry point used by `_schedule_drain`'s call_soon-
+        spawned task. Tests call it directly to deterministically
+        drain after a `notify_obs_publish_*` call without depending
+        on event-loop scheduling.
+        """
+        async with self._lock:
+            await self._drain_pending_actions_locked()
+
+    async def _drain_pending_actions_locked(self) -> None:
+        """Apply queued actions; caller MUST hold `_lock`.
+
+        FIFO order. Each action updates `_obs_is_publishing` (single
+        writer; the only place this field is written) and then asks
+        the state machine to transition iff legal. Illegal transitions
+        (e.g., a Began while STARTING) are intentional no-ops on the
+        state machine — the flag still updates, which is what the
+        next `_drain_pending_actions_locked` from `start_run` reads.
+
+        Re-entrancy safety: `_set_run_state` IS an await point, so
+        the loop body suspends. The safety property is FIFO-preserved
+        across suspends: webhook handlers only ever `append` to the
+        tail via `_enqueue_action`, so a new action arriving
+        mid-suspend is drained on the NEXT loop iteration (or the
+        next drain) — never reordered ahead of the popped action.
+        The deque is the ordering primitive; the lock guarantees
+        single-writer semantics on `_run_state` and
+        `_obs_is_publishing`.
+        """
+        while self._pending_actions:
+            action = self._pending_actions.popleft()
+            if action.kind is _PendingActionKind.OBS_PUBLISH_BEGAN:
+                self._obs_is_publishing = True
+                if self._run_state is RunState.ARMED:
+                    with contextlib.suppress(IllegalRunStateTransitionError):
+                        await self._set_run_state(
+                            RunState.LIVE,
+                            RunAction.OBS_PUBLISH_BEGAN,
+                            cause="OBS started publishing",
+                        )
+            else:  # OBS_PUBLISH_ENDED
+                self._obs_is_publishing = False
+                if self._run_state is RunState.LIVE:
+                    with contextlib.suppress(IllegalRunStateTransitionError):
+                        await self._set_run_state(
+                            RunState.ARMED,
+                            RunAction.OBS_PUBLISH_ENDED,
+                            cause="OBS stopped publishing",
+                        )
 
     # ------------------------------------------------------------------
     # Internal: heartbeat + drop alerts

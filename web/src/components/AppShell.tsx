@@ -2,7 +2,9 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CaretDown, UserCircle } from "@phosphor-icons/react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 
+import { Button } from "@/components/Button";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { t } from "@/messages";
@@ -54,7 +56,7 @@ export function AppShell(): ReactNode {
           id="main-content"
           ref={mainRef}
           tabIndex={-1}
-          className="flex-1 mx-auto w-full max-w-[1200px] px-(--space-4) py-(--space-6) outline-none"
+          className="flex-1 mx-auto w-full max-w-(--width-app) px-(--space-4) py-(--space-6) outline-none"
         >
           <Outlet />
         </main>
@@ -71,7 +73,7 @@ export function AppShell(): ReactNode {
 function Header(): ReactNode {
   return (
     <header className="sticky top-0 z-10 h-16 border-b border-(--color-border-subtle) bg-(--color-bg-base)/95 backdrop-blur">
-      <div className="mx-auto flex h-full w-full max-w-[1200px] items-center gap-4 px-(--space-4)">
+      <div className="mx-auto flex h-full w-full max-w-(--width-app) items-center gap-(--space-4) px-(--space-4)">
         <Link
           to="/"
           aria-label={t("appShell.wordmarkLink")}
@@ -81,7 +83,7 @@ function Header(): ReactNode {
         </Link>
         <RunStateBadge />
         <LiveStatsStrip />
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-(--space-3)">
           <RecentEventsMenu />
           <ThemeToggle />
           <AccountMenu />
@@ -91,102 +93,110 @@ function Header(): ReactNode {
   );
 }
 
+/**
+ * Slice-6 UX-F3: replaced `<details>/<summary>` (no role="menu" /
+ * role="menuitem" + no arrow-key navigation) with Radix DropdownMenu
+ * which provides the full APG menu pattern out of the box. Trigger
+ * uses `Button variant="secondary" size="lg"` per UX-architect memo §4
+ * + UI-F4 touch-target floor. Sign-out's `onSelect` preventDefault
+ * keeps the menu open until the mutation's `onSettled` navigates,
+ * dodging the focus-return race with Radix's auto-close behavior.
+ */
 function AccountMenu(): ReactNode {
-  const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const detailsRef = useRef<HTMLDetailsElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const location = useLocation();
+
+  // Route-change close: clicking a menu link with `asChild` doesn't
+  // auto-close Radix; close on every pathname transition.
+  useEffect(() => {
+    setOpen(false);
+  }, [location.pathname]);
 
   const logoutMutation = useMutation({
-    // Review M-1: logout handles its own routing; opt out of the bus
-    // so a 401 (e.g., session already expired server-side) doesn't
-    // race onSettled's redirect.
     meta: { silenceGlobalErrors: true },
     mutationFn: () =>
       apiFetch<void>("auth/logout", { method: "POST", silenceGlobalErrors: true }),
     onSettled: () => {
       queryClient.setQueryData(["auth", "session"], null);
       queryClient.removeQueries({ queryKey: ["auth", "session"] });
-      detailsRef.current?.removeAttribute("open");
       setOpen(false);
       void navigate("/login", { replace: true });
     },
   });
 
-  // Close the popover on outside click — minimal v1 implementation.
-  useEffect(() => {
-    if (!open) return;
-    const onClick = (e: MouseEvent): void => {
-      if (detailsRef.current === null) return;
-      const target = e.target;
-      if (!(target instanceof Node)) return;
-      if (!detailsRef.current.contains(target)) {
-        detailsRef.current.removeAttribute("open");
-        setOpen(false);
-      }
-    };
-    window.addEventListener("mousedown", onClick);
-    return () => window.removeEventListener("mousedown", onClick);
-  }, [open]);
+  const itemClass = cn(
+    "block w-full px-(--space-4) py-(--space-2) text-left text-(length:--text-sm)",
+    "text-(--color-fg-default) outline-none",
+    "data-[highlighted]:bg-(--color-bg-elevated)",
+    "data-[disabled]:text-(--color-fg-disabled) data-[disabled]:cursor-not-allowed",
+  );
 
   return (
-    <details
-      ref={detailsRef}
-      className="relative"
-      onToggle={(e) => setOpen(e.currentTarget.open)}
-    >
-      <summary
-        className={cn(
-          "inline-flex h-9 cursor-pointer items-center gap-2 rounded-full border border-(--color-border-subtle)",
-          "bg-(--color-bg-elevated) px-3 text-(length:--text-sm) font-medium",
-          "hover:bg-(--color-bg-sunken) list-none",
-        )}
-        aria-label={t("appShell.accountMenuTrigger")}
-      >
-        <UserCircle className="h-5 w-5 text-(--color-fg-muted)" weight="regular" aria-hidden="true" />
-        <CaretDown className="h-3 w-3 text-(--color-fg-muted)" weight="bold" aria-hidden="true" />
-      </summary>
-      {/* The wrapping <details> provides native disclosure semantics;
-          adding role="menu" without role="menuitem" children would
-          violate ARIA ownership (review H-1). */}
-      <div
-        className={cn(
-          "absolute right-0 mt-2 w-56 rounded-(--radius-md) border border-(--color-border-subtle)",
-          "bg-(--color-bg-base) shadow-(--shadow-md)",
-        )}
-      >
-        <Link
-          to="/settings/security"
-          className="block w-full px-4 py-2 text-left text-(length:--text-sm) text-(--color-fg-default) hover:bg-(--color-bg-elevated)"
+    <DropdownMenu.Root open={open} onOpenChange={setOpen}>
+      <DropdownMenu.Trigger asChild>
+        {/* Slice-6 reviewer H-1: marked `iconOnly` so the Button takes
+            its square 44×44 geometry, drops the spurious spinner gutter
+            (gutter renders even when `loading` is never set on a Radix
+            trigger — wasted 14px). UserCircle + CaretDown pair fits the
+            chip-icon role; aesthetic chip preserved via `rounded-full`
+            + intra-icon `gap-(--space-1)`. */}
+        <Button
+          iconOnly
+          variant="secondary"
+          size="lg"
+          aria-label={t("appShell.accountMenuTrigger")}
+          className="gap-(--space-1) rounded-full"
         >
-          {t("appShell.accountChangePassword")}
-        </Link>
-        <Link
-          to="/settings/security"
-          className="block w-full px-4 py-2 text-left text-(length:--text-sm) text-(--color-fg-default) hover:bg-(--color-bg-elevated)"
+          <UserCircle className="h-5 w-5 text-(--color-fg-muted)" weight="regular" aria-hidden="true" />
+          <CaretDown className="h-3 w-3 text-(--color-fg-muted)" weight="bold" aria-hidden="true" />
+        </Button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          align="end"
+          sideOffset={6}
+          className={cn(
+            "z-50 w-(--width-popover) rounded-(--radius-md) border bg-(--color-bg-base)",
+            "border-(--color-border-subtle) shadow-(--shadow-popover) py-(--space-1)",
+          )}
         >
-          {t("appShell.accountApiTokens")}
-        </Link>
-        <div className="border-t border-(--color-border-subtle)" />
-        <button
-          type="button"
-          onClick={() => {
-            logoutMutation.mutate();
-          }}
-          disabled={logoutMutation.isPending}
-          className="block w-full px-4 py-2 text-left text-(length:--text-sm) text-(--color-fg-default) hover:bg-(--color-bg-elevated)"
-        >
-          {t("common.signOut")}
-        </button>
-      </div>
-    </details>
+          <DropdownMenu.Item asChild>
+            <Link to="/settings/security" className={itemClass}>
+              {t("appShell.accountChangePassword")}
+            </Link>
+          </DropdownMenu.Item>
+          <DropdownMenu.Item asChild>
+            <Link to="/settings/security" className={itemClass}>
+              {t("appShell.accountApiTokens")}
+            </Link>
+          </DropdownMenu.Item>
+          <DropdownMenu.Separator className="my-(--space-1) h-px bg-(--color-border-subtle)" />
+          <DropdownMenu.Item
+            // Slice-6 UX-F3: preventDefault keeps the menu open until
+            // logout mutation's `onSettled` fires — without it Radix
+            // closes + returns focus to trigger, racing our `navigate`
+            // and occasionally landing focus on an unmounted node.
+            onSelect={(e) => {
+              e.preventDefault();
+              logoutMutation.mutate();
+            }}
+            disabled={logoutMutation.isPending}
+            className={itemClass}
+          >
+            {t("common.signOut")}
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
   );
 }
 
 function Footer(): ReactNode {
   return (
     <footer className="border-t border-(--color-border-subtle) bg-(--color-bg-base) py-(--space-3)">
-      <div className="mx-auto flex w-full max-w-[1200px] items-center justify-between px-(--space-4) text-(length:--text-xs) text-(--color-fg-muted)">
+      <div className="mx-auto flex w-full max-w-(--width-app) items-center justify-between px-(--space-4) text-(length:--text-xs) text-(--color-fg-muted)">
         <span>{t("app.name")}</span>
         <span>{t("appShell.buildSha", { sha: BUILD_SHA })}</span>
       </div>

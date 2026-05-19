@@ -171,6 +171,15 @@ async def ws_endpoint(websocket: WebSocket) -> None:
     if not cookie_value:
         await websocket.close(code=WS_CLOSE_AUTH_FAIL)
         return
+    # Hex Audit BA-F19 (slice 10): same cookie-length cap as the REST
+    # cookie-auth path (`app/auth/deps.py`). Reject over-long values
+    # before HMAC; a 10 MB cookie smuggled through a permissive CDN
+    # would otherwise burn HMAC cycles per WS handshake attempt.
+    from app.auth.sessions import MAX_SESSION_COOKIE_VALUE_LENGTH as _MAX_COOKIE_LEN
+
+    if len(cookie_value) > _MAX_COOKIE_LEN:
+        await websocket.close(code=WS_CLOSE_AUTH_FAIL)
+        return
 
     # Locked state: even with a valid cookie, refuse — the supervisor
     # has nothing to broadcast yet and the cookie verifier would 503
@@ -187,6 +196,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
     # logins).
     from datetime import UTC, datetime
 
+    from app.auth.last_seen_coalescer import LAST_SEEN_TOUCH_TIMEOUT_SECONDS
     from app.auth.sessions import compute_session_token_hash
     from app.repositories.sessions import HttpSessionsRepository
     from app.repositories.users import UsersRepository
@@ -194,6 +204,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
     keys = auth_state.key_material.require_ready()
     token_hash = compute_session_token_hash(cookie_value, keys.session_token_mac_key)
     sessionmaker = auth_state.sessionmaker
+    coalescer = auth_state.last_seen_coalescer
     async with sessionmaker() as session:
         sessions_repo = HttpSessionsRepository(session)
         users_repo = UsersRepository(session)
@@ -205,14 +216,43 @@ async def ws_endpoint(websocket: WebSocket) -> None:
         if http_session.expires_at <= now:
             await sessions_repo.delete(token_hash)
             await session.commit()
+            coalescer.forget(token_hash)
             await websocket.close(code=WS_CLOSE_AUTH_FAIL)
             return
         user = await users_repo.get_by_id(http_session.user_id)
         if user is None:
             await websocket.close(code=WS_CLOSE_AUTH_FAIL)
             return
-        await sessions_repo.touch_last_seen(token_hash, now)
-        await session.commit()
+        # Slice 7: coalesce + timeout-wrap the touch. WS reconnect spam
+        # used to multiply this into one SQLite write per accept
+        # (FG2-H1 unbounded touch, FG2-M7 no timeout); now it's at most
+        # one write per LAST_SEEN_COALESCE_WINDOW_SECONDS, bounded by
+        # LAST_SEEN_TOUCH_TIMEOUT_SECONDS, with the upgrade proceeding
+        # even on timeout (the column is observability, not a guard).
+        if coalescer.should_write(token_hash):
+            try:
+                await asyncio.wait_for(
+                    sessions_repo.touch_last_seen(token_hash, now),
+                    timeout=LAST_SEEN_TOUCH_TIMEOUT_SECONDS,
+                )
+                await session.commit()
+                coalescer.mark_written(token_hash)
+            except TimeoutError:
+                # Reviewer slice-7 H-2: `wait_for` cancels the
+                # in-flight UPDATE; the AsyncSession holds a
+                # connection-level transaction that should be
+                # explicitly rolled back before the connection
+                # returns to the pool. `AsyncSession.__aexit__`
+                # rolls back on close anyway, but the explicit
+                # rollback documents the intent and removes any
+                # ambiguity around partially-applied state.
+                await session.rollback()
+                _logger.warning(
+                    "touch_last_seen_timeout",
+                    session_token_fingerprint=token_hash[:4].hex(),
+                    timeout_seconds=LAST_SEEN_TOUCH_TIMEOUT_SECONDS,
+                    via="ws",
+                )
 
     supervisor: Supervisor = websocket.app.state.supervisor
     bus: EventBus = websocket.app.state.event_bus

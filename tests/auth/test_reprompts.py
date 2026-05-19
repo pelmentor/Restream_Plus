@@ -25,6 +25,43 @@ class TestRepromptStoreConstruction:
         with pytest.raises(ValueError, match="ttl_seconds"):
             RepromptStore(ttl_seconds=-1)
 
+    def test_invalid_max_grants_rejected(self) -> None:
+        with pytest.raises(ValueError, match="max_grants"):
+            RepromptStore(max_grants=0)
+        with pytest.raises(ValueError, match="max_grants"):
+            RepromptStore(max_grants=-1)
+
+
+class TestUnboundedGrowthFootgun:
+    """Hex Audit footgun-hunter FG2-C4 (2026-05-18): the `_grants` dict
+    must not grow without bound under a runaway issuer between
+    `prune_expired` ticks. Sibling of `LoginRateLimiter` MAX_TRACKED_BUCKETS
+    coverage."""
+
+    def test_issue_evicts_oldest_when_at_cap(self) -> None:
+        store = RepromptStore(max_grants=5)
+        ids: list[str] = []
+        for _ in range(7):  # 7 issues, cap is 5
+            ids.append(store.issue(user_id="u1", scope=RepromptScope.DELETE_TARGET))
+        # FIFO: first two evicted, last five retained.
+        assert len(store._grants) == 5  # noqa: SLF001
+        for gid in ids[:2]:
+            assert (
+                store.consume(grant_id=gid, user_id="u1", scope=RepromptScope.DELETE_TARGET)
+                is False
+            )
+        # The latest grant must still be consumable.
+        assert (
+            store.consume(grant_id=ids[-1], user_id="u1", scope=RepromptScope.DELETE_TARGET)
+            is True
+        )
+
+    def test_cap_holds_under_high_volume(self) -> None:
+        store = RepromptStore(max_grants=100)
+        for _ in range(5_000):
+            store.issue(user_id="u1", scope=RepromptScope.DELETE_TARGET)
+        assert len(store._grants) == 100  # noqa: SLF001
+
 
 class TestIssue:
     def test_returns_url_safe_grant_id(self) -> None:

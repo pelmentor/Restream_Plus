@@ -3,7 +3,9 @@ import { useForm } from "react-hook-form";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 
+import { Button } from "@/components/Button";
 import { DestructiveConfirm } from "@/components/DestructiveConfirm";
+import { FormField } from "@/components/FormField";
 import { OneTimeRevealBanner } from "@/components/OneTimeRevealBanner";
 import { TypeToConfirmDialog } from "@/components/TypeToConfirmDialog";
 import { SettingsSection } from "@/components/settings/SettingsSection";
@@ -18,7 +20,6 @@ import {
   useRevokeHttpSession,
 } from "@/hooks/useHttpSessions";
 import { apiFetch, ApiError } from "@/lib/api";
-import { cn } from "@/lib/cn";
 import type { ApiTokenCreatedResponseT } from "@/lib/schemas/apiTokens";
 import { t } from "@/messages";
 
@@ -61,7 +62,9 @@ function ChangePasswordSection(): ReactNode {
 
   const onSubmit = form.handleSubmit(async (vals) => {
     if (vals.new_password !== vals.confirm_new_password) {
-      form.setError("confirm_new_password", { message: "Passwords differ." });
+      form.setError("confirm_new_password", {
+        message: t("security.passwordsDiffer"),
+      });
       return;
     }
     setError("");
@@ -102,17 +105,14 @@ function ChangePasswordSection(): ReactNode {
         title={t("security.changePasswordSection")}
         intro={t("security.changePasswordWarning")}
         footer={
-          <button
+          <Button
             type="submit"
-            disabled={form.formState.isSubmitting}
-            className={cn(
-              "h-10 rounded-(--radius-md) px-(--space-4) text-(length:--text-sm) font-medium text-white",
-              "bg-(--color-accent) hover:bg-(--color-accent-strong)",
-              form.formState.isSubmitting && "opacity-50 cursor-not-allowed",
-            )}
+            variant="primary"
+            size="md"
+            loading={form.formState.isSubmitting}
           >
-            {form.formState.isSubmitting ? t("settings.saving") : t("security.changePassword")}
-          </button>
+            {t("security.changePassword")}
+          </Button>
         }
       >
         <PasswordField
@@ -163,7 +163,9 @@ function RotatePassphraseSection(): ReactNode {
 
   const onSubmit = form.handleSubmit(async (vals) => {
     if (vals.new_passphrase !== vals.confirm_new_passphrase) {
-      form.setError("confirm_new_passphrase", { message: "Passphrases differ." });
+      form.setError("confirm_new_passphrase", {
+        message: t("security.passphrasesDiffer"),
+      });
       return;
     }
     setError("");
@@ -190,11 +192,11 @@ function RotatePassphraseSection(): ReactNode {
       if (err.code === "invalid_credentials") {
         setError(t("login.invalidCredentials"));
       } else if (err.code === "same_passphrase") {
-        form.setError("new_passphrase", { message: "Same as old." });
+        form.setError("new_passphrase", {
+          message: t("security.samePassphrase"),
+        });
       } else if (err.code === "run_active") {
-        setError(
-          "Stop the active stream before rotating the master passphrase.",
-        );
+        setError(t("security.runActiveBlocksRotate"));
       } else {
         setError(t("common.unexpectedError"));
       }
@@ -208,17 +210,14 @@ function RotatePassphraseSection(): ReactNode {
         title={t("security.rotatePassphraseSection")}
         intro={t("security.rotatePassphraseWarning")}
         footer={
-          <button
+          <Button
             type="submit"
-            disabled={submitting}
-            className={cn(
-              "h-10 rounded-(--radius-md) px-(--space-4) text-(length:--text-sm) font-medium text-white",
-              "bg-(--color-error) hover:bg-(--color-error)/85",
-              submitting && "opacity-50 cursor-not-allowed",
-            )}
+            variant="danger"
+            size="md"
+            loading={submitting}
           >
-            {submitting ? t("security.rotating") : t("security.rotatePassphrase")}
-          </button>
+            {t("security.rotatePassphrase")}
+          </Button>
         }
       >
         <PasswordField
@@ -248,6 +247,9 @@ function RotatePassphraseSection(): ReactNode {
   );
 }
 
+// Slice-6 UX-F1: collapses the bespoke inline-PasswordField into the
+// generic FormField primitive. The only password-specific bits left
+// (type, spellCheck, autoComplete) are passed via rest props.
 function PasswordField({
   label,
   error,
@@ -255,33 +257,14 @@ function PasswordField({
 }: {
   readonly label: string;
   readonly error?: string | undefined;
-} & React.InputHTMLAttributes<HTMLInputElement>): ReactNode {
-  const id = `pw-${label.toLowerCase().replace(/\s+/g, "-")}`;
+} & Omit<
+  React.InputHTMLAttributes<HTMLInputElement>,
+  "type" | "spellCheck" | "size"
+>): ReactNode {
   return (
-    <div>
-      <label
-        htmlFor={id}
-        className="block text-(length:--text-sm) font-medium text-(--color-fg-strong)"
-      >
-        {label}
-      </label>
-      <input
-        id={id}
-        type="password"
-        spellCheck={false}
-        {...rest}
-        className={cn(
-          "mt-(--space-1) h-10 w-full rounded-(--radius-md) border bg-(--color-bg-base)",
-          "border-(--color-border-subtle) px-(--space-3)",
-          "text-(length:--text-sm) text-(--color-fg-strong)",
-          "focus:border-(--color-accent) focus:outline-none",
-          error !== undefined && error !== "" && "border-(--color-error)",
-        )}
-      />
-      {error !== undefined && error !== "" && (
-        <p className="mt-(--space-1) text-(length:--text-xs) text-(--color-error)">{error}</p>
-      )}
-    </div>
+    <FormField label={label} error={error}>
+      <FormField.Input type="password" spellCheck={false} {...rest} />
+    </FormField>
   );
 }
 
@@ -325,65 +308,55 @@ function ApiTokensSection(): ReactNode {
           title={t("reveal.bannerTitle")}
           body={t("reveal.bannerBody")}
           value={revealed.plaintext}
-          ariaLabel="API token"
+          ariaLabel={t("security.apiTokenAriaLabel")}
           onDismiss={() => setRevealed(null)}
         />
       )}
       {creating ? (
         <div className="flex items-end gap-(--space-2)">
           <div className="flex-1">
-            <label className="block text-(length:--text-sm) font-medium text-(--color-fg-strong)">
-              {t("security.tokenLabelInput")}
-              <input
+            <FormField label={t("security.tokenLabelInput")}>
+              <FormField.Input
                 type="text"
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
-                className={cn(
-                  "mt-(--space-1) h-10 w-full rounded-(--radius-md) border bg-(--color-bg-base)",
-                  "border-(--color-border-subtle) px-(--space-3)",
-                  "text-(length:--text-sm) text-(--color-fg-strong)",
-                  "focus:border-(--color-accent) focus:outline-none",
-                )}
               />
-            </label>
+            </FormField>
           </div>
-          <button
+          <Button
             type="button"
+            variant="primary"
+            size="md"
             onClick={() => void onCreate()}
-            disabled={!label.trim() || create.isPending}
-            className={cn(
-              "h-10 rounded-(--radius-md) px-(--space-4) text-(length:--text-sm) font-medium text-white",
-              "bg-(--color-accent) hover:bg-(--color-accent-strong)",
-              (!label.trim() || create.isPending) && "opacity-50 cursor-not-allowed",
-            )}
+            disabled={!label.trim()}
+            loading={create.isPending}
           >
             {t("security.create")}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="ghost"
+            size="md"
             onClick={() => {
               setCreating(false);
               setLabel("");
             }}
-            className={cn(
-              "h-10 rounded-(--radius-md) px-(--space-4) text-(length:--text-sm)",
-              "text-(--color-fg-default) hover:bg-(--color-bg-sunken)",
-            )}
           >
             {t("common.cancel")}
-          </button>
+          </Button>
         </div>
       ) : (
-        <button
-          type="button"
+        // Slice-6 SA-BLOCK-2: the last inline button-bypass site. The
+        // bespoke outline-accent pattern is now the canonical
+        // `outline-accent` Button variant (Button.tsx).
+        <Button
+          variant="outline-accent"
+          size="md"
           onClick={() => setCreating(true)}
-          className={cn(
-            "self-start h-10 rounded-(--radius-md) px-(--space-4) text-(length:--text-sm) font-medium",
-            "border border-(--color-accent) text-(--color-accent) hover:bg-(--color-accent-faint)",
-          )}
+          className="self-start"
         >
           {t("security.newToken")}
-        </button>
+        </Button>
       )}
       {rows.length === 0 ? (
         <div className="rounded-(--radius-md) border border-dashed border-(--color-border-subtle) p-(--space-4) text-center">
@@ -417,12 +390,13 @@ function ApiTokensSection(): ReactNode {
                 <td className="px-(--space-2) py-(--space-2) text-right">
                   <DestructiveConfirm
                     trigger={
-                      <button
+                      <Button
                         type="button"
-                        className="h-8 rounded-(--radius-md) px-(--space-2) text-(length:--text-sm) text-(--color-error) hover:bg-(--color-error-faint)"
+                        variant="danger-ghost"
+                        size="sm"
                       >
                         {t("security.revoke")}
-                      </button>
+                      </Button>
                     }
                     body={t("security.revokeConfirm")}
                     confirmLabel={t("security.revoke")}
@@ -459,7 +433,7 @@ function HttpSessionsSection(): ReactNode {
             >
               <div className="flex-1 min-w-0">
                 <p className="truncate text-(length:--text-sm) text-(--color-fg-strong)">
-                  {s.user_agent ?? "Unknown device"}
+                  {s.user_agent ?? t("security.unknownDevice")}
                   {s.is_current && (
                     <span className="ml-(--space-2) rounded-(--radius-full) bg-(--color-accent-faint) px-(--space-2) py-0.5 text-(length:--text-2xs) text-(--color-accent)">
                       {t("security.httpSessionsCurrent")}
@@ -472,12 +446,13 @@ function HttpSessionsSection(): ReactNode {
               </div>
               <DestructiveConfirm
                 trigger={
-                  <button
+                  <Button
                     type="button"
-                    className="h-8 rounded-(--radius-md) px-(--space-2) text-(length:--text-sm) text-(--color-error) hover:bg-(--color-error-faint)"
+                    variant="danger-ghost"
+                    size="sm"
                   >
                     {t("security.revoke")}
-                  </button>
+                  </Button>
                 }
                 body={t("security.revokeConfirm")}
                 confirmLabel={t("security.revoke")}
@@ -510,16 +485,15 @@ function LogoutEverywhereSection(): ReactNode {
   };
   return (
     <SettingsSection title={t("security.logoutAllSection")}>
-      <button
+      <Button
         type="button"
+        variant="danger"
+        size="md"
         onClick={() => setConfirm(true)}
-        className={cn(
-          "self-start h-10 rounded-(--radius-md) px-(--space-4) text-(length:--text-sm) font-medium text-white",
-          "bg-(--color-error) hover:bg-(--color-error)/85",
-        )}
+        className="self-start"
       >
         {t("security.logoutAllButton")}
-      </button>
+      </Button>
       <TypeToConfirmDialog
         open={confirm}
         onOpenChange={setConfirm}

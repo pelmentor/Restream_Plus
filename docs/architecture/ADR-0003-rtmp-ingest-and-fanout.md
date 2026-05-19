@@ -274,6 +274,39 @@ When a Worker's underlying process exits non-zero while the RunState is
   click on the target tile clears the counter and re-enters
   `starting`.
 
+**Code reconciliation (slice 9 — SA-F5 ADR closure).** The numeric
+defaults above are codified in the immutable `CircuitBreakerPolicy`
+dataclass at `app/domain/circuit_breaker.py`:
+
+```python
+@dataclass(frozen=True, slots=True)
+class CircuitBreakerPolicy:
+    max_failures: int = 30                          # ADR-0003 default N
+    window: timedelta = timedelta(minutes=5)        # ADR-0003 default window
+    healthy_reset_after: timedelta = timedelta(seconds=60)  # 60 s healthy → clear counter
+```
+
+`CircuitBreaker.should_open(now)` returns
+`BreakerVerdict.OPEN` once `failure_count_in_window(now) >= max_failures`
+(strict `>=`, not `>`); the supervisor then routes the Worker to
+`WorkerState.FAILED_OPEN`. `record_healthy(now)` clears the
+failure deque on the first observation that crosses the
+`healthy_reset_after` boundary (not on every healthy heartbeat —
+the timer arms on the first call after a failure and fires once).
+`reset()` is the user-initiated "Retry now" path: clears failures
+AND the healthy timer, then the next `record_failure` rearms.
+
+The defaults are dataclass fields, so a future test or experimental
+deployment can pass a custom `CircuitBreakerPolicy(max_failures=10,
+window=timedelta(minutes=2))` to the `CircuitBreaker` constructor;
+production wiring uses `field(default_factory=CircuitBreakerPolicy)`
+and never overrides. Changing the production defaults is an ADR
+amendment (this section), NOT a runtime knob — the breaker exists
+to keep us from being a noisy neighbor; making it operator-tunable
+would let one operator's experimental "more aggressive retry"
+choice push our IP onto a platform-side ban list shared by every
+deployment.
+
 This prevents us from hammering a target platform indefinitely and
 earning rate-limits or IP bans that would affect other targets sharing
 the egress.
@@ -375,3 +408,65 @@ not guarantee parent-death signals. We do it explicitly.
   ADR-amend at that point so the next architect doesn't rediscover
   the single-drainer invariant. (Added 2026-05-17 after the live-stats
   feature review surfaced it.)
+
+- **Phase 13 multi-track ingest exploration (2026-05-18) — DEFERRED until
+  upstream catches up.** The operator asked for Enhanced RTMP multi-track
+  ingest (OBS sends N renditions; we pass multi-track through to Twitch
+  and extract the fattest track for YouTube/Kick/VK). A full architecture
+  pass found TWO independent upstream blockers that no amount of code
+  on our side can route around without crutches the operator explicitly
+  rejected (Rule №1):
+
+    1. **OBS gates the Multitrack Video toggle on
+       `multitrack_video_configuration_url` in the service entry's
+       `services.json`** (commit "Don't attempt multitrack without
+       config url", Aug 2025). The bundled "Custom" service has no such
+       field. Pointing OBS at our `rtmp://host:1935/live/<key>` via
+       Custom Service today means **the Multitrack Video toggle is
+       greyed out** — the operator literally cannot send multi-track
+       to us. Workarounds (ship a services.json fragment for manual
+       install; submit Restream_Plus upstream to OBS) are either fragile
+       or slow. See feature requests
+       https://ideas.obsproject.com/posts/2684/ +
+       https://ideas.obsproject.com/posts/2743/.
+
+    2. **ffmpeg stable cannot emit Enhanced RTMP multi-track FLV
+       output.** Multi-track FLV encode lives in BtbN's `enhanced-flv`
+       branch, not in mainline 7.x. Even if (1) were solved, we could
+       not forward multi-track to Twitch with the Debian-packaged
+       ffmpeg we run today; we'd have to vendor nightlies.
+
+  **Revisit triggers**: (a) OBS adds Custom Service support for
+  `multitrack_video_configuration_url` (track
+  https://ideas.obsproject.com/posts/2684/ + the
+  https://github.com/obsproject/obs-studio/pull/10845 schema thread);
+  (b) ffmpeg upstream merges the BtbN `enhanced-flv` multitrack-FLV
+  output path into mainline. Both blockers need to clear before we
+  re-open this — partial work (e.g., just swapping nginx-rtmp → MediaMTX
+  to be "ready") was rejected as premature scope.
+
+  **Implication for ADR-0008**: `-c copy` lock stays intact — there
+  is no transcoding tier on the roadmap. The operator's RTX 5060 is
+  expected to do all encoding inside OBS; this server is and remains
+  a pure passthrough relay. (Confirmed by the operator: "не нужны мне
+  костыли никакие и компромиссы".)
+
+  Full research report (multi-track ingest server candidates, MediaMTX
+  multitrack PR history, OBS source citations, Twitch Enhanced
+  Broadcasting protocol details) was generated in-session and lives
+  only in the conversation transcript; key URLs above + the file
+  references in `docs/SESSION_HANDOFF.md` §"Phase 13 multi-track
+  exploration" are the durable artifacts.
+
+  **Empirical confirmation (2026-05-18 same day)**: the operator
+  built the dev-only MediaMTX sidecar (see `app/api/internal_mtx.py`
+  + `dev/mediamtx.yml` + `start.py`) and tried OBS → `:1935` → fanout
+  with Multitrack Video toggled ON in the OBS Custom Service. OBS
+  failed to start ("Output failure / No URL available for current
+  service"). With Multitrack Video toggled OFF, OBS sent a standard
+  single-track RTMP publish; MediaMTX accepted, our auth webhook
+  matched the ingest key, supervisor notified, ffmpeg workers fanned
+  out cleanly. This is exactly the blocker-1 behaviour the research
+  predicted, observed end-to-end. Conclusion stands: re-open Phase
+  13 only when OBS Custom Service supports `multitrack_video_configuration_url`
+  AND ffmpeg mainline merges the BtbN `enhanced-flv` branch.

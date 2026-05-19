@@ -18,17 +18,20 @@ you're giving up, not just what you're gaining".
 
 | #    | Title                                                                | Status   |
 | ---- | -------------------------------------------------------------------- | -------- |
-| 0001 | [Backend stack: Python 3.12 + FastAPI](ADR-0001-backend-stack.md)    | Accepted |
+| 0001 | [Backend stack: Python 3.12 + FastAPI](ADR-0001-backend-stack.md)    | Accepted (amended 2026-05-19) |
 | 0002 | [Frontend stack: React 19 + Vite + Tailwind v4](ADR-0002-frontend-stack.md) | Accepted |
 | 0003 | [RTMP ingest + fan-out: nginx-rtmp + Worker supervisor](ADR-0003-rtmp-ingest-and-fanout.md) | Accepted (amended 2026-05-15) |
 | 0004 | [Docker shape: single image with s6-overlay](ADR-0004-docker-shape.md) | Accepted (amended 2026-05-15) |
 | 0005 | [Auth model: single admin, Argon2id, session cookie + API token](ADR-0005-auth-model.md) | Accepted (amended 2026-05-15) |
 | 0006 | [Secret encryption at rest: AES-256-GCM from master passphrase](ADR-0006-secret-encryption.md) | Accepted (amended 2026-05-15) |
-| 0007 | [Persistence: SQLite (WAL), single-shot schema](ADR-0007-persistence.md) | Accepted |
+| 0007 | [Persistence: SQLite (WAL), single-shot schema](ADR-0007-persistence.md) | Accepted (amended 2026-05-19) |
 | 0008 | [Worker abstraction & log-redaction sink](ADR-0008-worker-abstraction.md) | Accepted |
 | 0009 | [Credential model and lifecycle](ADR-0009-credential-model.md) | Accepted |
-| 0010 | [Headless restart & master-passphrase availability](ADR-0010-headless-restart.md) | Accepted |
-| 0011 | [Health, liveness, and self-checks](ADR-0011-health-liveness.md) | Accepted |
+| 0010 | [Headless restart & master-passphrase availability](ADR-0010-headless-restart.md) | Accepted (amended 2026-05-19) |
+| 0011 | [Health, liveness, and self-checks](ADR-0011-health-liveness.md) | Accepted (amended 2026-05-19) |
+| 0012 | [MediaMTX dev-sidecar: RTMP ingest for Docker-less local dev](ADR-0012-mediamtx-dev-sidecar.md) | Accepted |
+| 0013 | [Audit event vocabulary: event_type strings + data_json shape](ADR-0013-audit-event-vocabulary.md) | Accepted |
+| 0014 | [SPA URL cap + traversal-guarding policy for `_spa_fallback`](ADR-0014-spa-url-cap.md) | Accepted |
 
 ## Design review log
 

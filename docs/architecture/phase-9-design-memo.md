@@ -626,6 +626,25 @@ out anyway. Window is microseconds. Accept.
 Supervisor: `start_run` raises `RUN_ACTIVE` (409) if rotation_lock
 held. (One-line check; the lock is a process-wide guard.)
 
+**Slice 8 amendment (Hex Audit BA-F4 + FG3-F1, 2026-05-19 — SA2-F8
+ADR closure).** The original lifespan `app_started` emit was wrapped
+in `contextlib.suppress(Exception)` — the safety net was load-bearing
+because the pre-slice-8 audit repo opened its own session AND ran
+`PRAGMA wal_checkpoint(TRUNCATE)` on every append; an unclean prior
+shutdown with a dirty WAL could OSError on the boot-time checkpoint
+and crash-loop the container via s6 restart. Slice 8 removes BOTH
+the `contextlib.suppress` (audit-write failure on boot is now
+**fatal**, because the audit row is the only durable evidence the
+process came up) AND the per-call checkpoint by passing
+`checkpoint=False` to `append_standalone(...)` (the
+`_audit_log_retention_loop` is the canonical WAL-hygiene actor; the
+boot-time row defers its WAL truncate to the first retention tick).
+Net: the boot row is durable, the WAL race is gone, and a degraded
+DB at boot surfaces as one loud structured-log critical event and a
+hard exit — not a silent crash-loop. See **ADR-0007 §"Audit-log
+durability and transactional shape"** and the slice 8.5 burndown
+entry for FG3-F1.
+
 ---
 
 ## N. Repository additions

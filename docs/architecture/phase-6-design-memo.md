@@ -234,6 +234,24 @@ because (a) the request just authenticated with this exact plaintext
 seconds ago, (b) ADR-0006's threat model already accepts in-process
 plaintext.
 
+**Slice 8 amendment (Hex Audit BA-F4, 2026-05-19 — SA2-F9 ADR
+closure).** The two-session split described above (one txn for the
+hash update, a separately-committed audit row via
+`AuditLogRepository(sessionmaker).append(...)`) was the original
+forensic gap that slice 8 set out to close. The background task now
+opens one session, calls
+`UsersRepository.update_password_hash(user_id, new_hash)` AND
+`audit.append(session, event_type="password_rehashed",
+actor="system")` in the SAME `session.begin()` block, then commits
+once. The hash update and the audit row commit atomically (or roll
+back together). The `try/except Exception: _logger.exception(...) ;
+swallow` posture around the body is preserved — the
+fallback-on-next-login semantic still applies — but the audit row is
+no longer subject to a separate commit that could silently fail
+after the hash already landed. See **ADR-0007 §"Audit-log
+durability and transactional shape"** for the full
+canonical-vs-standalone repo contract.
+
 ## Q8 — Reprompt burn-on-failure DoS surface
 
 Decisions, in order:

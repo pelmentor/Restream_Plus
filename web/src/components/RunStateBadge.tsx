@@ -55,7 +55,7 @@ export function RunStateBadge(): ReactNode {
         type="button"
         onClick={onClick}
         className={cn(
-          "inline-flex items-center gap-2 rounded-full px-3 py-1",
+          "inline-flex items-center gap-(--space-2) rounded-full px-(--space-3) py-(--space-1)",
           "transition-colors",
           visual.pillClass,
         )}

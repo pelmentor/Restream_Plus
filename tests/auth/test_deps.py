@@ -28,6 +28,7 @@ from app.auth.deps import (
     require_reprompt_grant,
 )
 from app.auth.key_material import DerivedKeys, KeyMaterial, KeyMaterialState
+from app.auth.last_seen_coalescer import LastSeenCoalescer
 from app.auth.rate_limit import LoginRateLimiter
 from app.auth.reprompts import RepromptScope, RepromptStore
 from app.auth.sessions import SESSION_COOKIE_NAME
@@ -102,7 +103,9 @@ async def auth_state(
         sessionmaker=sessionmaker_factory,
         rate_limiter=LoginRateLimiter(),
         unlock_rate_limiter=LoginRateLimiter(),
+        reprompt_rate_limiter=LoginRateLimiter(),
         reprompts=RepromptStore(),
+        last_seen_coalescer=LastSeenCoalescer(),
         trusted_proxies=(),
     )
 
@@ -158,7 +161,9 @@ class TestKeyMaterialDeps:
             sessionmaker=sessionmaker_factory,
             rate_limiter=LoginRateLimiter(),
             unlock_rate_limiter=LoginRateLimiter(),
+            reprompt_rate_limiter=LoginRateLimiter(),
             reprompts=RepromptStore(),
+            last_seen_coalescer=LastSeenCoalescer(),
             trusted_proxies=(),
         )
         app = _make_app(state)
@@ -182,7 +187,9 @@ class TestKeyMaterialDeps:
             sessionmaker=sessionmaker_factory,
             rate_limiter=LoginRateLimiter(),
             unlock_rate_limiter=LoginRateLimiter(),
+            reprompt_rate_limiter=LoginRateLimiter(),
             reprompts=RepromptStore(),
+            last_seen_coalescer=LastSeenCoalescer(),
             trusted_proxies=(),
         )
         app = _make_app(state)
@@ -217,7 +224,9 @@ class TestClientIp:
             sessionmaker=sessionmaker_factory,
             rate_limiter=LoginRateLimiter(),
             unlock_rate_limiter=LoginRateLimiter(),
+            reprompt_rate_limiter=LoginRateLimiter(),
             reprompts=RepromptStore(),
+            last_seen_coalescer=LastSeenCoalescer(),
             trusted_proxies=(ipaddress.ip_network("127.0.0.1/32"),),
         )
         app = _make_app(state)

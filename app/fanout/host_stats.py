@@ -57,18 +57,23 @@ nginx wedge."""
 
 
 class ProcStatReader(Protocol):
-    """Reads `(utime_ticks, stime_ticks, rss_bytes)` for a pid.
+    """Reads `(utime_ticks, stime_ticks, starttime_ticks, rss_bytes)` for a pid.
 
     The production implementation parses `/proc/<pid>/stat` directly.
     Tests inject a deterministic fake that returns a scripted
     sequence so CPU% math is verifiable without a real process tree.
+
+    `starttime_ticks` (clock ticks since boot) is used by the sampler
+    to key its cumulative-ticks cache by `(pid, starttime)` so kernel
+    pid-reuse cannot produce one bogus tick of CPU% (Hex Audit FG2-M2,
+    slice 10).
 
     Returns `None` if the pid is gone (race against process exit). The
     sampler treats this as "no contribution this tick" — the next tick
     re-scans the supervisor's live pid set.
     """
 
-    def read(self, pid: int) -> tuple[int, int, int] | None: ...
+    def read(self, pid: int) -> tuple[int, int, int, int] | None: ...
 
 
 class IngestStatFetcher(Protocol):
@@ -122,6 +127,7 @@ class HostStatsSampler:
         "_logical_cpus",
         "_monotonic_ns",
         "_pid_provider",
+        "_pid_starttimes",
         "_proc",
         "_self_pid",
     )
@@ -150,10 +156,18 @@ class HostStatsSampler:
         else:
             self._logical_cpus = max(os.cpu_count() or 1, 1)
         self._monotonic_ns = monotonic_clock_ns
-        # `pid -> (last_total_ticks, last_wall_ns)`. First-tick reads
-        # return 0.0% and seed the entry; subsequent reads compute the
-        # delta.
-        self._last_samples: dict[int, tuple[int, int]] = {}
+        # `(pid, starttime) -> (last_total_ticks, last_wall_ns)`.
+        # First-tick reads return 0.0% and seed the entry; subsequent
+        # reads compute the delta. Hex Audit FG2-M2 (slice 10): the
+        # composite key detects kernel pid-reuse explicitly — when a
+        # recycled pid arrives with a different starttime, the lookup
+        # misses and we re-seed instead of computing a bogus delta
+        # against the dead pid's baseline.
+        self._last_samples: dict[tuple[int, int], tuple[int, int]] = {}
+        # `pid -> starttime` for the prune step. Maintains O(1) lookup
+        # of "what was this pid's starttime last tick" so a fresh
+        # `(pid, starttime)` key invalidates the prior baseline.
+        self._pid_starttimes: dict[int, int] = {}
 
     async def sample(self) -> HostStatsSample:
         now_ns = self._monotonic_ns()
@@ -181,9 +195,10 @@ class HostStatsSampler:
                 pid=self._self_pid,
                 utime=self_reading[0],
                 stime=self_reading[1],
+                starttime=self_reading[2],
                 now_ns=now_ns,
             )
-            rss_bytes = self_reading[2]
+            rss_bytes = self_reading[3]
 
         cpu_total_pct = worker_total_pct + self_pct
 
@@ -192,8 +207,9 @@ class HostStatsSampler:
         # accumulate forever on long runs with frequent reconnects.
         live_pids = {pid for _, pid in worker_pids}
         live_pids.add(self._self_pid)
-        for stale in [p for p in self._last_samples if p not in live_pids]:
-            del self._last_samples[stale]
+        for stale_pid in [p for p in self._pid_starttimes if p not in live_pids]:
+            stale_st = self._pid_starttimes.pop(stale_pid)
+            self._last_samples.pop((stale_pid, stale_st), None)
 
         ingest_kbps: float | None
         try:
@@ -218,38 +234,53 @@ class HostStatsSampler:
             # Process is gone between provider enumeration and read.
             # Drop the accounting entry so a recycled pid (kernel pid
             # reuse) doesn't compute negative deltas next tick.
-            self._last_samples.pop(pid, None)
+            old_starttime = self._pid_starttimes.pop(pid, None)
+            if old_starttime is not None:
+                self._last_samples.pop((pid, old_starttime), None)
             return 0.0
-        utime, stime, _rss = reading
-        return self._account_pct(pid=pid, utime=utime, stime=stime, now_ns=now_ns)
+        utime, stime, starttime, _rss = reading
+        return self._account_pct(
+            pid=pid, utime=utime, stime=stime, starttime=starttime, now_ns=now_ns
+        )
 
-    def _account_pct(self, *, pid: int, utime: int, stime: int, now_ns: int) -> float:
+    def _account_pct(
+        self, *, pid: int, utime: int, stime: int, starttime: int, now_ns: int
+    ) -> float:
+        # Hex Audit FG2-M2 (slice 10): detect kernel pid-reuse by
+        # comparing the read starttime against the last-seen one.
+        # When they differ, drop the stale baseline BEFORE looking up
+        # the new key — guarantees a one-tick re-seed instead of one
+        # tick of bogus CPU% derived from the dead pid's accumulated
+        # ticks vs the new pid's smaller-but-positive delta.
+        old_starttime = self._pid_starttimes.get(pid)
+        if old_starttime is not None and old_starttime != starttime:
+            self._last_samples.pop((pid, old_starttime), None)
+        self._pid_starttimes[pid] = starttime
+
+        key = (pid, starttime)
         total = utime + stime
-        prev = self._last_samples.get(pid)
-        self._last_samples[pid] = (total, now_ns)
+        prev = self._last_samples.get(key)
+        self._last_samples[key] = (total, now_ns)
         if prev is None:
-            # First reading for this pid — no baseline to subtract.
+            # First reading for this (pid, starttime) — no baseline.
             return 0.0
         prev_total, prev_ns = prev
         d_ticks = total - prev_total
         d_wall_s = (now_ns - prev_ns) / 1_000_000_000
         if d_ticks < 0 or d_wall_s <= 0:
-            # pid reuse where the new pid's accumulated ticks are LOWER
-            # than the dead pid's baseline, or a clock anomaly. Reset
-            # baseline and report 0 this tick.
+            # Clock anomaly or unexpected counter rewind. Reset and
+            # report 0 this tick. With the starttime-keyed cache, true
+            # pid-reuse no longer reaches this branch.
             return 0.0
         cpu_seconds = d_ticks / self._clk_tck
         # 0-100% of one host: cpu_seconds / wall_seconds * (100 / cpus).
         pct = (cpu_seconds / d_wall_s) * (100.0 / self._logical_cpus)
-        # Defense against pid-reuse where the new pid happens to have
-        # HIGHER ticks than the dead pid's baseline — produces a
-        # large-but-positive delta that the `< 0` guard above misses.
         # Physical ceiling: no process can consume more than 100% * N
-        # cores. Anything above that is a bogon; drop the baseline so
-        # the next tick re-seeds cleanly.
+        # cores. Anything above that is a bogon (extreme clock skew);
+        # drop the baseline so the next tick re-seeds cleanly.
         max_sane_pct = 100.0 * self._logical_cpus
         if pct > max_sane_pct:
-            del self._last_samples[pid]
+            del self._last_samples[key]
             return 0.0
         return pct
 
@@ -272,7 +303,7 @@ class ProcfsStatReader:
     def __init__(self, *, page_size: int | None = None) -> None:
         self._page_size = page_size if page_size is not None else _sysconf_or("SC_PAGESIZE", 4096)
 
-    def read(self, pid: int) -> tuple[int, int, int] | None:
+    def read(self, pid: int) -> tuple[int, int, int, int] | None:
         try:
             with open(f"/proc/{pid}/stat", "rb") as fh:
                 raw = fh.read()
@@ -284,14 +315,22 @@ class ProcfsStatReader:
             fields = raw[tail_start:].split()
             # After comm we have field 3 onwards as `fields[0]`-indexed:
             # `state` = fields[0] (field 3), so utime (field 14) is
-            # `fields[11]`, stime (field 15) is `fields[12]`, rss
-            # (field 24) is `fields[21]`.
+            # `fields[11]`, stime (field 15) is `fields[12]`,
+            # `starttime` (field 22) is `fields[19]`, rss (field 24)
+            # is `fields[21]`.
             utime = int(fields[11])
             stime = int(fields[12])
+            # Hex Audit FG2-M2 (slice 10): include `starttime` so the
+            # sampler can key the cumulative-ticks cache by
+            # `(pid, starttime)` and detect kernel pid-reuse. Without
+            # this, a recycled pid whose new owner has slightly higher
+            # cumulative ticks than the dead pid produces one tick of
+            # bogus-but-bounded CPU% reading.
+            starttime = int(fields[19])
             rss_pages = int(fields[21])
         except (ValueError, IndexError):
             return None
-        return utime, stime, rss_pages * self._page_size
+        return utime, stime, starttime, rss_pages * self._page_size
 
 
 class NginxRtmpStatFetcher:

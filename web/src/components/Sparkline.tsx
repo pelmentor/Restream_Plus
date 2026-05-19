@@ -79,7 +79,25 @@ export function Sparkline({
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, width, height);
 
-    if (samples.length === 0) return;
+    if (samples.length === 0) {
+      // Hex Audit UI-F8 (slice 10): paint a visible empty-state placeholder
+      // instead of leaving the canvas blank. Pre-slice-10, "no samples yet"
+      // and "the chart failed to render" were visually indistinguishable —
+      // operator sees a transparent 240×48 box and has no signal whether
+      // the dashboard is loading, broken, or just early in a session.
+      // Now: a faint dashed horizontal line at mid-height communicates
+      // "the chart is mounted and waiting for data" while staying clearly
+      // distinct from a real-data line (which is solid).
+      ctx.strokeStyle = tokens.bg;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(0, height / 2);
+      ctx.lineTo(width, height / 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      return;
+    }
 
     const max = Math.max(1, ...samples.map((s) => s.bitrate));
     const min = Math.min(0, ...samples.map((s) => s.bitrate));

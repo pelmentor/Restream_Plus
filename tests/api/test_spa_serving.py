@@ -190,3 +190,39 @@ def test_resolve_oserror_is_caught_and_returns_404(tmp_path: Path) -> None:
     with patch("pathlib.Path.resolve", side_effect=OSError("injected")):
         r = client.get("/settings/normal-path")
     assert r.status_code == 404
+
+
+# Hex Audit FG2-C3 (2026-05-18): byte-length cap on top of the
+# codepoint cap. A path of multi-byte UTF-8 codepoints that fits the
+# 1024-codepoint cap can still exceed the safe byte budget when
+# fsencoded — `Path.resolve()` then risks ENAMETOOLONG on Linux ext4.
+# The handler falls through to index.html on either cap match.
+
+
+def test_multibyte_path_under_codepoint_cap_but_over_byte_cap_falls_through(
+    tmp_path: Path,
+) -> None:
+    spa = _fake_spa(tmp_path)
+    client = TestClient(_app_with_spa(spa))
+    # 600 codepoints of 4-byte UTF-8 (Mathematical Bold Italic A, U+1D468)
+    # = 2400 bytes — past the 2048-byte cap but under the 1024-codepoint
+    # cap. Must not crash; must return the SPA shell (200) since the
+    # path is well-formed but inadmissible.
+    mathy_a = "\U0001d468"  # 4-byte UTF-8
+    payload = mathy_a * 600
+    r = client.get(f"/{payload}")
+    assert r.status_code != 500
+    # Cap fired → fell through to FileResponse(index_html).
+    assert r.status_code == 200
+    assert '<div id="root">' in r.text
+
+
+def test_short_multibyte_path_still_resolves_normally(tmp_path: Path) -> None:
+    # A modest multi-byte path well under BOTH caps still hits the
+    # normal `resolve()` → `is_file()` flow (and falls through to the
+    # SPA shell because the file doesn't exist).
+    spa = _fake_spa(tmp_path)
+    client = TestClient(_app_with_spa(spa))
+    r = client.get("/\U0001d468/profile")  # 1 4-byte codepoint + ascii
+    assert r.status_code == 200
+    assert '<div id="root">' in r.text

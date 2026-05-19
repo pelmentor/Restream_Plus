@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { Banner } from "@/components/Banner";
 import { Button } from "@/components/Button";
+import { Input } from "@/components/Input";
 import { AuthLayout } from "@/components/AuthLayout";
 import { apiFetch, type ApiError } from "@/lib/api";
 import { safeNext } from "@/lib/safeNext";
@@ -107,20 +108,21 @@ export function UnlockPage(): ReactNode {
           <label htmlFor="unlock-passphrase" className="sr-only">
             {t("unlock.passphraseLabel")}
           </label>
-          <input
+          <Input
             ref={inputRef}
             id="unlock-passphrase"
             type="password"
             name="passphrase"
+            size="lg"
+            mono
             value={passphrase}
             onChange={(e) => setPassphrase(e.currentTarget.value)}
             autoComplete="off"
             placeholder={t("unlock.passphraseLabel")}
             required
             aria-required="true"
-            aria-invalid={submitError !== null}
+            invalid={submitError !== null}
             disabled={mutation.isPending}
-            className="block w-full rounded-md border border-(--color-border-subtle) bg-(--color-bg-base) px-3 py-2 font-(family-name:--font-mono) text-(length:--text-base) text-(--color-fg-strong) placeholder-(--color-fg-faint) focus-visible:border-(--color-accent)"
           />
           {submitError !== null && (
             <p

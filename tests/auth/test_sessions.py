@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import pytest_asyncio
 from app.auth.key_material import DerivedKeys
+from app.auth.last_seen_coalescer import LastSeenCoalescer
 from app.auth.rate_limit import LoginRateLimiter
 from app.auth.sessions import (
     DEFAULT_CONSTANT_TIME_FLOOR_SECONDS,
@@ -39,18 +40,28 @@ async def sessions_repo(session: AsyncSession) -> HttpSessionsRepository:
     return HttpSessionsRepository(session)
 
 
+@pytest.fixture
+def coalescer() -> LastSeenCoalescer:
+    """A fresh `LastSeenCoalescer` per test. Slice 7 / BA-F6: every
+    SessionAuthService needs one; constructing one is cheap (in-memory
+    OrderedDict)."""
+    return LastSeenCoalescer()
+
+
 @pytest_asyncio.fixture
 async def service(
     users_repo: UsersRepository,
     sessions_repo: HttpSessionsRepository,
     derived_keys: DerivedKeys,
     rate_limiter: LoginRateLimiter,
+    coalescer: LastSeenCoalescer,
 ) -> SessionAuthService:
     return SessionAuthService(
         users=users_repo,
         sessions=sessions_repo,
         keys=derived_keys,
         rate_limiter=rate_limiter,
+        last_seen_coalescer=coalescer,
         # Speed up the test suite — the timing-floor logic itself is
         # tested separately below.
         constant_time_floor_seconds=0.0,
@@ -239,6 +250,7 @@ class TestRateLimitIntegration:
         users_repo: UsersRepository,
         sessions_repo: HttpSessionsRepository,
         derived_keys: DerivedKeys,
+        coalescer: LastSeenCoalescer,
     ) -> None:
         """After hitting the failure threshold, further attempts return
         immediately with `RateLimitedError` (no Argon2 burned).
@@ -249,6 +261,7 @@ class TestRateLimitIntegration:
             sessions=sessions_repo,
             keys=derived_keys,
             rate_limiter=rl,
+            last_seen_coalescer=coalescer,
             constant_time_floor_seconds=0.0,
         )
         # Two wrong-password attempts to fill the bucket.
@@ -266,6 +279,7 @@ class TestRateLimitIntegration:
         users_repo: UsersRepository,
         sessions_repo: HttpSessionsRepository,
         derived_keys: DerivedKeys,
+        coalescer: LastSeenCoalescer,
     ) -> None:
         """Case-variation usernames share a bucket."""
         rl = LoginRateLimiter(failure_limit=2, window_seconds=60)
@@ -274,6 +288,7 @@ class TestRateLimitIntegration:
             sessions=sessions_repo,
             keys=derived_keys,
             rate_limiter=rl,
+            last_seen_coalescer=coalescer,
             constant_time_floor_seconds=0.0,
         )
         # First failure under `ADMIN`, second under `Admin` — both
@@ -296,6 +311,7 @@ class TestConstantTimeFloor:
         sessions_repo: HttpSessionsRepository,
         derived_keys: DerivedKeys,
         rate_limiter: LoginRateLimiter,
+        coalescer: LastSeenCoalescer,
     ) -> None:
         floor = 0.20
         svc = SessionAuthService(
@@ -303,6 +319,7 @@ class TestConstantTimeFloor:
             sessions=sessions_repo,
             keys=derived_keys,
             rate_limiter=rate_limiter,
+            last_seen_coalescer=coalescer,
             constant_time_floor_seconds=floor,
         )
         start = asyncio.get_event_loop().time()
@@ -319,12 +336,14 @@ class TestConstantTimeFloor:
         sessions_repo: HttpSessionsRepository,
         derived_keys: DerivedKeys,
         rate_limiter: LoginRateLimiter,
+        coalescer: LastSeenCoalescer,
     ) -> None:
         svc = SessionAuthService(
             users=users_repo,
             sessions=sessions_repo,
             keys=derived_keys,
             rate_limiter=rate_limiter,
+            last_seen_coalescer=coalescer,
             constant_time_floor_seconds=0.0,
         )
         start = asyncio.get_event_loop().time()
@@ -364,6 +383,7 @@ class TestCookieVerification:
         sessions_repo: HttpSessionsRepository,
         derived_keys: DerivedKeys,
         rate_limiter: LoginRateLimiter,
+        coalescer: LastSeenCoalescer,
         session: AsyncSession,
     ) -> None:
         svc = SessionAuthService(
@@ -371,6 +391,7 @@ class TestCookieVerification:
             sessions=sessions_repo,
             keys=derived_keys,
             rate_limiter=rate_limiter,
+            last_seen_coalescer=coalescer,
             constant_time_floor_seconds=0.0,
             cookie_lifetime=timedelta(seconds=-1),
         )
@@ -417,6 +438,7 @@ class TestNeedsRehashFlag:
         sessions_repo: HttpSessionsRepository,
         derived_keys: DerivedKeys,
         rate_limiter: LoginRateLimiter,
+        coalescer: LastSeenCoalescer,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When verify_password says the hash needs rehashing, the
@@ -444,6 +466,7 @@ class TestNeedsRehashFlag:
             sessions=sessions_repo,
             keys=derived_keys,
             rate_limiter=rate_limiter,
+            last_seen_coalescer=coalescer,
             constant_time_floor_seconds=0.0,
         )
         outcome = await svc.login(username="admin", password=ADMIN_PASSWORD, ip="127.0.0.1")

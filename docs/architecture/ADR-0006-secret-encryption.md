@@ -203,8 +203,17 @@ attacker may have captured plaintext keys before rotation.
 - **Sqlcipher (encrypted SQLite database file)**: encrypts everything
   uniformly. We only need to encrypt secrets. Sqlcipher's footprint
   in the Python ecosystem is patchier than `cryptography`'s AES-GCM.
-  Also, the per-field approach with AAD gives us cleaner audit and
-  rotation semantics.
+  Also, the per-field approach with AAD gives us cleaner audit
+  (see ADR-0007 §"Audit log scope" for the rotation/credential events
+  this enables — `passphrase_rotation_started`,
+  `passphrase_rotated`, `passphrase_rotation_orphaned`,
+  `credential_set`, `credential_revealed`, `credential_cleared`,
+  `kdf_salt_previous_cleared`; all carry `target_id` or operator
+  context per the slice-7 BA-F5 AAD-v2 binding) and rotation semantics
+  (per-record salt + nonce means a single row's ciphertext can be
+  re-wrapped without rewriting siblings, and a backup taken before
+  the rename can still be restored against either passphrase during
+  the 24 h grace window).
 - **Hashicorp Vault / external KMS**: enormous operational overhead
   for a single-user self-hosted app. The user does not run Vault.
 - **Storing plaintext, relying on the volume being on an encrypted

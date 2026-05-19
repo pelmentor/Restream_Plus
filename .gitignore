@@ -58,6 +58,13 @@ npm-debug.log*
 
 # Runtime data (the volume contents — never commit)
 /data/
+/.restream-plus-db/
+/.dev-data/
+
+# Dev-only tooling — start.py downloads MediaMTX on first run.
+/dev/mediamtx.exe
+/dev/mediamtx.exe.sha256
+/dev/*.zip
 *.db
 *.db-journal
 *.db-wal

@@ -83,13 +83,21 @@ class TestAllowlistHelpers:
 
     def test_default_allowlist_pins(self) -> None:
         """The default allowlist is intentionally tiny — adding to it
-        is a security-review event. This pin catches accidental expansion."""
+        is a security-review event. This pin catches accidental expansion.
+
+        Hex Audit Backend F12 (2026-05-18): added /internal/mtx/ so the
+        MediaMTX lifecycle webhook can reset `_obs_is_publishing` even
+        when an in-flight publish straddles an unlock transition. Same
+        belt-and-suspenders posture as /internal/rtmp/ — the handler
+        503s internally in locked state.
+        """
         assert DEFAULT_ALLOWLIST == (
             "/api/unlock",
             "/livez",
             "/readyz",
             "/healthz",
             "/internal/rtmp/",
+            "/internal/mtx/",
         )
 
     def test_static_prefixes_pin(self) -> None:

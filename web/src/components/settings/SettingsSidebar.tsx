@@ -46,8 +46,13 @@ export function SettingsSidebar(): ReactNode {
   return (
     <aside
       className={cn(
-        "sticky top-(--space-6) self-start",
-        "max-h-[calc(100vh-var(--space-24))] overflow-y-auto",
+        // Hex Audit UX-F11 (slice 10): on mobile (< md) the sidebar
+        // collapses to a horizontal scroll-strip — `max-md:flex` +
+        // `max-md:overflow-x-auto` on the inner <nav> makes the link
+        // rows flow horizontally. Desktop layout (md+) keeps the
+        // sticky vertical column.
+        "md:sticky md:top-(--space-6) md:self-start",
+        "md:max-h-[calc(100vh-var(--space-24))] md:overflow-y-auto",
         "rounded-(--radius-lg) border bg-(--color-bg-elevated)",
         "border-(--color-border-subtle) px-(--space-2) py-(--space-4)",
       )}
@@ -75,6 +80,14 @@ export function SettingsSidebar(): ReactNode {
           {NAV.slice(0, 1).map((item) => (
             <SidebarLink key={item.to} {...item} />
           ))}
+          {/* Slice-6 UX-B.2 invariant: this section header is the
+              load-bearing tier signal that distinguishes top-level
+              rows from target-children rows (since slice-5 unified
+              their heights on control-md). If you ever data-drive
+              this header or render it conditionally, restore an
+              explicit visual tier signal (e.g., per-row height delta
+              or a parent-row chevron) — without it, indent + section
+              header are doing the entire job. */}
           <li
             className={cn(
               "px-(--space-3) pt-(--space-3) pb-(--space-1)",
@@ -135,10 +148,16 @@ function SettingsNavLink({
       to={to}
       className={({ isActive }) =>
         cn(
-          "flex h-10 items-center gap-(--space-3) rounded-(--radius-md) px-(--space-3)",
+          // Slice-5 UX-architect verdict: both nav tiers unify on
+          // control-md (36px). Top-level rows differentiate via the
+          // icon + label (icon present); indent rows via `pl-(--space-6)`
+          // (icon absent). The pre-slice-5 4px height differential was
+          // doing redundant tier signalling — the icon-presence axis is
+          // load-bearing on its own.
+          "flex h-(--size-control-md) items-center gap-(--space-3) rounded-(--radius-md) px-(--space-3)",
           "text-(length:--text-sm) font-medium text-(--color-fg-default)",
           "hover:bg-(--color-bg-sunken)",
-          indent && "pl-(--space-6) h-9",
+          indent && "pl-(--space-6)",
           isActive &&
             cn(
               "bg-(--color-accent-faint) text-(--color-accent) font-semibold",

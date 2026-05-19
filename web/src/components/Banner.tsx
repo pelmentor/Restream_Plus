@@ -47,7 +47,7 @@ export function Banner({
       role="status"
       aria-live={live}
       className={cn(
-        "flex items-start gap-3 rounded-md px-4 py-3 text-sm",
+        "flex items-start gap-(--space-3) rounded-md px-(--space-4) py-(--space-3) text-(length:--text-sm)",
         styles[variant],
         className,
       )}
@@ -57,6 +57,9 @@ export function Banner({
         {title !== undefined && (
           <div className="font-semibold text-(length:--text-sm)">{title}</div>
         )}
+        {/* Slice-6 UI-CHECKPOINT-3: body steps down to --color-fg-default
+            so the title (semibold + fg-strong) reads as the rank-1 line.
+            Body still ≥10:1 on every *-faint bg in both themes. */}
         {children !== undefined && (
           <div className="text-(--color-fg-default)">{children}</div>
         )}

@@ -121,6 +121,31 @@ restreamer is offline until you log in."
 **Harder:**
 - Two boot paths to maintain. Acceptable — they diverge only in the
   10 lines that read the passphrase.
+- **`env` mode trades secrecy for boot ergonomics** (slice 9 — SA-F12
+  ADR closure). The passphrase becomes visible to:
+  - `/proc/1/environ` of any process running inside the container with
+    CAP_SYS_PTRACE or running as the same uid (in practice: the control
+    plane, the supervisor, the ffmpeg children).
+  - `docker inspect <container>` from any host shell with docker socket
+    access — the `Config.Env` field carries the literal value.
+  - Operator's shell history (`docker run -e
+    RESTREAM_MASTER_PASSPHRASE=...` is recorded by `~/.bash_history` /
+    `~/.zsh_history` unless the operator prepends a space or uses
+    `HISTCONTROL=ignorespace`).
+  - Any orchestration tooling (compose files committed to a repo,
+    systemd unit files, k8s Secrets dumped to YAML, Ansible inventories,
+    `docker-compose.yml` in a tar backup). The leak surface is whatever
+    surrounds the deployment, not the appliance.
+  - Container introspection by a co-tenant container if the host shares
+    the docker socket (e.g., dind / portainer setups).
+  - Process-table snapshots: `ps eauxwww` from another shell on the
+    host shows env vars; `top -E` likewise.
+  All of these are *expected* on a single-tenant homelab where the
+  operator already has root on the host. The trade is explicit and
+  documented; the trap is the operator who runs Restream_Plus on a
+  shared VPS / k8s cluster and assumes the env var stays opaque to
+  cluster admins. `paste` mode exists for that case; the docs MUST
+  point at it before naming `env` as the default.
 
 **Rejected alternatives:**
 

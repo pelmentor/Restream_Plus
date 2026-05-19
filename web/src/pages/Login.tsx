@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { Banner } from "@/components/Banner";
 import { Button } from "@/components/Button";
+import { Input } from "@/components/Input";
 import { AuthLayout } from "@/components/AuthLayout";
 import { apiFetch, type ApiError } from "@/lib/api";
 import { safeNext } from "@/lib/safeNext";
@@ -122,11 +123,12 @@ export function LoginPage(): ReactNode {
           <label htmlFor="login-password" className="sr-only">
             {t("login.passwordLabel")}
           </label>
-          <input
+          <Input
             ref={passwordRef}
             id="login-password"
             type="password"
             name="password"
+            size="lg"
             value={password}
             onChange={(e) => setPassword(e.currentTarget.value)}
             onKeyDown={handleKeyDown}
@@ -134,9 +136,8 @@ export function LoginPage(): ReactNode {
             placeholder={t("login.passwordPlaceholder")}
             required
             aria-required="true"
-            aria-invalid={submitError !== null}
+            invalid={submitError !== null}
             disabled={loginMutation.isPending}
-            className="block w-full rounded-md border border-(--color-border-subtle) bg-(--color-bg-base) px-3 py-2 text-(length:--text-base) text-(--color-fg-strong) placeholder-(--color-fg-faint) focus-visible:border-(--color-accent)"
           />
           {capsLockOn && (
             <p className="mt-(--space-1) text-(length:--text-xs) text-(--color-warn)" role="status">

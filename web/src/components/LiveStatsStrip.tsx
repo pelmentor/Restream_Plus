@@ -21,6 +21,15 @@ import { t } from "@/messages";
  * Egress doesn't have absolute thresholds — what's "good" depends on
  * the operator's OBS bitrate config — so the chip just shows the number.
  * Per-target color states live on the TargetTile / Sparkline.
+ *
+ * Slice-6 UX-F7 (responsive):
+ *   - `>= md` (≥768px) — inline with header chips (the v1 layout).
+ *   - `sm…md` (640–768px) — renders below the header in a thin
+ *     secondary bar (`h-(--size-control-sm)` 28px), full-width, center-
+ *     justified. Drops out of the header chip row to free space.
+ *   - `< sm` (<640px) — collapses to a single CPU chip with both
+ *     signals exposed in an `aria-label`. CPU is the operationally
+ *     critical signal on phone; egress is reachable via aria-label.
  */
 export function LiveStatsStrip(): ReactNode {
   const { runState } = useRunState();
@@ -35,11 +44,8 @@ export function LiveStatsStrip(): ReactNode {
   const cpuText = cpuPct === null ? "—" : Math.round(cpuPct).toString();
   const cpuClass = cpuClassFor(cpuPct);
 
-  return (
-    <div
-      className="hidden md:flex items-center gap-(--space-3) text-(length:--text-xs)"
-      data-testid="live-stats-strip"
-    >
+  const fullChips = (
+    <>
       <Chip
         label={t("liveStats.egress")}
         value={egressMbps}
@@ -52,7 +58,44 @@ export function LiveStatsStrip(): ReactNode {
         unit={t("liveStats.unitPct")}
         valueClass={cpuClass}
       />
-    </div>
+    </>
+  );
+
+  return (
+    <>
+      {/* >= md: inline header chip row (the existing slot) */}
+      <div
+        className="hidden md:flex items-center gap-(--space-3) text-(length:--text-xs)"
+        data-testid="live-stats-strip"
+      >
+        {fullChips}
+      </div>
+      {/* sm…md: secondary thin bar below the header — full width */}
+      <div
+        className={cn(
+          "hidden sm:flex md:hidden",
+          "fixed top-16 inset-x-0 z-10 h-(--size-control-sm)",
+          "items-center justify-center gap-(--space-3) text-(length:--text-xs)",
+          "border-b border-(--color-border-subtle) bg-(--color-bg-base)/95 backdrop-blur",
+        )}
+        data-testid="live-stats-strip-secondary"
+      >
+        {fullChips}
+      </div>
+      {/* < sm: compact CPU-only chip with both signals in aria-label */}
+      <div
+        className="flex sm:hidden text-(length:--text-xs)"
+        data-testid="live-stats-strip-compact"
+      >
+        <Chip
+          label={t("liveStats.cpu")}
+          value={cpuText}
+          unit={t("liveStats.unitPct")}
+          valueClass={cpuClass}
+          ariaLabel={t("liveStats.compactAria", { cpu: cpuText, egress: egressMbps })}
+        />
+      </div>
+    </>
   );
 }
 
@@ -61,11 +104,13 @@ interface ChipProps {
   readonly value: string;
   readonly unit: string;
   readonly valueClass: string;
+  readonly ariaLabel?: string;
 }
 
-function Chip({ label, value, unit, valueClass }: ChipProps): ReactNode {
+function Chip({ label, value, unit, valueClass, ariaLabel }: ChipProps): ReactNode {
   return (
     <span
+      aria-label={ariaLabel}
       className={cn(
         "inline-flex items-baseline gap-1 rounded-(--radius-sm) bg-(--color-bg-sunken)",
         "px-(--space-2) py-(--space-px)",

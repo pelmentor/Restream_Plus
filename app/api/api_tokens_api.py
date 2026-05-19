@@ -69,15 +69,15 @@ async def create_token(
     session: SessionDep,
 ) -> ApiTokenCreatedResponse:
     created = await api_tokens.create(user_id=auth.user.id, label=body.label)
-    # Commit the request session BEFORE the audit so the audit repo's
-    # own short-lived session doesn't race the request write lock.
-    await session.commit()
+    # Hex Audit BA-F4 (slice 8): audit in the business txn.
     audit = AuditLogRepository(state.sessionmaker)
     await audit.append(
+        session,
         event_type="api_token_created",
         actor=auth.user.username,
         data={"token_id": created.dto.id, "label": body.label},
     )
+    await session.commit()
     return ApiTokenCreatedResponse(
         plaintext=created.plaintext,
         token=_project_token(created.dto),
@@ -109,13 +109,15 @@ async def revoke_token(
     revoked = await api_tokens.revoke(token_id)
     if not revoked:
         raise http_exception(ErrorCode.API_TOKEN_NOT_FOUND, status.HTTP_404_NOT_FOUND)
-    await session.commit()
+    # Hex Audit BA-F4 (slice 8): audit in the business txn.
     audit = AuditLogRepository(state.sessionmaker)
     await audit.append(
+        session,
         event_type="api_token_revoked",
         actor=auth.user.username,
         data={"token_id": token_id},
     )
+    await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

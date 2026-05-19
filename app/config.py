@@ -123,6 +123,50 @@ class AppSettings(BaseSettings):
     succeeded server-side but the browser dropped the Set-Cookie,
     every follow-up request 401'd, WS 403'd. v1.1.2 added this knob."""
 
+    youtube_backup_enabled: bool = False
+    """Hex Audit SA-F14 (slice 10) — explicit runtime gate on the
+    half-baked YouTube primary+backup-worker feature.
+
+    The domain layer (`Target.expected_worker_roles`) and the supervisor
+    (`Supervisor._roles_for`) have always honored a per-target
+    `backup_enabled` flag stored in the `targets.settings` JSON blob —
+    but there is no UI form to set it, and the feature was never
+    end-to-end tested with a real second YouTube ingest URL. An
+    operator who edits the DB directly to flip the flag would discover
+    that on their own.
+
+    This config knob is the explicit gate the audit asked for: even
+    a DB-edited `backup_enabled=True` is ignored unless the operator
+    also opts in via `RESTREAM_YOUTUBE_BACKUP_ENABLED=true` AND
+    accepts the "this code path is not UI-supported" trade-off.
+    Default `False` matches the production reality (no operator has
+    ever enabled it; v1.1.4 ships with the gate closed).
+
+    When `True`, the domain + supervisor read the per-target
+    `backup_enabled` field as before; when `False`, the supervisor
+    always spawns a single PRIMARY worker per YouTube target
+    regardless of the per-target flag.
+
+    Env var: `RESTREAM_YOUTUBE_BACKUP_ENABLED=true`. Bumping this on
+    a live deployment requires a restart (it's loaded into
+    `app.state.settings` at lifespan start).
+    """
+
+    audit_log_retention_days: Annotated[int, Field(ge=30, le=3650)] = 365
+    """Hex Audit FG2-M6 (slice 8) — audit-log retention policy.
+
+    Rows with `at` older than this floor are deleted by the periodic
+    `_audit_log_retention_loop` (6 h cadence, see `app/main.py`). The
+    same loop drives `PRAGMA wal_checkpoint(TRUNCATE)` so audit-write
+    growth doesn't accumulate in the WAL forever.
+
+    Floor 30 days (refuse to gut the forensic record); ceiling 3650
+    days (10 y — sanity check, not a hard constraint). Both bounds are
+    enforced at config-load time, before any DB I/O happens.
+
+    Env var: `RESTREAM_AUDIT_LOG_RETENTION_DAYS=180`.
+    """
+
     trusted_proxies: Annotated[tuple[IpNetwork, ...], NoDecode] = ()
     """Operator-supplied CIDR list of trusted reverse-proxy peers.
 

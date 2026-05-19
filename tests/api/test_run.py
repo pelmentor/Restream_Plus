@@ -105,3 +105,87 @@ async def test_stop_when_offline_returns_409(auth_client: httpx.AsyncClient) -> 
 async def test_unauthenticated_start_401(client: httpx.AsyncClient) -> None:
     r = await client.post("/api/run/start")
     assert r.status_code == 401
+
+
+# ----------------------------------------------------------------------
+# Hex Audit BA-F2 (2026-05-18): fire-and-forget done-callback logging
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_log_supervisor_task_exception_silent_on_cancelled() -> None:
+    """A cancelled task is silent — propagation is the caller's job."""
+
+    from app.api.run import _log_supervisor_task_exception
+
+    async def _noop() -> None:
+        await asyncio.sleep(0)
+
+    task = asyncio.create_task(_noop(), name="x")
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    # No raise expected:
+    _log_supervisor_task_exception(task)
+
+
+@pytest.mark.asyncio
+async def test_log_supervisor_task_exception_demotes_illegal_transition() -> None:
+    """`IllegalRunStateTransitionError` is the expected race outcome
+    on a concurrent START / STOP; we log at info, not error.
+
+    Uses `structlog.testing.capture_logs()` because the project's
+    structlog setup writes directly to sys.stderr via
+    `PrintLoggerFactory` — `caplog` (which intercepts stdlib logging)
+    sees nothing.
+    """
+    import structlog.testing
+    from app.api.run import _log_supervisor_task_exception
+    from app.domain.errors import IllegalRunStateTransitionError
+    from app.domain.run_state import RunAction, RunState
+
+    async def _raises() -> None:
+        raise IllegalRunStateTransitionError(
+            state=RunState.ARMED, action=RunAction.START_REQUESTED
+        )
+
+    with structlog.testing.capture_logs() as captured:
+        task = asyncio.create_task(_raises(), name="run-start-race")
+        try:
+            await task
+        except IllegalRunStateTransitionError:
+            pass
+        _log_supervisor_task_exception(task)
+
+    race_lost = [r for r in captured if r.get("event") == "supervisor_task_race_lost"]
+    assert race_lost, f"Expected race-lost info event; got {captured}"
+    assert race_lost[0]["log_level"] == "info"
+    assert race_lost[0]["task_name"] == "run-start-race"
+    assert race_lost[0]["state"] == "armed"
+    assert race_lost[0]["action"] == "start_requested"
+
+
+@pytest.mark.asyncio
+async def test_log_supervisor_task_exception_surfaces_other_errors() -> None:
+    """Any non-Illegal exception is logged at error with traceback so
+    a supervisor crash isn't lost behind the 202 response."""
+    import structlog.testing
+    from app.api.run import _log_supervisor_task_exception
+
+    async def _boom() -> None:
+        raise RuntimeError("synthetic supervisor blow-up")
+
+    with structlog.testing.capture_logs() as captured:
+        task = asyncio.create_task(_boom(), name="run-start-crash")
+        try:
+            await task
+        except RuntimeError:
+            pass
+        _log_supervisor_task_exception(task)
+
+    failed = [r for r in captured if r.get("event") == "supervisor_task_failed"]
+    assert failed, f"Expected supervisor_task_failed event; got {captured}"
+    assert failed[0]["log_level"] == "error"
+    assert failed[0]["task_name"] == "run-start-crash"

@@ -65,9 +65,8 @@ from app.auth.reprompts import RepromptScope
 from app.auth.sessions import build_cookie_delete_kwargs
 from app.crypto.aead import (
     AEADDecryptionError,
-    build_credential_aad,
-    decrypt,
-    encrypt,
+    decrypt_credential,
+    encrypt_credential,
 )
 from app.crypto.kdf import (
     HKDF_INFO_API_TOKEN_MAC,
@@ -187,18 +186,38 @@ async def rotate_passphrase(
         ):
             raise http_exception(ErrorCode.SAME_PASSPHRASE, status.HTTP_422_UNPROCESSABLE_CONTENT)
 
-        # Single process-wide lock guards step 9 + 10 against a second
-        # concurrent rotate. `start_run` checks the same flag (run.py)
-        # so a START attempt during rotation 409s with RUN_ACTIVE.
-        if state.rotation_lock.locked():
-            raise http_exception(ErrorCode.RUN_ACTIVE, status.HTTP_409_CONFLICT)
-
-        async with state.rotation_lock:
-            # Re-check run-state after acquiring the lock — a concurrent
-            # start_run that won the race must be honored.
+        # Slice 3 (Hex Audit FG2-H3): the run-state check + rotation_lock
+        # acquire happen under `supervisor._lock` so the ordering rule
+        # (supervisor._lock BEFORE rotation_lock) is honoured.
+        # Sequence:
+        #   1. Take supervisor._lock (via acquire_state_lock).
+        #   2. Verify state is OFFLINE (a concurrent `start_run` already
+        #      held _lock first would have completed before us).
+        #   3. Acquire rotation_lock — guaranteed free because the only
+        #      other claimant is `start_run`, which holds rotation_lock
+        #      only WHILE holding supervisor._lock (which we hold).
+        #   4. Release supervisor._lock once rotation_lock is held —
+        #      the multi-second re-wrap proceeds without blocking
+        #      other supervisor operations (enable_target, etc.).
+        # Subsequent `start_run` attempts see rotation_lock held and
+        # raise `RunBlockedByRotationError`.
+        async with supervisor.acquire_state_lock():
             if supervisor.run_state() is not RunState.OFFLINE:
                 raise http_exception(ErrorCode.RUN_ACTIVE, status.HTTP_409_CONFLICT)
-
+            if state.rotation_lock.locked():
+                # Should be impossible if the OFFLINE check passed
+                # (rotation_lock holders also pass through this path
+                # which requires OFFLINE) but defensive: a concurrent
+                # rotate-passphrase that won the race is the prior
+                # owner and must be honoured.
+                raise http_exception(ErrorCode.RUN_ACTIVE, status.HTTP_409_CONFLICT)
+            await state.rotation_lock.acquire()
+        # rotation_lock held, supervisor._lock released. The re-wrap
+        # below cannot deadlock against start_run because start_run
+        # will see rotation_lock locked and refuse. We MUST release
+        # rotation_lock on every path out of the re-wrap (success or
+        # raise) — hence the outer try/finally below.
+        try:
             # Verify old passphrase derives the in-memory KEK. Returns
             # False on mismatch; raises only on programmer errors.
             if not await state.key_material.verify_passphrase(
@@ -247,11 +266,18 @@ async def rotate_passphrase(
                     cred_rows = await creds_repo.list_all_for_rewrap()
                     for row in cred_rows:
                         try:
-                            plaintext = decrypt(
+                            # Hex Audit BA-F5 (slice 7): use the
+                            # rolling-migration decrypt helper so v1
+                            # rows from before slice 7 still rewrap
+                            # cleanly. Encrypt below always produces
+                            # v2 AAD, so this rotation also serves as
+                            # the bulk migration pass.
+                            plaintext = decrypt_credential(
                                 keys.stream_key_kek,
                                 row.nonce,
                                 row.ciphertext,
-                                build_credential_aad(row.salt),
+                                row.salt,
+                                row.target_id,
                             )
                         except AEADDecryptionError as exc:
                             # Old key cannot decrypt — something is wrong
@@ -267,10 +293,11 @@ async def rotate_passphrase(
                                 status.HTTP_500_INTERNAL_SERVER_ERROR,
                             ) from exc
                         new_per_row_salt = _stdlib_secrets.token_bytes(KDF_SALT_LENGTH)
-                        new_nonce, new_ct = encrypt(
+                        new_nonce, new_ct = encrypt_credential(
                             new_keys.stream_key_kek,
                             plaintext,
-                            build_credential_aad(new_per_row_salt),
+                            new_per_row_salt,
+                            row.target_id,
                         )
                         # Drop plaintext reference asap. Python can't
                         # explicitly zero bytes; we accept that limit
@@ -288,6 +315,30 @@ async def rotate_passphrase(
                     sessions_revoked = await sessions_repo.delete_all()
                     tokens_repo = ApiTokensRepository(session)
                     api_tokens_revoked = await tokens_repo.delete_all()
+                    # Slice 8.5 (Hex Audit BA2-F2 + FG3-F3 STRONG):
+                    # 2-phase audit. INSIDE the rewrap txn we emit
+                    # `passphrase_rotation_started` — atomic with the
+                    # credential rewrap + sessions/tokens delete-all.
+                    # The terminal `passphrase_rotated` (or
+                    # `passphrase_rotation_orphaned` on the failed-
+                    # rename path) is emitted via `append_standalone`
+                    # AFTER the salt-file rename + key swap. This
+                    # prevents the orphan-rotation lie: under slice 8's
+                    # in-txn-only design, a rename failure would leave
+                    # `passphrase_rotated` durable in the audit log
+                    # while the on-disk salt is OLD — a forensic record
+                    # that does not match reality.
+                    audit_repo = AuditLogRepository(state.sessionmaker)
+                    await audit_repo.append(
+                        session,
+                        event_type="passphrase_rotation_started",
+                        actor=auth.user.username,
+                        data={
+                            "credentials_rewrapped_count": credentials_rewrapped,
+                            "sessions_revoked_count": sessions_revoked,
+                            "api_tokens_revoked_count": api_tokens_revoked,
+                        },
+                    )
                 # Phase 3: atomic salt-file rename. After this point we're
                 # committed. If it fails, the in-memory keys stay OLD and
                 # the on-disk credentials are NEW — operator-intervention.
@@ -307,9 +358,43 @@ async def rotate_passphrase(
                             "failing."
                         ),
                     )
+                    # Slice 8.5 (Hex Audit BA2-F2 + FG3-F3): emit the
+                    # orphan-rotation audit row BEFORE re-raising so the
+                    # forensic trail records the actual reality. Best-
+                    # effort: if the append also fails (DB likely
+                    # broken too), the critical log line above remains
+                    # the operator's signal. `checkpoint=False` matches
+                    # the BA2-F4 invariant.
+                    with contextlib.suppress(Exception):
+                        await audit_repo.append_standalone(
+                            event_type="passphrase_rotation_orphaned",
+                            actor=auth.user.username,
+                            data={
+                                "credentials_rewrapped_count": credentials_rewrapped,
+                                "sessions_revoked_count": sessions_revoked,
+                                "api_tokens_revoked_count": api_tokens_revoked,
+                                "old_salt_hex": old_salt_bytes.hex(),
+                                "new_salt_hex": new_salt.hex(),
+                            },
+                            checkpoint=False,
+                        )
                     raise
                 # Phase 4: in-process key swap. Atomic under the GIL.
                 state.key_material.rotate_in_place(new_kdf_salt=new_salt, new_keys=new_keys)
+                # Slice 8.5 (Hex Audit BA2-F2 + FG3-F3): terminal
+                # `passphrase_rotated` audit AFTER rename + key swap
+                # both succeed. The audit row now matches reality —
+                # both DB and on-disk state are NEW.
+                await audit_repo.append_standalone(
+                    event_type="passphrase_rotated",
+                    actor=auth.user.username,
+                    data={
+                        "credentials_rewrapped_count": credentials_rewrapped,
+                        "sessions_revoked_count": sessions_revoked,
+                        "api_tokens_revoked_count": api_tokens_revoked,
+                    },
+                    checkpoint=False,
+                )
             except BaseException:
                 # Best-effort cleanup of the staging .new file if the DB
                 # transaction or anything else inside the block raised.
@@ -317,17 +402,17 @@ async def rotate_passphrase(
                     if new_path.exists():
                         new_path.unlink()
                 raise
+        finally:
+            # Slice 3 (FG2-H3): release rotation_lock on every path —
+            # success, HTTPException, BaseException — so a raised
+            # rotation cannot strand the lock and permanently block
+            # future runs.
+            state.rotation_lock.release()
 
-        audit = AuditLogRepository(state.sessionmaker)
-        await audit.append(
-            event_type="passphrase_rotated",
-            actor=auth.user.username,
-            data={
-                "credentials_rewrapped_count": credentials_rewrapped,
-                "sessions_revoked_count": sessions_revoked,
-                "api_tokens_revoked_count": api_tokens_revoked,
-            },
-        )
+        # Hex Audit BA-F4 (slice 8): the `passphrase_rotated` audit row
+        # is now emitted inside the business `session.begin()` block
+        # above, atomically with the credential rewrap. No separate
+        # post-rotation audit append here.
 
         response.delete_cookie(**build_cookie_delete_kwargs(secure=settings.cookie_secure))  # type: ignore[arg-type]
         response.status_code = status.HTTP_204_NO_CONTENT
@@ -412,13 +497,18 @@ async def revoke_http_session(
         raise http_exception(ErrorCode.SESSION_NOT_FOUND, status.HTTP_404_NOT_FOUND)
 
     await repo.delete(match.token_hash)
-    await session.commit()
+    # Hex Audit BA-F4+BA-F11 (slice 8): audit in the business txn so
+    # the session-delete and the audit row commit atomically. Closes
+    # the BA-F11 duplicate-audit window where the two-session split
+    # could produce phantom rows.
     audit = AuditLogRepository(state.sessionmaker)
     await audit.append(
+        session,
         event_type="session_revoked",
         actor=auth.user.username,
         data={"fingerprint": id_fingerprint},
     )
+    await session.commit()
     if auth.session is not None and match.token_hash == auth.session.token_hash:
         response.delete_cookie(**build_cookie_delete_kwargs(secure=settings.cookie_secure))  # type: ignore[arg-type]
     response.status_code = status.HTTP_204_NO_CONTENT

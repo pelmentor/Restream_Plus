@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import * as Popover from "@radix-ui/react-popover";
 
+import { Button } from "@/components/Button";
 import { cn } from "@/lib/cn";
 import { t } from "@/messages";
 
@@ -52,40 +53,36 @@ export function DestructiveConfirm(props: DestructiveConfirmProps): ReactNode {
           align="end"
           sideOffset={6}
           className={cn(
-            "z-50 max-w-[280px] rounded-(--radius-lg) border bg-(--color-bg-elevated)",
+            "z-50 max-w-(--width-popover) rounded-(--radius-lg) border bg-(--color-bg-elevated)",
             "border-(--color-border-subtle) p-(--space-4) shadow-(--shadow-popover)",
           )}
         >
           <div className="text-(length:--text-sm) text-(--color-fg-strong)">
             {body}
           </div>
+          {/* Slice-6 SA-BLOCK-2: inline button-bypass sites replaced by
+              Button primitive. Confirm button uses the canonical danger
+              variant so the slice-6 UI-CHECKPOINT-2 white-on-red fix
+              propagates here automatically. */}
           <div className="mt-(--space-4) flex justify-end gap-(--space-2)">
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="md"
               onClick={() => setOpen(false)}
-              className={cn(
-                "h-8 rounded-(--radius-md) px-(--space-3) text-(length:--text-sm)",
-                "text-(--color-fg-default) hover:bg-(--color-bg-sunken)",
-              )}
             >
               {cancelLabel}
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="danger"
+              size="md"
               disabled={disabled}
               onClick={() => {
                 setOpen(false);
                 onConfirm();
               }}
-              className={cn(
-                "h-8 rounded-(--radius-md) px-(--space-3) text-(length:--text-sm)",
-                "bg-(--color-error) text-white font-medium",
-                "hover:bg-(--color-error)/85",
-                disabled && "opacity-50 cursor-not-allowed",
-              )}
             >
               {confirmLabel}
-            </button>
+            </Button>
           </div>
         </Popover.Content>
       </Popover.Portal>

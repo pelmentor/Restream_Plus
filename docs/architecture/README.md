@@ -33,6 +33,7 @@ you're giving up, not just what you're gaining".
 | 0013 | [Audit event vocabulary: event_type strings + data_json shape](ADR-0013-audit-event-vocabulary.md) | Accepted |
 | 0014 | [SPA URL cap + traversal-guarding policy for `_spa_fallback`](ADR-0014-spa-url-cap.md) | Accepted |
 | 0015 | [Auto-run-on-publish — OBS publishing is the only run trigger](ADR-0015-auto-run-on-publish.md) | Accepted |
+| 0016 | [Enhanced RTMP multi-track ingest and track-aware fanout](ADR-0016-enhanced-rtmp-multitrack-ingest.md) | Accepted (design-only; impl gated on Phase A pilot) |
 
 ## Design review log
 

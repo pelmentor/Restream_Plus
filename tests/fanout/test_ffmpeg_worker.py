@@ -43,6 +43,34 @@ def _spec(target_id: str = "t1") -> WorkerSpec:
     )
 
 
+class TestWorkerSpecStdinProvider:
+    """ADR-0016 Phase C field. Single-track mode (every worker today)
+    leaves `stdin_provider=None`; multi-track mode populates the Queue."""
+
+    def test_default_is_none(self) -> None:
+        """Existing call sites must continue to work without the new field."""
+        spec = _spec()
+        assert spec.stdin_provider is None
+
+    def test_can_attach_a_queue(self) -> None:
+        """Phase C path: a Queue is the live channel; the field itself
+        remains frozen but the Queue contents are mutable."""
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        spec = WorkerSpec(
+            worker_id=WorkerId(target_id="t1", role=WorkerRole.PRIMARY),
+            target_type=TargetType.TWITCH,
+            input_url="-",
+            output_url="rtmp://live.twitch.tv/app/secret_key_12345",
+            stdin_provider=queue,
+        )
+        assert spec.stdin_provider is queue
+
+    def test_spec_remains_frozen_even_with_stdin_provider(self) -> None:
+        spec = _spec()
+        with pytest.raises(AttributeError):
+            spec.stdin_provider = asyncio.Queue()  # type: ignore[misc]
+
+
 def _progress_bytes(frame: int = 1, progress: str = "continue") -> bytes:
     return (
         f"frame={frame}\nfps=30.0\nbitrate=5000.0kbits/s\nout_time_us=33333\n"

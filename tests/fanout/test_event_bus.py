@@ -12,6 +12,8 @@ from app.fanout.event_bus import (
     BusEvent,
     EventBus,
     RunStateChangedEvent,
+    TrackInfo,
+    TrackManifestEvent,
 )
 
 
@@ -126,3 +128,59 @@ class TestBatchedDrain:
             await bus.notify()
 
         assert len(drained) == 10
+
+
+class TestTrackManifestEvent:
+    """ADR-0016 Phase C event type — covered here so the BusEvent
+    discriminated union doesn't silently fail to carry it."""
+
+    def test_track_manifest_event_is_a_valid_bus_payload(self) -> None:
+        manifest = TrackManifestEvent(
+            tracks=(
+                TrackInfo(track_id=0, codec_fourcc="avc1", kind="video"),
+                TrackInfo(track_id=1, codec_fourcc="hvc1", kind="video"),
+                TrackInfo(track_id=0, codec_fourcc="mp4a", kind="audio"),
+            )
+        )
+        evt = BusEvent(
+            at=datetime.now(tz=UTC),
+            monotonic_ns=42,
+            target_id=None,
+            payload=manifest,
+        )
+        # mypy: payload union must allow TrackManifestEvent; runtime: roundtrip.
+        assert isinstance(evt.payload, TrackManifestEvent)
+        assert evt.payload.tracks[0].track_id == 0
+        assert evt.payload.tracks[0].codec_fourcc == "avc1"
+
+    def test_track_info_is_frozen(self) -> None:
+        ti = TrackInfo(track_id=0, codec_fourcc="avc1", kind="video")
+        with pytest.raises(AttributeError):
+            ti.track_id = 99  # type: ignore[misc]
+
+    def test_track_manifest_is_frozen(self) -> None:
+        mf = TrackManifestEvent(tracks=())
+        with pytest.raises(AttributeError):
+            mf.tracks = (TrackInfo(track_id=1, codec_fourcc="avc1", kind="video"),)  # type: ignore[misc]
+
+    def test_empty_manifest_is_valid(self) -> None:
+        """A pre-tap-startup ARMED state may emit an empty manifest;
+        consumers must accept it without crashing."""
+        evt = BusEvent(
+            at=datetime.now(tz=UTC),
+            monotonic_ns=0,
+            target_id=None,
+            payload=TrackManifestEvent(tracks=()),
+        )
+        assert isinstance(evt.payload, TrackManifestEvent)
+        assert evt.payload.tracks == ()
+
+    @pytest.mark.parametrize("bad", [-1, 256, 1024, -100])
+    def test_track_id_out_of_range_raises(self, bad: int) -> None:
+        with pytest.raises(ValueError, match="track_id must be 0..255"):
+            TrackInfo(track_id=bad, codec_fourcc="avc1", kind="video")
+
+    @pytest.mark.parametrize("ok", [0, 1, 127, 255])
+    def test_track_id_boundary_values_accepted(self, ok: int) -> None:
+        ti = TrackInfo(track_id=ok, codec_fourcc="avc1", kind="video")
+        assert ti.track_id == ok

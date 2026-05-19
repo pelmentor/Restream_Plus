@@ -49,6 +49,22 @@ class TargetTypeSpec:
     credential_lifetime: CredentialLifetime
     settings_fields: frozenset[FormField]
     notes: str
+    accepted_video_codecs: frozenset[str]
+    """Video FourCCs (lowercase ASCII) the platform's ingest will accept.
+
+    Populated per ADR-0016 §6 from each platform's published RTMP ingest spec
+    plus OBS's `reference/obs-studio/plugins/rtmp-services/data/services.json`
+    capability declarations. Phase C uses this to gate per-target multi-track
+    selection: a target whose `track_preference` resolves to a codec that
+    isn't in this set transitions to `DISABLED_MISCONFIGURED` (fail-loud) —
+    we do NOT transcode (ADR-0008 `-c copy` lock).
+
+    `frozenset()` means "no codec capability declared" — used by
+    `TargetType.CUSTOM` where the operator owns the endpoint and its
+    constraints. Runtime behavior for an empty set is fail-loud at the
+    config layer: a multi-track stream cannot route to a CUSTOM target
+    without the operator explicitly declaring the accepted codec(s).
+    """
 
 
 TARGET_TYPE_SPECS: Final[dict[TargetType, TargetTypeSpec]] = {
@@ -71,6 +87,11 @@ TARGET_TYPE_SPECS: Final[dict[TargetType, TargetTypeSpec]] = {
             {FormField.URL, FormField.LABEL, FormField.STREAM_KEY, FormField.REGION},
         ),
         notes="H.264 only, up to 6000 kbps video, 2 s keyframe interval.",
+        # Standard Twitch ingest is H.264-only per
+        # reference/obs-studio/plugins/rtmp-services/data/services.json:204-206.
+        # Twitch Multitrack (the proprietary GetClientConfiguration API,
+        # RTX-only HEVC beta) is explicitly out of scope per ADR-0016 §5.
+        accepted_video_codecs=frozenset({"avc1"}),
     ),
     TargetType.YOUTUBE: TargetTypeSpec(
         type=TargetType.YOUTUBE,
@@ -85,6 +106,10 @@ TARGET_TYPE_SPECS: Final[dict[TargetType, TargetTypeSpec]] = {
             "Backup ingest at rtmps://b.rtmps.youtube.com:443/live2 with the same key. "
             "When enabled we run two workers concurrently (hot failover)."
         ),
+        # YouTube RTMPS accepts H.264, HEVC, AV1 per
+        # reference/obs-studio/plugins/rtmp-services/data/services.json:244-248.
+        # AV1 is YouTube-only among our supported platforms today.
+        accepted_video_codecs=frozenset({"avc1", "hvc1", "av01"}),
     ),
     TargetType.KICK: TargetTypeSpec(
         type=TargetType.KICK,
@@ -94,6 +119,9 @@ TARGET_TYPE_SPECS: Final[dict[TargetType, TargetTypeSpec]] = {
         credential_lifetime=CredentialLifetime.PERSISTENT,
         settings_fields=frozenset({FormField.URL, FormField.LABEL, FormField.STREAM_KEY}),
         notes="Hosted on AWS IVS; the unbranded hostname is the official endpoint.",
+        # Kick / AWS IVS standard ingest is H.264-only. No public docs
+        # advertise HEVC/AV1 ingest capability as of 2026-05.
+        accepted_video_codecs=frozenset({"avc1"}),
     ),
     TargetType.VK_LIVE: TargetTypeSpec(
         type=TargetType.VK_LIVE,
@@ -106,6 +134,8 @@ TARGET_TYPE_SPECS: Final[dict[TargetType, TargetTypeSpec]] = {
             "VK requires a fresh stream key per broadcast. "
             "Paste it on the Dashboard before pressing START."
         ),
+        # VK Live ingest is H.264-only per published docs.
+        accepted_video_codecs=frozenset({"avc1"}),
     ),
     TargetType.CUSTOM: TargetTypeSpec(
         type=TargetType.CUSTOM,
@@ -115,6 +145,12 @@ TARGET_TYPE_SPECS: Final[dict[TargetType, TargetTypeSpec]] = {
         credential_lifetime=CredentialLifetime.PERSISTENT,
         settings_fields=frozenset({FormField.URL, FormField.LABEL, FormField.STREAM_KEY}),
         notes="Any RTMP/RTMPS endpoint. URL and key are your responsibility.",
+        # Empty set — Custom RTMP has no declared capability. Phase C
+        # fail-loud: a multi-track source cannot route to a CUSTOM target
+        # without the operator explicitly declaring accepted codec(s).
+        # Until that declaration UI exists, single-track-only is the
+        # safe default for Custom.
+        accepted_video_codecs=frozenset(),
     ),
 }
 

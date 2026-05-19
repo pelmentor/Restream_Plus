@@ -4,6 +4,13 @@
 this project cold, after a context compaction or a fresh conversation.
 Read this first; everything else is reachable from here.
 
+**Cold-resume shortcut (read this FIRST if you're picking up cold):**
+the grand plan + immediate next steps + outstanding operator actions
+live in a single page at [docs/ROADMAP.md](ROADMAP.md). This
+SESSION_HANDOFF file is the long-form chronological narrative; the
+ROADMAP is the scannable one-pager. After reading ROADMAP, return here
+only for historical context on a specific decision.
+
 **Last updated:** 2026-05-18 — **v1.1.3 LIVE as current release; project now in LOCAL-DEV MODE — no more image builds without explicit operator authorization.** Image at `ghcr.io/pelmentor/restream-plus:v1.1.3` (PR #13, commit `48ce0b8`), cosign-signed multi-arch, GitHub Release at https://github.com/pelmentor/Restream_Plus/releases/tag/v1.1.3. **HEAD on `main` is `48ce0b8`** (re-verify with `git log --oneline -1`). **OPERATOR IS CURRENTLY RUNNING `:v1.1.3` on Unraid** (10.10.0.2:8000, plain HTTP, `RESTREAM_COOKIE_SECURE=false`, `/mnt/user/appdata/restream-plus` bind-mount). Five releases shipped today: v1.0.0 (3 stillborn iterations to surface release.yml drift); v1.1.0 (`feat(stats)` live dashboard); v1.1.1 (SPA-mount hotfix); v1.1.2 (`RESTREAM_COOKIE_SECURE` + login label); v1.1.3 (SPA relative-route loop crash — operator clicking around → URL compounded `/general/general/general…` until ext4 ENAMETOOLONG crashed backend `_spa_fallback`). **OPERATORS MUST PULL `:v1.1.3` or `:latest`** — every earlier release has at least one operator-blocking bug. Tail sections §"v1.0.0 SHIPPED" through §"v1.1.3 SPA route-loop hotfix" (+ §"Local dev session — web-panel UX fixes + Phase 13 multi-track exploration + Unraid hardening plan, 2026-05-18 evening") have the chronology. **Active local-dev state (uncommitted, see tail §"Local dev session"):** 4 web-panel UX fixes landed in working tree (Save-trap, stream-key visibility, EmptyState messages, missing-key banner) — typecheck+lint+tests green, awaiting browser smoke test before commit. New dev launcher `start.bat` + `start.py` (untracked, awaiting smoke-test confirmation). `.restream-plus-db/` is the operator's verbatim Unraid appdata copy (gitignored; needs `.env.local` with production passphrase to decrypt creds). Remaining USER-actions: orphan GHCR tag cleanup + deprecation labels on `:v1.0.0` / `:v1.1.0` / `:v1.1.1` / `:v1.1.2`; GHCR retention via UI; Kick browser spot-check; real-RTMP step 12b; announce v1.1.3; change publicly-leaked admin password `<REDACTED — see local memory/project-restream-plus.md>`. Earlier tail sections §"v1.0.0 tag-push attempt (HISTORICAL)" + §"This handoff doc note (HISTORICAL)" are historical-only; do NOT act on their DECISION REQUIRED prompts.
 
 **GitHub:** https://github.com/pelmentor/Restream_Plus
@@ -4158,7 +4165,7 @@ no loose file inside the operator's bind-mount-copy can sneak in.
 Existing `*.db` / `.kdf_salt` / `*.pem` rules already protected the
 contents; this is defense-in-depth.
 
-### Phase 13 multi-track exploration → ABANDONED until upstream
+### Phase 13 multi-track exploration → ABANDONED until upstream (2026-05-18 conclusion — superseded by 2026-05-19 re-investigation; see below)
 
 Operator asked: "OBS sends multiple tracks to Restream_Plus, we
 forward multi-track to Twitch and single-track to the others." A
@@ -4188,6 +4195,60 @@ until obs supports it properly."** Paper trail landed in:
 - `docs/architecture/ADR-0008-worker-abstraction.md` §"Open
   questions" — confirms `-c copy` lock survives, no transcoding
   tier on the roadmap.
+
+### Phase 13 re-investigation — 2026-05-19 — verdict reversed
+
+Operator pushed back: "OBS devs left the Multitrack checkbox visible
+for Custom Service for a reason; you didn't dig deep enough." Cloned
+[obsproject/obs-studio](https://github.com/obsproject/obs-studio) into
+[reference/obs-studio/](../reference/obs-studio/) (shallow, gitignored)
+and read the actual source. The 2026-05-18 conclusion **was wrong**:
+
+- **OBS supports Custom Service + Multitrack Video via a
+  `custom_config_only` escape hatch** (see
+  [reference/obs-studio/frontend/utility/MultitrackVideoOutput.cpp:413-420](../reference/obs-studio/frontend/utility/MultitrackVideoOutput.cpp#L413)).
+  When the operator pastes a configuration JSON into the OBS
+  `multitrack_video_config_override` field (visible only when Custom
+  Service AND Multitrack Video are both selected, per
+  [OBSBasicSettings.cpp:5631](../reference/obs-studio/frontend/settings/OBSBasicSettings.cpp#L5631)),
+  OBS skips the remote `multitrack_video_configuration_url` POST and
+  emits Veovera Enhanced RTMP Y2023 multitrack tags directly.
+- **The 2026-05-18 "Output failure" experiment was not actually testing
+  the right thing** — the operator did not paste an override JSON, so
+  the code hit `FailedToStartStream.NoConfig` at
+  [MultitrackVideoOutput.cpp:449](../reference/obs-studio/frontend/utility/MultitrackVideoOutput.cpp#L449),
+  which looks like "Multitrack is blocked" but is actually "no config
+  was supplied".
+- **Blocker-2 (ffmpeg mainline lacks enhanced-flv multitrack output)
+  is relevant only for downstream emission**, not for ingest. For
+  ingest, nginx-rtmp and MediaMTX pass the binary E-RTMP tags through
+  opaquely; the work is server-side parsing
+  (`PACKETTYPE_MULTITRACK = 6` for video,
+  `AUDIO_PACKETTYPE_MULTITRACK = 5` for audio, per
+  [flv-mux.c:42-66](../reference/obs-studio/plugins/obs-outputs/flv-mux.c#L42)).
+
+**Full source-level write-up + Phase A/B/C implementation plan** lives
+in [docs/research/obs-multitrack-feasibility.md](research/obs-multitrack-feasibility.md).
+ADR-0003 has a 2026-05-19 amendment cross-referencing the research
+doc; the original 2026-05-18 bullets remain in place as historical
+context but **MUST NOT be cited as the current position**.
+
+**Status**: feasibility confirmed in OBS source. End-to-end behaviour
+unverified — Phase A (single-day Python pilot listening on RTMP port
+1936, parsing FLV tags, logging what OBS actually emits with a
+hand-crafted override JSON) is the next concrete step. If the pilot
+passes, ADR-0016 should scope the demuxer + track-aware fanout
+architecture before any production code.
+
+**Downstream platform reality**: only Twitch accepts multi-track
+ingest (and only via their official Multitrack service flow with the
+`multitrack_video_configuration_url` POST — which Custom Service
+can't do). YouTube / Kick / VK / others remain single-track. So the
+value of receiving multi-track from OBS isn't "forward multi-track
+downstream" — it's "OBS does N-rendition encoding once, we route the
+right rendition to each target". A 6/4/2 Mbps ladder lets YouTube take
+6 Mbps while VK takes 2, all from one OBS push with zero re-encode on
+our side.
 
 **The architecture agent's report named PRs 1–3 (MediaMTX cutover +
 fattest-track extraction) as the "what we CAN deliver crutch-free"
@@ -5386,7 +5447,7 @@ Final slice of the named workflow. Closed ~27 findings across backend (12), test
 The hex-audit project is **DONE**. No more slices in the named workflow. Future work on Restream_Plus shifts to:
 - **Operator USER actions (unchanged):** orphan GHCR cleanup, deprecation labels on `:v1.0.0`-`:v1.1.2`, GHCR retention UI, Kick browser smoke-check, real-RTMP step 12b, announce v1.1.3 (still LIVE), CHANGE leaked admin password `<REDACTED — see local memory/project-restream-plus.md>`, ROTATE leaked ingest key `<REDACTED — see local memory/project-restream-plus.md>`.
 - **v1.1.4 release prep** (optional): the slice-8 + slice-8.5 + slice-9 + slice-10 cumulative diff is substantial (~30 new tests, 3 new ADRs, transactional audit-log refactor, retention loop hardening, reprompt-protected reset). When the operator authorizes the next image build, this is the version bump.
-- **Phase 13 multi-track ingest:** still deferred per ADR-0003 §"Open questions" — re-open ONLY when OBS Custom Service supports `multitrack_video_configuration_url` AND ffmpeg mainline merges BtbN's `enhanced-flv` branch.
+- **Phase 13 multi-track ingest:** **re-opened** by 2026-05-19 source-level re-investigation. Previous "deferred until upstream catches up" conclusion was wrong — OBS *does* support Custom Service + Multitrack via the `custom_config_only` JSON-override escape hatch. Source-level research at [docs/research/obs-multitrack-feasibility.md](research/obs-multitrack-feasibility.md); platform compatibility matrix in [ADR-0016](architecture/ADR-0016-enhanced-rtmp-multitrack-ingest.md) §6. **Architecture decided** in ADR-0016 (Accepted design-only): always-on `FlvDemuxer` with single-track fast path; ffmpeg-tap (Option A) over Python RTMP client; stdin-pipe to per-target ffmpeg workers in multi-track mode; per-target `settings_json["track_preference"]` (default `"auto"`); fail-loud codec compat; Twitch multi-track downstream out of scope. **Implementation gated on the Phase A pilot test** (≤1 day, standalone script — no app changes — proving OBS emits `PACKETTYPE_MULTITRACK=6` and ffmpeg `-c copy` forwards intact). Phasing A→B→C→D→E detailed in ADR-0016 §12.
 - **Future hex-audit:** if a future feature lands that introduces ≥40 new sites or a security-critical refactor, run a fresh hex-audit (Rule №6 makes the footgun-hunter mandatory). Create a new `docs/audit/hex-audit-YYYY-MM-DD.md` referencing both 2026-05-18 and 2026-05-19 as priors.
 
 ### 2026-05-19 evening — auto-run-on-publish (feature branch `feat/auto-run-on-publish`)

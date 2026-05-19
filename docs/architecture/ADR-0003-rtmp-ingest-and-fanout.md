@@ -470,3 +470,59 @@ not guarantee parent-death signals. We do it explicitly.
   predicted, observed end-to-end. Conclusion stands: re-open Phase
   13 only when OBS Custom Service supports `multitrack_video_configuration_url`
   AND ffmpeg mainline merges the BtbN `enhanced-flv` branch.
+
+  **Amendment (2026-05-19) — original conclusion superseded.** The
+  OBS source was cloned into `reference/obs-studio/` (gitignored) and
+  read directly. The deferral was based on a black-box test of the
+  *default* Custom-Service flow; it missed the `custom_config_only`
+  escape hatch [reference/obs-studio/frontend/utility/MultitrackVideoOutput.cpp:413-420](../../reference/obs-studio/frontend/utility/MultitrackVideoOutput.cpp#L413):
+
+  ```cpp
+  const bool custom_config_only =
+      auto_config_url.isEmpty()
+      && custom_config.has_value()
+      && strcmp(obs_service_get_id(service), "rtmp_custom") == 0;
+  if (!custom_config_only) {
+      // remote POST to multitrack_video_configuration_url
+  }
+  ```
+
+  When the operator pastes a configuration JSON into the OBS
+  `multitrack_video_config_override` field (the field is rendered only
+  when `IsCustomService() && enableMultitrackVideo`, per
+  [OBSBasicSettings.cpp:5631](../../reference/obs-studio/frontend/settings/OBSBasicSettings.cpp#L5631)),
+  OBS bypasses the remote configuration call entirely and emits
+  Veovera Enhanced RTMP Y2023 multitrack tags directly to the custom
+  ingest URL. The 2026-05-18 "Output failure" was caused by the
+  operator not supplying the override JSON — `FailedToStartStream.NoConfig`
+  at [MultitrackVideoOutput.cpp:449](../../reference/obs-studio/frontend/utility/MultitrackVideoOutput.cpp#L449).
+
+  Blocker-1 (the original "OBS gates Multitrack on
+  `multitrack_video_configuration_url`") is therefore **only a default-
+  path constraint, not an absolute gate** — a fact the 2026-05-18
+  research missed. Blocker-2 (ffmpeg mainline lacking enhanced-flv
+  multitrack output) remains relevant only if we wanted to *emit*
+  multitrack downstream; for *ingest*, nginx-rtmp / MediaMTX pass the
+  binary E-RTMP tags through opaquely. The work for Restream_Plus is
+  a server-side FLV demuxer that recognises
+  `PACKETTYPE_MULTITRACK = 6` (video) and `AUDIO_PACKETTYPE_MULTITRACK = 5`
+  (audio) tags from [reference/obs-studio/plugins/obs-outputs/flv-mux.c:42-66](../../reference/obs-studio/plugins/obs-outputs/flv-mux.c#L42),
+  plus a track-aware fanout layer.
+
+  **Full research write-up + code references** are durably captured in
+  [docs/research/obs-multitrack-feasibility.md](../research/obs-multitrack-feasibility.md).
+  That document is the single source of truth on this topic going
+  forward; the 2026-05-18 bullets above remain in place as a historical
+  artifact (showing what was concluded before the source-level
+  investigation) but **MUST NOT be cited as the current position**.
+
+  **Architecture decision** — superseded into
+  [ADR-0016: Enhanced RTMP multi-track ingest and track-aware fanout](ADR-0016-enhanced-rtmp-multitrack-ingest.md)
+  (Accepted design-only, 2026-05-19). ADR-0016 spells out the demuxer
+  module, per-target track assignment, codec compatibility table
+  pinned to OBS's `services.json`, fail-loud policy, and phased
+  delivery plan (A pilot → B demuxer → C supervisor wiring → D UI →
+  E hardening). Implementation is gated on the Phase A pilot test —
+  no Phase B+ code begins until OBS is empirically confirmed to emit
+  `PACKETTYPE_MULTITRACK = 6` tags through the `custom_config_only`
+  path and ffmpeg's `-c copy` tap forwards them intact.

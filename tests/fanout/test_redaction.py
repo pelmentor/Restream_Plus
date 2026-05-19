@@ -303,9 +303,7 @@ class TestPathBoundaryTightening:
         # The legitimate path key is `LiveKey1234567` (>=8 chars). The
         # `?streamKey=...` is a separate param. Both should redact
         # cleanly via their respective passes.
-        out = b"".join(
-            sink.feed(b"url rtmp://h/app/LiveKey1234567?streamKey=OtherSecret9999 ok\n")
-        )
+        out = b"".join(sink.feed(b"url rtmp://h/app/LiveKey1234567?streamKey=OtherSecret9999 ok\n"))
         assert b"LiveKey1234567" not in out
         assert b"OtherSecret9999" not in out
 

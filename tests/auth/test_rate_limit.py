@@ -160,8 +160,8 @@ class TestUnboundedGrowthFootgun:
         rl = LoginRateLimiter()
         for i in range(500):
             rl.check(ip=f"10.0.0.{i}", username=f"u{i}")
-        assert len(rl._by_ip) == 0  # noqa: SLF001 — invariant probe
-        assert len(rl._by_username) == 0  # noqa: SLF001
+        assert len(rl._by_ip) == 0
+        assert len(rl._by_username) == 0
 
     def test_empty_buckets_pruned_after_window(self) -> None:
         # A bucket that pruned to empty must be deleted, not lingered.
@@ -170,11 +170,11 @@ class TestUnboundedGrowthFootgun:
         t = [1000.0]
         rl = LoginRateLimiter(failure_limit=3, window_seconds=60, clock=_clock(t))
         rl.record_failure(ip="1.2.3.4", username="alice")
-        assert "1.2.3.4" in rl._by_ip  # noqa: SLF001
+        assert "1.2.3.4" in rl._by_ip
         t[0] += 120  # past the window
         rl.check(ip="1.2.3.4", username="alice")
-        assert "1.2.3.4" not in rl._by_ip  # noqa: SLF001
-        assert "alice" not in rl._by_username  # noqa: SLF001
+        assert "1.2.3.4" not in rl._by_ip
+        assert "alice" not in rl._by_username
 
     def test_bucket_count_capped_at_max_tracked_buckets(self) -> None:
         # Hard ceiling: MAX_TRACKED_BUCKETS. Under a flood of unique
@@ -184,8 +184,8 @@ class TestUnboundedGrowthFootgun:
         rl = LoginRateLimiter()
         for i in range(MAX_TRACKED_BUCKETS + 250):
             rl.record_failure(ip=f"10.{i // 65536}.{(i // 256) % 256}.{i % 256}", username=f"u{i}")
-        assert len(rl._by_ip) == MAX_TRACKED_BUCKETS  # noqa: SLF001
-        assert len(rl._by_username) == MAX_TRACKED_BUCKETS  # noqa: SLF001
+        assert len(rl._by_ip) == MAX_TRACKED_BUCKETS
+        assert len(rl._by_username) == MAX_TRACKED_BUCKETS
 
     def test_eviction_drops_oldest_keeps_recent(self) -> None:
         # The (cap+1)th distinct key evicts the FIRST one; the most
@@ -198,11 +198,11 @@ class TestUnboundedGrowthFootgun:
         rl = LoginRateLimiter(max_buckets=5)
         for i in range(7):  # 7 distinct keys, cap is 5
             rl.record_failure(ip=f"10.0.0.{i}", username=f"u{i}")
-        assert len(rl._by_ip) == 5  # noqa: SLF001
+        assert len(rl._by_ip) == 5
         # First two keys evicted, last five retained.
-        assert "10.0.0.0" not in rl._by_ip  # noqa: SLF001
-        assert "10.0.0.1" not in rl._by_ip  # noqa: SLF001
-        assert "10.0.0.6" in rl._by_ip  # noqa: SLF001
+        assert "10.0.0.0" not in rl._by_ip
+        assert "10.0.0.1" not in rl._by_ip
+        assert "10.0.0.6" in rl._by_ip
 
     def test_max_buckets_zero_rejected(self) -> None:
         import pytest

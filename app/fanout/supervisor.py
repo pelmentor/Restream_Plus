@@ -457,9 +457,7 @@ class Supervisor:
                     # would, so there's only one writer.
                     with contextlib.suppress(Exception):
                         await self._tear_down_all_workers(grace=WORKER_GRACE)
-                    self._enqueue_synthetic_action(
-                        _PendingActionKind.OBS_PUBLISH_ENDED
-                    )
+                    self._enqueue_synthetic_action(_PendingActionKind.OBS_PUBLISH_ENDED)
                     with contextlib.suppress(Exception):
                         await self._drain_pending_actions_locked()
                     with contextlib.suppress(Exception):
@@ -1200,9 +1198,7 @@ class Supervisor:
 
     def _spawn_drain_task(self) -> None:
         try:
-            task = asyncio.create_task(
-                self._drain_pending_actions(), name="supervisor-drain"
-            )
+            task = asyncio.create_task(self._drain_pending_actions(), name="supervisor-drain")
         except RuntimeError:
             # Loop shutting down — anything still queued at process
             # exit is acceptable to lose (a clean stop_run already

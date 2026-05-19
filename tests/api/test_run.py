@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 import httpx
 import pytest
@@ -123,10 +124,8 @@ async def test_log_supervisor_task_exception_silent_on_cancelled() -> None:
 
     task = asyncio.create_task(_noop(), name="x")
     task.cancel()
-    try:
+    with contextlib.suppress(asyncio.CancelledError):
         await task
-    except asyncio.CancelledError:
-        pass
     # No raise expected:
     _log_supervisor_task_exception(task)
 
@@ -147,16 +146,12 @@ async def test_log_supervisor_task_exception_demotes_illegal_transition() -> Non
     from app.domain.run_state import RunAction, RunState
 
     async def _raises() -> None:
-        raise IllegalRunStateTransitionError(
-            state=RunState.ARMED, action=RunAction.START_REQUESTED
-        )
+        raise IllegalRunStateTransitionError(state=RunState.ARMED, action=RunAction.START_REQUESTED)
 
     with structlog.testing.capture_logs() as captured:
         task = asyncio.create_task(_raises(), name="run-start-race")
-        try:
+        with contextlib.suppress(IllegalRunStateTransitionError):
             await task
-        except IllegalRunStateTransitionError:
-            pass
         _log_supervisor_task_exception(task)
 
     race_lost = [r for r in captured if r.get("event") == "supervisor_task_race_lost"]
@@ -179,10 +174,8 @@ async def test_log_supervisor_task_exception_surfaces_other_errors() -> None:
 
     with structlog.testing.capture_logs() as captured:
         task = asyncio.create_task(_boom(), name="run-start-crash")
-        try:
+        with contextlib.suppress(RuntimeError):
             await task
-        except RuntimeError:
-            pass
         _log_supervisor_task_exception(task)
 
     failed = [r for r in captured if r.get("event") == "supervisor_task_failed"]

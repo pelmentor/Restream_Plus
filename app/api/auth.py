@@ -22,7 +22,6 @@ shared with login. 3/IP/15min per ADR-0010.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Annotated, Final
@@ -314,9 +313,7 @@ async def change_password(
         # went wrong" while leaving the existing session valid.
         audit = AuditLogRepository(state.sessionmaker)
         try:
-            await audit.append(
-                session, event_type="password_changed", actor=auth.user.username
-            )
+            await audit.append(session, event_type="password_changed", actor=auth.user.username)
             await session.commit()
         except (SQLAlchemyError, OSError, TimeoutError) as exc:
             # Slice 8.5 reviewer-pass note: `SQLAlchemyError` alone is

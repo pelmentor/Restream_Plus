@@ -13,7 +13,6 @@ zero backoff and tight stall timing.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import random
 from collections.abc import Callable
 from datetime import timedelta
@@ -203,8 +202,7 @@ class TestRunLifecycle:
             # start_run's post-ARMED drain consumed the queued action,
             # auto-promoting ARMED → LIVE.
             assert sup.run_state() is RunState.LIVE, (
-                "start_run drained the pending OBS_PUBLISH_BEGAN and "
-                "auto-promoted past ARMED"
+                "start_run drained the pending OBS_PUBLISH_BEGAN and " "auto-promoted past ARMED"
             )
             await sup.stop_run(reason="user_stop")
             assert sup.run_state() is RunState.OFFLINE
@@ -538,8 +536,7 @@ class TestSlice3SupervisorRace:
                 # Give the event loop a chance to schedule it.
                 await asyncio.sleep(0.05)
                 assert not start_task.done(), (
-                    "start_run must wait on supervisor._lock while "
-                    "acquire_state_lock holds it"
+                    "start_run must wait on supervisor._lock while " "acquire_state_lock holds it"
                 )
             # Lock released — start_run now proceeds.
             # We may not have a seeded target so start_run completes

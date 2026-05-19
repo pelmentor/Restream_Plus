@@ -74,11 +74,19 @@ async def test_auth_publish_with_malformed_path_returns_403(
     # these chars, so we tighten _extract_ingest_key to the same
     # charset and reject them at the auth gate regardless.
     shell_meta_paths = (
-        "live/$(id)", "live/`whoami`", "live/key;rm",
-        "live/key with space", "live/k\ny",
+        "live/$(id)",
+        "live/`whoami`",
+        "live/key;rm",
+        "live/key with space",
+        "live/k\ny",
     )
     for bad in (
-        "", "wrong", "live", "live/", "live/key/extra", "../etc",
+        "",
+        "wrong",
+        "live",
+        "live/",
+        "live/key/extra",
+        "../etc",
         *shell_meta_paths,
     ):
         r = await client.post(
@@ -151,9 +159,7 @@ async def test_lifecycle_not_ready_notifies_supervisor(
         data={"event": "not_ready", "path": "live/whatever"},
     )
     assert r.status_code == 200
-    assert any(
-        c[0] == "notify_obs_publish_ended" for c in fake_supervisor.calls
-    )
+    assert any(c[0] == "notify_obs_publish_ended" for c in fake_supervisor.calls)
 
 
 @pytest.mark.asyncio
@@ -222,10 +228,9 @@ def test_assert_small_body_rejects_missing_content_length() -> None:
     # declares the body size up front. ASGITransport always backfills
     # a Content-Length so this scenario is unreachable through the
     # client fixture; we exercise the helper directly instead.
+    from app.api.internal_mtx import _assert_small_body
     from fastapi import HTTPException
     from starlette.requests import Request
-
-    from app.api.internal_mtx import _assert_small_body
 
     scope = {
         "type": "http",
@@ -241,10 +246,9 @@ def test_assert_small_body_rejects_missing_content_length() -> None:
 
 
 def test_assert_small_body_rejects_oversized_content_length() -> None:
+    from app.api.internal_mtx import MAX_INTERNAL_MTX_BODY_BYTES, _assert_small_body
     from fastapi import HTTPException
     from starlette.requests import Request
-
-    from app.api.internal_mtx import MAX_INTERNAL_MTX_BODY_BYTES, _assert_small_body
 
     scope = {
         "type": "http",
@@ -263,9 +267,8 @@ def test_assert_small_body_rejects_oversized_content_length() -> None:
 
 
 def test_assert_small_body_accepts_normal_content_length() -> None:
-    from starlette.requests import Request
-
     from app.api.internal_mtx import _assert_small_body
+    from starlette.requests import Request
 
     scope = {
         "type": "http",
@@ -377,9 +380,7 @@ async def test_auth_accepts_previous_key_within_grace(
     fake_supervisor: FakeSupervisor,
 ) -> None:
     grace = datetime.now(tz=UTC) + timedelta(hours=24)
-    previous = await _rotate_with_grace(
-        api_sessionmaker, new_key="new-mtx-key", grace_until=grace
-    )
+    previous = await _rotate_with_grace(api_sessionmaker, new_key="new-mtx-key", grace_until=grace)
     fake_supervisor._run_state = RunState.ARMED
     r = await client.post(
         "/internal/mtx/auth",
@@ -410,13 +411,9 @@ def test_mtx_keys_match_grace_logic() -> None:
     from app.api.internal_mtx import _keys_match
 
     now = datetime.now(tz=UTC)
+    assert _keys_match("old", "new", "old", grace_until=now + timedelta(minutes=1), now=now) is True
     assert (
-        _keys_match("old", "new", "old", grace_until=now + timedelta(minutes=1), now=now)
-        is True
-    )
-    assert (
-        _keys_match("old", "new", "old", grace_until=now - timedelta(seconds=1), now=now)
-        is False
+        _keys_match("old", "new", "old", grace_until=now - timedelta(seconds=1), now=now) is False
     )
     assert _keys_match("old", "new", "old", grace_until=None, now=now) is False
     assert _keys_match("a", "a", None, grace_until=None, now=now) is True

@@ -144,9 +144,7 @@ loop escalates from `_logger.warning` to `_logger.critical`. At a
 6 h cadence, 5 failures = ~30 h continuous DB unavailability — a
 real ops signal, not a transient hiccup."""
 
-AUDIT_LOG_RETENTION_EXCLUDED_EVENT_TYPES: Final[tuple[str, ...]] = (
-    "audit_log_retention_run",
-)
+AUDIT_LOG_RETENTION_EXCLUDED_EVENT_TYPES: Final[tuple[str, ...]] = ("audit_log_retention_run",)
 """Slice 8.5 (Hex Audit FG3-F4): event types that the retention loop
 NEVER deletes. The `audit_log_retention_run` marker records that
 retention ran — including it in the delete predicate creates a
@@ -555,9 +553,7 @@ def _make_lifespan(
                 # background tasks past the lifespan teardown. The
                 # `bucket.discard` done-callback on each task mutates
                 # the set; snapshot via `list(...)` to iterate safely.
-                pending_snapshot: list[asyncio.Task[object]] = list(
-                    app.state.supervisor_tasks
-                )
+                pending_snapshot: list[asyncio.Task[object]] = list(app.state.supervisor_tasks)
                 if pending_snapshot:
                     for task in pending_snapshot:
                         if not task.done():

@@ -210,9 +210,7 @@ class LoginRateLimiter:
             self._by_ip.clear()
             self._by_username.clear()
 
-    def _materialize(
-        self, store: OrderedDict[str, deque[float]], key: str
-    ) -> deque[float]:
+    def _materialize(self, store: OrderedDict[str, deque[float]], key: str) -> deque[float]:
         """Get-or-create a bucket, evicting the oldest if at cap."""
         bucket = store.get(key)
         if bucket is not None:

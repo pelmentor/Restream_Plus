@@ -392,9 +392,7 @@ class TestSettingsRepository:
     async def test_clear_previous_noop_within_grace(self, session: AsyncSession) -> None:
         """Inside the grace window the row is preserved."""
         repo = SettingsRepository(session)
-        await repo.rotate_ingest_key(
-            new_key="rotated-1", grace_until=_now() + timedelta(hours=24)
-        )
+        await repo.rotate_ingest_key(new_key="rotated-1", grace_until=_now() + timedelta(hours=24))
         cleared = await repo.clear_ingest_key_previous_after_grace()
         assert cleared is False
         after = await repo.get()
@@ -406,9 +404,7 @@ class TestSettingsRepository:
         """Past the grace boundary, both columns null out atomically."""
         repo = SettingsRepository(session)
         # Rotate with a grace already 5 s in the past.
-        await repo.rotate_ingest_key(
-            new_key="rotated-2", grace_until=_now() - timedelta(seconds=5)
-        )
+        await repo.rotate_ingest_key(new_key="rotated-2", grace_until=_now() - timedelta(seconds=5))
         cleared = await repo.clear_ingest_key_previous_after_grace()
         assert cleared is True
         after = await repo.get()
@@ -422,9 +418,7 @@ class TestSettingsRepository:
         """A second call after a successful clear returns False
         (predicate now mismatches)."""
         repo = SettingsRepository(session)
-        await repo.rotate_ingest_key(
-            new_key="rotated-3", grace_until=_now() - timedelta(seconds=1)
-        )
+        await repo.rotate_ingest_key(new_key="rotated-3", grace_until=_now() - timedelta(seconds=1))
         assert await repo.clear_ingest_key_previous_after_grace() is True
         assert await repo.clear_ingest_key_previous_after_grace() is False
 
@@ -551,7 +545,7 @@ class TestAuditLogRepository:
         repo = AuditLogRepository(sessionmaker)
         async with sessionmaker() as s, s.begin():
             with pytest.raises(ValueError, match="timezone-aware"):
-                await repo.delete_older_than(s, cutoff=datetime(2026, 5, 1))  # noqa: DTZ001
+                await repo.delete_older_than(s, cutoff=datetime(2026, 5, 1))
 
     @pytest.mark.asyncio
     async def test_list_by_target_filters_correctly(

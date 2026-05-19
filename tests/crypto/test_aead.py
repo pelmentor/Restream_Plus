@@ -291,9 +291,7 @@ class TestCredentialAeadHelpers:
         with pytest.raises(AEADDecryptionError):
             decrypt(key, nonce, ct, build_credential_aad_v2(salt, "tid"))
 
-    def test_v1_fallback_with_wrong_target_id_still_decrypts(
-        self, key: bytes, salt: bytes
-    ) -> None:
+    def test_v1_fallback_with_wrong_target_id_still_decrypts(self, key: bytes, salt: bytes) -> None:
         """v1 rows have no `target_id` binding, so the legacy fallback
         is permissive on target_id. The cross-row attack closes only
         for v2 rows; v1 rows remain vulnerable until they're naturally

@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-
 from app.repositories.audit_log import AuditLogRepository
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -250,7 +249,7 @@ async def test_retention_once_checkpoint_failure_does_not_kill_loop(
     retention loop permanently. The slice-8.5 hardening wraps each
     checkpoint call in try/except; the function returns cleanly and
     the loop continues."""
-    from app.main import _AuditRetentionTickState, _audit_log_retention_once
+    from app.main import _audit_log_retention_once, _AuditRetentionTickState
 
     # Seed an aged row so the delete branch fires and triggers the
     # `audit_log_retention_run` checkpoint path.
@@ -297,7 +296,7 @@ async def test_retention_once_recovery_resets_failure_counter(
     """Hex Audit BA2-F3 / FG3-F2: a successful tick after a failure
     streak resets `consecutive_failures` to 0 and emits a recovery
     log. Pins the counter's hysteresis semantics."""
-    from app.main import _AuditRetentionTickState, _audit_log_retention_once
+    from app.main import _audit_log_retention_once, _AuditRetentionTickState
 
     # An empty tick path (no aged rows) hits the idle-checkpoint
     # branch — easier to control fail/recover with monkeypatch.
@@ -326,8 +325,8 @@ async def test_retention_once_threshold_escalates_to_critical(
     """
     from app.main import (
         AUDIT_LOG_RETENTION_FAILURE_THRESHOLD,
-        _AuditRetentionTickState,
         _audit_log_retention_once,
+        _AuditRetentionTickState,
     )
 
     async def _boom(self: object, *, reason: str) -> None:
@@ -338,9 +337,7 @@ async def test_retention_once_threshold_escalates_to_critical(
         _boom,
     )
 
-    state = _AuditRetentionTickState(
-        consecutive_failures=AUDIT_LOG_RETENTION_FAILURE_THRESHOLD - 1
-    )
+    state = _AuditRetentionTickState(consecutive_failures=AUDIT_LOG_RETENTION_FAILURE_THRESHOLD - 1)
     now = datetime(2026, 5, 19, 12, 0, 0, tzinfo=UTC)
 
     await _audit_log_retention_once(sessionmaker, 365, state, now=now)

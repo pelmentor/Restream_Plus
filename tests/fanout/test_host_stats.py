@@ -232,7 +232,7 @@ class TestHostStatsSampler:
         # (slice 10): keys are `(pid, starttime)` tuples (starttime=0
         # for the legacy 3-tuple fake-reader path), so check the pid
         # subset rather than full equality with bare ints.
-        assert {pid for pid, _ in sampler._last_samples.keys()} == {9999}
+        assert {pid for pid, _ in sampler._last_samples} == {9999}
 
     async def test_protocol_widening_keeps_types_aligned(self) -> None:
         # Cheap structural assertion: the test fakes satisfy the

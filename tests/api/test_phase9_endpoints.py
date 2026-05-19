@@ -659,7 +659,7 @@ async def test_rotate_passphrase_orphan_rename_emits_audit_and_raises(
 
     original_replace = Path.replace
 
-    def _boom_replace(self: Path, target: object) -> object:  # noqa: ARG001
+    def _boom_replace(self: Path, target: object) -> object:
         if self.suffix == ".new":
             raise OSError("simulated rename failure")
         return original_replace(self, target)  # type: ignore[arg-type]

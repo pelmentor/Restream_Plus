@@ -90,9 +90,7 @@ async def test_previous_key_accepted_within_grace_window(
 ) -> None:
     """Within the grace window the previous key still publishes."""
     grace = datetime.now(tz=UTC) + timedelta(hours=24)
-    previous = await _rotate_with_grace(
-        api_sessionmaker, new_key="new-key", grace_until=grace
-    )
+    previous = await _rotate_with_grace(api_sessionmaker, new_key="new-key", grace_until=grace)
     fake_supervisor._run_state = RunState.ARMED
     r = await client.post("/internal/rtmp/publish", data={"name": previous})
     assert r.status_code == 200
@@ -106,9 +104,7 @@ async def test_previous_key_rejected_after_grace_expires(
     """Past `grace_until` the previous key is no longer honoured —
     the auth path treats it as a mismatch."""
     expired = datetime.now(tz=UTC) - timedelta(seconds=1)
-    previous = await _rotate_with_grace(
-        api_sessionmaker, new_key="new-key-2", grace_until=expired
-    )
+    previous = await _rotate_with_grace(api_sessionmaker, new_key="new-key-2", grace_until=expired)
     r = await client.post("/internal/rtmp/publish", data={"name": previous})
     assert r.status_code == 403
     assert r.json()["detail"] == "ingest_key_invalid"
@@ -123,9 +119,7 @@ async def test_current_key_still_works_after_grace_expires(
     """Rejection above is for the PREVIOUS key only; the current key
     keeps working regardless of grace state."""
     expired = datetime.now(tz=UTC) - timedelta(seconds=1)
-    await _rotate_with_grace(
-        api_sessionmaker, new_key="new-current-key", grace_until=expired
-    )
+    await _rotate_with_grace(api_sessionmaker, new_key="new-current-key", grace_until=expired)
     fake_supervisor._run_state = RunState.ARMED
     r = await client.post("/internal/rtmp/publish", data={"name": "new-current-key"})
     assert r.status_code == 200
@@ -148,14 +142,10 @@ def test_keys_match_unit_grace_window() -> None:
 
     now = datetime.now(tz=UTC)
     # Within grace: previous accepted.
-    assert (
-        _keys_match("old", "new", "old", grace_until=now + timedelta(minutes=1), now=now)
-        is True
-    )
+    assert _keys_match("old", "new", "old", grace_until=now + timedelta(minutes=1), now=now) is True
     # Past grace: previous rejected even though string matches.
     assert (
-        _keys_match("old", "new", "old", grace_until=now - timedelta(seconds=1), now=now)
-        is False
+        _keys_match("old", "new", "old", grace_until=now - timedelta(seconds=1), now=now) is False
     )
     # grace_until = None with non-None previous: still rejected (no
     # window means no rotation acknowledged on the auth path).

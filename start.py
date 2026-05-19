@@ -62,9 +62,7 @@ MEDIAMTX_URL = (
     f"https://github.com/bluenviron/mediamtx/releases/download/"
     f"{MEDIAMTX_VERSION}/mediamtx_{MEDIAMTX_VERSION}_windows_amd64.zip"
 )
-MEDIAMTX_ZIP_SHA256 = (
-    "945ab46c5fc6d2802ad18e2f1d7e49245ca5609657d85e310aa6eda4cdd72eec"
-)
+MEDIAMTX_ZIP_SHA256 = "945ab46c5fc6d2802ad18e2f1d7e49245ca5609657d85e310aa6eda4cdd72eec"
 # Hex Audit CR-F11 (slice 10): pinned expected hash of the *extracted*
 # `mediamtx.exe` inside the verified zip. The pre-slice-10 code wrote
 # this digest to `dev/mediamtx.exe.sha256` after the first download
@@ -73,9 +71,7 @@ MEDIAMTX_ZIP_SHA256 = (
 # Pinning the expected exe hash in source means a tampered exe is
 # detected even if the side-car `.sha256` file is rewritten. Update
 # this value alongside MEDIAMTX_VERSION + MEDIAMTX_ZIP_SHA256.
-MEDIAMTX_EXE_SHA256 = (
-    "6daa9eed6e4d24e9170b50f60db94b91c5a39c14d6e1f31c5ddd8f7a6d4f2c08"
-)
+MEDIAMTX_EXE_SHA256 = "6daa9eed6e4d24e9170b50f60db94b91c5a39c14d6e1f31c5ddd8f7a6d4f2c08"
 MEDIAMTX_EXE = REPO_ROOT / "dev" / "mediamtx.exe"
 MEDIAMTX_YML = REPO_ROOT / "dev" / "mediamtx.yml"
 
@@ -158,10 +154,7 @@ def main() -> None:
     print()
     print("Where to point each client:")
     print("  - Browser, frontend iteration: http://localhost:5173/")
-    print(
-        "  - Browser, prod-fidelity SPA + backend bundle: "
-        "http://localhost:8000/"
-    )
+    print("  - Browser, prod-fidelity SPA + backend bundle: " "http://localhost:8000/")
     print("  - OBS RTMP server: rtmp://<this-box-LAN-IP>:1935/live")
     print("  - OBS Stream Key: paste the ingest key from Settings → General.")
     print()
@@ -180,13 +173,12 @@ def ensure_mediamtx_present() -> None:
     if not MEDIAMTX_EXE.is_file():
         MEDIAMTX_EXE.parent.mkdir(parents=True, exist_ok=True)
         print(
-            f"Downloading MediaMTX {MEDIAMTX_VERSION} "
-            f"(~26 MB, one-time) from\n  {MEDIAMTX_URL}"
+            f"Downloading MediaMTX {MEDIAMTX_VERSION} " f"(~26 MB, one-time) from\n  {MEDIAMTX_URL}"
         )
         try:
             with urllib.request.urlopen(MEDIAMTX_URL, timeout=120) as resp:
                 data = resp.read()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             sys.exit(f"Download failed: {exc}")
         digest = hashlib.sha256(data).hexdigest()
         if digest != MEDIAMTX_ZIP_SHA256:
@@ -308,22 +300,24 @@ def resolve_passphrase() -> str:
                     return value
 
     sys.exit(
-        "\n".join([
-            f"ERROR: {PASSPHRASE_VAR} is not set.",
-            "",
-            "The dev backend needs the SAME passphrase used by your",
-            "Unraid container that wrote `.restream-plus-db/`. With the",
-            "wrong passphrase, login still works but stream keys cannot",
-            "be revealed and the supervisor refuses to start.",
-            "",
-            "Quickest fix: create `.env.local` in the repo root with:",
-            "",
-            f"  {PASSPHRASE_VAR}=your-actual-passphrase-here",
-            "",
-            "`.env.local` is gitignored. If you don't remember the",
-            "production passphrase, wipe `.restream-plus-db/` and the",
-            "backend will generate a fresh empty DB on first boot.",
-        ])
+        "\n".join(
+            [
+                f"ERROR: {PASSPHRASE_VAR} is not set.",
+                "",
+                "The dev backend needs the SAME passphrase used by your",
+                "Unraid container that wrote `.restream-plus-db/`. With the",
+                "wrong passphrase, login still works but stream keys cannot",
+                "be revealed and the supervisor refuses to start.",
+                "",
+                "Quickest fix: create `.env.local` in the repo root with:",
+                "",
+                f"  {PASSPHRASE_VAR}=your-actual-passphrase-here",
+                "",
+                "`.env.local` is gitignored. If you don't remember the",
+                "production passphrase, wipe `.restream-plus-db/` and the",
+                "backend will generate a fresh empty DB on first boot.",
+            ]
+        )
     )
 
 

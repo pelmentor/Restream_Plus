@@ -44,7 +44,7 @@ class TestUnboundedGrowthFootgun:
         for _ in range(7):  # 7 issues, cap is 5
             ids.append(store.issue(user_id="u1", scope=RepromptScope.DELETE_TARGET))
         # FIFO: first two evicted, last five retained.
-        assert len(store._grants) == 5  # noqa: SLF001
+        assert len(store._grants) == 5
         for gid in ids[:2]:
             assert (
                 store.consume(grant_id=gid, user_id="u1", scope=RepromptScope.DELETE_TARGET)
@@ -52,15 +52,14 @@ class TestUnboundedGrowthFootgun:
             )
         # The latest grant must still be consumable.
         assert (
-            store.consume(grant_id=ids[-1], user_id="u1", scope=RepromptScope.DELETE_TARGET)
-            is True
+            store.consume(grant_id=ids[-1], user_id="u1", scope=RepromptScope.DELETE_TARGET) is True
         )
 
     def test_cap_holds_under_high_volume(self) -> None:
         store = RepromptStore(max_grants=100)
         for _ in range(5_000):
             store.issue(user_id="u1", scope=RepromptScope.DELETE_TARGET)
-        assert len(store._grants) == 100  # noqa: SLF001
+        assert len(store._grants) == 100
 
 
 class TestIssue:

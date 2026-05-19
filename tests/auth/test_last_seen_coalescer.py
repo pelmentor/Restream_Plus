@@ -144,11 +144,11 @@ class TestTypeChecks:
             coalescer.forget("not-bytes")  # type: ignore[arg-type]
 
     def test_constructor_rejects_zero_window(self) -> None:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="window_seconds must be > 0"):
             LastSeenCoalescer(window_seconds=0.0)
 
     def test_constructor_rejects_zero_max_entries(self) -> None:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="max_entries must be >= 1"):
             LastSeenCoalescer(max_entries=0)
 
 

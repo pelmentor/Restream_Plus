@@ -398,9 +398,8 @@ async def test_change_password_persist_failure_returns_503_with_retry_after(
     password update was rolled back (the merged-txn BA-F4 invariant
     means the password was NOT changed when this error fires).
     """
-    from sqlalchemy.exc import OperationalError
-
     from app.repositories.audit_log import AuditLogRepository
+    from sqlalchemy.exc import OperationalError
 
     # Issue a reprompt grant.
     issue = await auth_client.post(

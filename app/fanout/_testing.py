@@ -112,7 +112,7 @@ class FakeSupervisor:
         self._transition_to(RunState.ARMED, cause="(fake) workers spawned")
 
     async def stop_run(
-        self, *, grace: timedelta = timedelta(seconds=5), reason: str = "user_stop"
+        self, *, grace: timedelta = timedelta(seconds=5), reason: str = "normal"
     ) -> None:
         self.calls.append(("stop_run", {"grace": grace.total_seconds(), "reason": reason}))
         if self._run_state in (RunState.OFFLINE, RunState.ERROR):
@@ -140,14 +140,22 @@ class FakeSupervisor:
         yield
 
     def notify_obs_publish_began(self) -> None:
+        # ADR-0015 auto-run-on-publish: webhook drives the full forward
+        # path OFFLINE → STARTING → ARMED → LIVE deterministically so
+        # HTTP-layer tests don't need to interleave start_run + webhook.
         self.calls.append(("notify_obs_publish_began", {}))
+        if self._run_state == RunState.OFFLINE:
+            self._transition_to(RunState.STARTING, cause="OBS publish arrived")
+            self._transition_to(RunState.ARMED, cause="(fake) workers spawned")
         if self._run_state == RunState.ARMED:
             self._transition_to(RunState.LIVE, cause="OBS started publishing")
 
     def notify_obs_publish_ended(self) -> None:
+        # ADR-0015 auto-run-on-publish: no grace, immediate teardown.
         self.calls.append(("notify_obs_publish_ended", {}))
-        if self._run_state == RunState.LIVE:
-            self._transition_to(RunState.ARMED, cause="OBS stopped publishing")
+        if self._run_state in (RunState.LIVE, RunState.ARMED):
+            self._transition_to(RunState.STOPPING, cause="stop requested (publish_idle)")
+            self._transition_to(RunState.OFFLINE, cause="all workers drained")
 
     # ------------------------------------------------------------------
     # Read surface (mirrors Supervisor.run_state / targets / heartbeat)

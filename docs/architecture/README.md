@@ -32,6 +32,7 @@ you're giving up, not just what you're gaining".
 | 0012 | [MediaMTX dev-sidecar: RTMP ingest for Docker-less local dev](ADR-0012-mediamtx-dev-sidecar.md) | Accepted |
 | 0013 | [Audit event vocabulary: event_type strings + data_json shape](ADR-0013-audit-event-vocabulary.md) | Accepted |
 | 0014 | [SPA URL cap + traversal-guarding policy for `_spa_fallback`](ADR-0014-spa-url-cap.md) | Accepted |
+| 0015 | [Auto-run-on-publish — OBS publishing is the only run trigger](ADR-0015-auto-run-on-publish.md) | Accepted |
 
 ## Design review log
 

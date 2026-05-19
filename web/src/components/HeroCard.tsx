@@ -2,19 +2,16 @@ import {
   useEffect,
   useRef,
   useState,
-  type KeyboardEvent,
   type ReactNode,
 } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { Banner } from "./Banner";
-import { Button } from "./Button";
 import { InlinePromptCard } from "./InlinePromptCard";
 import { Sparkline, type SparklineSample } from "./Sparkline";
 import { apiFetch, type ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { TARGETS_QUERY_KEY, type TargetWithSnapshot } from "@/hooks/useTargets";
-import { RUN_STATE_QUERY_KEY } from "@/hooks/useRunState";
 import { t } from "@/messages";
 
 import type { RunStateT } from "@/lib/schemas/run";
@@ -41,14 +38,15 @@ export interface HeroCardProps {
 }
 
 /**
- * Phase 8 hero — START/STOP + state-driven body per phase-8-design-
- * memo §I.
+ * ADR-0015 auto-run-on-publish: hero is status-only. OBS publishing is
+ * the single trigger — no Start/Stop button. The card shows current
+ * run state, ingest push URL, and live stats when LIVE.
  *
- * Click on START routes through the VK-needs-key gate (UX Q4 + §J):
- * any enabled VK target without a credential triggers the
- * InlinePromptCard; the user can either paste keys then start, or
- * skip (the supervisor's _credentials_satisfied gate filters skipped
- * VKs to DISABLED_MISCONFIGURED for the session).
+ * VK credentials are surfaced inline when missing so the operator can
+ * paste them before OBS connects; the saved keys are picked up by the
+ * supervisor on the next auto-start. Skip dismisses the prompt; those
+ * VK targets will resolve to `disabled_misconfigured` for the next
+ * session (existing supervisor `_credentials_satisfied` gate).
  */
 export function HeroCard({
   runState,
@@ -63,8 +61,7 @@ export function HeroCard({
   totalDrops,
 }: HeroCardProps): ReactNode {
   const queryClient = useQueryClient();
-  const [vkPromptOpen, setVkPromptOpen] = useState(false);
-  const [confirmingStop, setConfirmingStop] = useState(false);
+  const [vkPromptDismissed, setVkPromptDismissed] = useState(false);
   const [hintDismissed, setHintDismissed] = useState(() => readDismissed());
 
   // Auto-dismiss the first-run hint on first LIVE transition.
@@ -75,29 +72,23 @@ export function HeroCard({
     }
   }, [runState, hintDismissed]);
 
+  // Reviewer IMP-3: vkPromptDismissed must NOT persist across run
+  // boundaries. ADR-0015 auto-run wipes VK per-session credentials on
+  // every stop_run; the operator's "Save" from session N leaves
+  // vkPromptDismissed=true, and session N+1's wiped creds would then
+  // show no prompt. Reset the flag every time we land back in OFFLINE
+  // from any non-OFFLINE state.
+  const prevStateRef = useRef(runState);
+  useEffect(() => {
+    if (prevStateRef.current !== "offline" && runState === "offline") {
+      setVkPromptDismissed(false);
+    }
+    prevStateRef.current = runState;
+  }, [runState]);
+
   const vkNeedingKey = enabledTargets.filter(
     (tgt) => tgt.type === "vk_live" && !tgt.has_credential,
   );
-
-  const startMutation = useMutation<unknown, ApiError, void>({
-    mutationFn: () =>
-      apiFetch("run/start", { method: "POST" }),
-    onError: (err) => {
-      if (err.code === "illegal_run_state") {
-        void queryClient.invalidateQueries({ queryKey: RUN_STATE_QUERY_KEY });
-      }
-    },
-  });
-
-  const stopMutation = useMutation<unknown, ApiError, void>({
-    mutationFn: () =>
-      apiFetch("run/stop", { method: "POST" }),
-    onError: (err) => {
-      if (err.code === "illegal_run_state") {
-        void queryClient.invalidateQueries({ queryKey: RUN_STATE_QUERY_KEY });
-      }
-    },
-  });
 
   const credentialMutation = useMutation<unknown, ApiError, { id: string; key: string }>({
     mutationFn: ({ id, key }) =>
@@ -107,38 +98,20 @@ export function HeroCard({
       }),
   });
 
-  async function handleUseAndStart(perTarget: ReadonlyMap<string, string>): Promise<void> {
+  async function handleSaveCredentials(perTarget: ReadonlyMap<string, string>): Promise<void> {
     for (const [id, key] of perTarget) {
-      // Sequential — backend serialises DB writes anyway.
-       
       await credentialMutation.mutateAsync({ id, key });
     }
     await queryClient.invalidateQueries({ queryKey: TARGETS_QUERY_KEY });
-    startMutation.mutate();
-    setVkPromptOpen(false);
+    setVkPromptDismissed(true);
   }
 
   function handleSkip(): void {
-    startMutation.mutate();
-    setVkPromptOpen(false);
+    setVkPromptDismissed(true);
   }
 
-  function onStartClick(): void {
-    if (vkNeedingKey.length > 0) {
-      setVkPromptOpen(true);
-      return;
-    }
-    startMutation.mutate();
-  }
-
-  function onStopClick(): void {
-    if (runState === "live") {
-      setConfirmingStop(true);
-      return;
-    }
-    stopMutation.mutate();
-  }
-
+  const showVkPrompt =
+    !vkPromptDismissed && vkNeedingKey.length > 0 && runState === "offline";
   const showFirstRunHint = !firstRunComplete && !hintDismissed && runState === "offline";
 
   return (
@@ -155,19 +128,7 @@ export function HeroCard({
       )}
     >
       <div className="flex flex-col items-center gap-(--space-6)">
-        <HeroButton
-          runState={runState}
-          confirmingStop={confirmingStop}
-          onStart={onStartClick}
-          onStop={onStopClick}
-          onConfirmStop={() => {
-            stopMutation.mutate();
-            setConfirmingStop(false);
-          }}
-          onCancelStop={() => setConfirmingStop(false)}
-          isPendingStart={startMutation.isPending}
-          isPendingStop={stopMutation.isPending}
-        />
+        <StatePill runState={runState} />
         <HeroBody
           runState={runState}
           ingestKeyLast4={ingestKeyLast4}
@@ -180,12 +141,12 @@ export function HeroCard({
         />
         {showFirstRunHint && <FirstRunHint />}
       </div>
-      {vkPromptOpen && vkNeedingKey.length > 0 && (
+      {showVkPrompt && (
         <InlinePromptCard
           vkTargets={vkNeedingKey}
-          submitting={startMutation.isPending || credentialMutation.isPending}
-          onUseAndStart={(perTarget) => {
-            void handleUseAndStart(perTarget);
+          submitting={credentialMutation.isPending}
+          onSave={(perTarget) => {
+            void handleSaveCredentials(perTarget);
           }}
           onSkip={handleSkip}
         />
@@ -194,128 +155,68 @@ export function HeroCard({
   );
 }
 
-interface HeroButtonProps {
+interface StatePillProps {
   readonly runState: RunStateT;
-  readonly confirmingStop: boolean;
-  readonly onStart: () => void;
-  readonly onStop: () => void;
-  readonly onConfirmStop: () => void;
-  readonly onCancelStop: () => void;
-  readonly isPendingStart: boolean;
-  readonly isPendingStop: boolean;
 }
 
-function HeroButton({
-  runState,
-  confirmingStop,
-  onStart,
-  onStop,
-  onConfirmStop,
-  onCancelStop,
-  isPendingStart,
-  isPendingStop,
-}: HeroButtonProps): ReactNode {
-  const confirmStopRef = useRef<HTMLButtonElement | null>(null);
-  const cancelStopRef = useRef<HTMLButtonElement | null>(null);
+function StatePill({ runState }: StatePillProps): ReactNode {
+  // Non-interactive visual badge — replaces the old Start/Stop button
+  // since OBS publishing is the trigger (ADR-0015). Sized to occupy
+  // the same visual mass so the hero's vertical rhythm is preserved.
+  const tone = pillTone(runState);
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={cn(
+        "inline-flex h-16 min-w-(--width-hero-action-min) max-w-(--width-hero-action-max)",
+        "items-center justify-center rounded-md px-(--space-6)",
+        "font-semibold text-(length:--text-xl) tracking-wide",
+        tone.bg,
+        tone.fg,
+        runState === "live" && "animate-pulse",
+      )}
+    >
+      {t(pillLabelKey(runState))}
+    </div>
+  );
+}
 
-  // 3s auto-revert + focus to Stop pill on morph.
-  useEffect(() => {
-    if (!confirmingStop) return;
-    confirmStopRef.current?.focus();
-    const handle = window.setTimeout(onCancelStop, 3000);
-    return () => window.clearTimeout(handle);
-  }, [confirmingStop, onCancelStop]);
-
-  function onKeyDown(e: KeyboardEvent<HTMLDivElement>): void {
-    if (e.key === "ArrowRight") {
-      e.preventDefault();
-      cancelStopRef.current?.focus();
-    } else if (e.key === "ArrowLeft") {
-      e.preventDefault();
-      confirmStopRef.current?.focus();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      onCancelStop();
-    }
-  }
-
-  if (confirmingStop) {
-    return (
-      <div
-        role="group"
-        aria-label={t("hero.stopConfirmAria")}
-        onKeyDown={onKeyDown}
-        onMouseLeave={onCancelStop}
-        className="inline-flex h-20 min-w-(--width-hero-action-min) max-w-(--width-hero-action-max) gap-px overflow-hidden rounded-md"
-      >
-        <Button
-          ref={confirmStopRef}
-          variant="danger"
-          size="lg"
-          className="flex-1 rounded-r-none rounded-l-md text-(length:--text-xl)"
-          onClick={onConfirmStop}
-          loading={isPendingStop}
-          data-hero-button
-        >
-          {t("hero.stopConfirm")}
-        </Button>
-        <Button
-          ref={cancelStopRef}
-          variant="secondary"
-          size="lg"
-          className="flex-1 rounded-l-none rounded-r-md text-(length:--text-xl)"
-          onClick={onCancelStop}
-        >
-          {t("hero.stopCancel")}
-        </Button>
-      </div>
-    );
-  }
-
+function pillLabelKey(runState: RunStateT): "hero.stateOffline" | "hero.stateStarting" | "hero.stateArmed" | "hero.stateLive" | "hero.stateStopping" | "hero.stateError" {
   switch (runState) {
     case "offline":
-      return (
-        <Button variant="primary" size="xl" onClick={onStart} loading={isPendingStart} data-hero-button>
-          {t("hero.start")}
-        </Button>
-      );
+      return "hero.stateOffline";
     case "starting":
-      return (
-        <Button variant="primary" size="xl" disabled loading data-hero-button>
-          {t("hero.starting")}
-        </Button>
-      );
+      return "hero.stateStarting";
     case "armed":
-      return (
-        <Button variant="danger" size="xl" onClick={onStop} loading={isPendingStop} data-hero-button>
-          {t("hero.stop")}
-        </Button>
-      );
+      return "hero.stateArmed";
     case "live":
-      return (
-        <Button variant="danger" size="xl" onClick={onStop} loading={isPendingStop} data-hero-button>
-          {t("hero.stop")}
-        </Button>
-      );
+      return "hero.stateLive";
     case "stopping":
-      return (
-        <Button variant="danger" size="xl" disabled loading data-hero-button>
-          {t("hero.stopping")}
-        </Button>
-      );
+      return "hero.stateStopping";
     case "error":
-      return (
-        <Button
-          variant="primary"
-          size="xl"
-          onClick={onStart}
-          loading={isPendingStart}
-          className="ring-1 ring-(--color-error)"
-          data-hero-button
-        >
-          {t("hero.start")}
-        </Button>
-      );
+      return "hero.stateError";
+  }
+}
+
+interface PillTone {
+  readonly bg: string;
+  readonly fg: string;
+}
+
+function pillTone(runState: RunStateT): PillTone {
+  switch (runState) {
+    case "offline":
+      return { bg: "bg-(--color-bg-sunken)", fg: "text-(--color-fg-muted)" };
+    case "starting":
+    case "stopping":
+      return { bg: "bg-(--color-info-faint)", fg: "text-(--color-info)" };
+    case "armed":
+      return { bg: "bg-(--color-warn-faint)", fg: "text-(--color-warn)" };
+    case "live":
+      return { bg: "bg-(--color-live-faint)", fg: "text-(--color-fg-strong)" };
+    case "error":
+      return { bg: "bg-(--color-error-faint)", fg: "text-(--color-error)" };
   }
 }
 
@@ -459,13 +360,6 @@ function IngestEgressPair({ ingestKbps, egressMbps }: IngestEgressPairProps): Re
 }
 
 function FirstRunHint(): ReactNode {
-  // Hex Audit UI-F14 (slice 10): step circles bumped from `h-6 w-6`
-  // (24px) to `h-8 w-8` (32px) so they read as load-bearing numbered
-  // chips rather than tiny inline decorations against the 80px START
-  // button next door. Font also bumps text-2xs → text-sm so the
-  // numerals are legible at the new size. The pt-(--space-1) on the
-  // description text becomes unnecessary now that the larger circle
-  // already aligns with the first line baseline.
   return (
     <div className="w-full mt-(--space-2) rounded-(--radius-md) bg-(--color-info-faint) border-l-2 border-(--color-info) p-(--space-4)">
       <ol className="flex flex-col gap-(--space-2)">

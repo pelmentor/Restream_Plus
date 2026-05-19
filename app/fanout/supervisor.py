@@ -345,7 +345,7 @@ class Supervisor:
         """
         if self._run_state not in (RunState.OFFLINE, RunState.ERROR):
             with contextlib.suppress(Exception):
-                await self.stop_run(grace=grace, reason="user_stop")
+                await self.stop_run(grace=grace, reason="normal")
         self._stop_event.set()
 
     # ------------------------------------------------------------------
@@ -353,7 +353,23 @@ class Supervisor:
     # ------------------------------------------------------------------
 
     async def start_run(self) -> None:
+        """Public entry — acquire `_lock` and delegate to `_start_run_locked`.
+
+        Kept for symmetry with `stop_run` and for callers (lifespan,
+        tests) that want the legacy `await supervisor.start_run()`
+        shape. With auto-run-on-publish (ADR-0015) the live trigger is
+        the drain's `_start_run_locked()` call when an OBS_PUBLISH_BEGAN
+        action arrives while OFFLINE.
+        """
+        async with self._lock:
+            await self._start_run_locked()
+
+    async def _start_run_locked(self) -> None:
         """OFFLINE → STARTING → (workers spawn) → ARMED.
+
+        Caller MUST hold `self._lock`. Used both by the public
+        `start_run` wrapper and by `_drain_pending_actions_locked` when
+        a publish arrives while OFFLINE (ADR-0015 auto-run-on-publish).
 
         Reads enabled targets and their active credentials from the DB,
         decrypts each credential under the KEK, registers the plaintext
@@ -362,118 +378,130 @@ class Supervisor:
         rollback (stop already-started workers) and transition to ERROR.
 
         Slice 3 (Hex Audit FG2-H3): rotation_lock is acquired atomically
-        with the OFFLINE pre-check, under `supervisor._lock`. This
-        closes the TOCTOU between the REST handler's advisory
-        `state.rotation_lock.locked()` check and the actual credential
-        decrypt: rotate-passphrase either has to wait for our
-        `_lock` (advisory check still meaningful but unauthoritative)
-        OR it grabbed rotation_lock first (in which case we refuse
-        with `RunBlockedByRotationError`).
+        with the OFFLINE pre-check. This closes the TOCTOU between any
+        advisory check and the actual credential decrypt: rotate-
+        passphrase either waits for our `_lock` OR grabbed
+        rotation_lock first (in which case we refuse with
+        `RunBlockedByRotationError`).
+        """
+        if self._run_state is not RunState.OFFLINE:
+            raise IllegalRunStateTransitionError(
+                state=self._run_state, action=RunAction.START_REQUESTED
+            )
+        if self._rotation_lock.locked():
+            raise RunBlockedByRotationError(
+                "passphrase rotation in progress; refuse to start a run"
+            )
+        await self._rotation_lock.acquire()
+        try:
+            await self._set_run_state(
+                RunState.STARTING,
+                RunAction.START_REQUESTED,
+                cause="OBS publish arrived",
+            )
+
+            try:
+                await self._open_run_session()
+                pairs, decrypt_failures = await self._load_runnable_targets()
+                # Flush any decrypt failure audit rows now that the
+                # _load_runnable_targets session has closed (the audit
+                # repo opens its own session; running it inside would
+                # contend on the SQLite write lock). The list is a
+                # local — FG2-C5: no cross-call leak even on a mid-flow
+                # raise after _load_runnable_targets returns.
+                for failed_id in decrypt_failures:
+                    with contextlib.suppress(Exception):
+                        await self._audit(
+                            "credential_decrypt_failed",
+                            target_id=failed_id,
+                            data={"reason": "aead_authentication_failed_or_kek_mismatch"},
+                        )
+                self._targets = {t.id: dom for (t, dom, _) in pairs}
+                self._target_to_workers = {t.id: set() for (t, _, _) in pairs}
+                for t_dto, t_dom, cred_plaintext in pairs:
+                    if not t_dom.enabled:
+                        continue
+                    if cred_plaintext is None:
+                        continue
+                    await self._spawn_workers_for_target(
+                        target_dto=t_dto,
+                        target_dom=t_dom,
+                        plaintext_key=cred_plaintext,
+                    )
+                await self._set_run_state(
+                    RunState.ARMED,
+                    RunAction.WORKERS_SPAWNED,
+                    cause="all enabled targets have running workers",
+                )
+                # Audit run_started BEFORE the post-ARMED drain.
+                # ADR-0015 auto-run-on-publish: the drain may now trigger
+                # _stop_run_locked when an OBS_PUBLISH_ENDED was queued
+                # during the spawn (OBS briefly bounced). Emitting the
+                # `run_started` audit first preserves session ordering
+                # in the audit log: `run_started → run_stopped` even when
+                # the LIVE state never actually surfaces externally.
+                await self._audit(
+                    "run_started",
+                    data={
+                        "run_id": self._current_run_id,
+                        "target_count": len(self._target_to_workers),
+                        "worker_count": len(self._workers),
+                    },
+                )
+                # Slice 3: drain queued OBS-publish signals that
+                # arrived during STARTING (e.g., webhook fired during
+                # the multi-second worker spawn). The drain is the
+                # single source of truth for state-machine writes and
+                # the `_obs_is_publishing` flag.
+                await self._drain_pending_actions_locked()
+            except BaseException:
+                # Spawn failed; tear down anything we did spawn and
+                # transition to ERROR so the user must clear it.
+                #
+                # Hex Audit BA-F10 (slice 3): the ERROR-path used
+                # to leak `_obs_is_publishing = True` into the next
+                # `start_run` (the flag wasn't cleared on this
+                # path). Now we synthesise an `OBS_PUBLISH_ENDED`
+                # action and drain — the drain clears the flag
+                # under `_lock` exactly the way a real webhook
+                # would, so there's only one writer.
+                with contextlib.suppress(Exception):
+                    await self._tear_down_all_workers(grace=WORKER_GRACE)
+                self._enqueue_synthetic_action(_PendingActionKind.OBS_PUBLISH_ENDED)
+                with contextlib.suppress(Exception):
+                    await self._drain_pending_actions_locked()
+                with contextlib.suppress(Exception):
+                    await self._set_run_state(
+                        RunState.ERROR,
+                        RunAction.UNRECOVERABLE_FAILED,
+                        cause="failure during start_run",
+                    )
+                with contextlib.suppress(Exception):
+                    await self._close_run_session(reason="error")
+                raise
+        finally:
+            self._rotation_lock.release()
+
+    async def stop_run(self, *, grace: timedelta = WORKER_GRACE, reason: str = "normal") -> None:
+        """Public entry — acquire `_lock` and delegate to `_stop_run_locked`.
+
+        Called by the supervisor's own `stop()` (lifespan shutdown) and
+        by tests; the auto-stop-on-publish path uses
+        `_stop_run_locked(reason="publish_idle")` directly from the
+        drain.
         """
         async with self._lock:
-            if self._run_state is not RunState.OFFLINE:
-                raise IllegalRunStateTransitionError(
-                    state=self._run_state, action=RunAction.START_REQUESTED
-                )
-            # Slice 3: authoritative rotation gate. The REST-side check
-            # at `app/api/run.py::start_run` is advisory (UX hint); a
-            # rotation that landed between that check and now would
-            # leave workers holding stale DerivedKeys. By acquiring
-            # rotation_lock here, the only way for rotate-passphrase
-            # to start during our run is to grab `_lock` first — which
-            # is impossible while we hold it.
-            if self._rotation_lock.locked():
-                raise RunBlockedByRotationError(
-                    "passphrase rotation in progress; refuse to start a run"
-                )
-            await self._rotation_lock.acquire()
-            try:
-                await self._set_run_state(
-                    RunState.STARTING,
-                    RunAction.START_REQUESTED,
-                    cause="user pressed START",
-                )
+            await self._stop_run_locked(grace=grace, reason=reason)
 
-                try:
-                    await self._open_run_session()
-                    pairs, decrypt_failures = await self._load_runnable_targets()
-                    # Flush any decrypt failure audit rows now that the
-                    # _load_runnable_targets session has closed (the audit
-                    # repo opens its own session; running it inside would
-                    # contend on the SQLite write lock). The list is a
-                    # local — FG2-C5: no cross-call leak even on a mid-flow
-                    # raise after _load_runnable_targets returns.
-                    for failed_id in decrypt_failures:
-                        with contextlib.suppress(Exception):
-                            await self._audit(
-                                "credential_decrypt_failed",
-                                target_id=failed_id,
-                                data={"reason": "aead_authentication_failed_or_kek_mismatch"},
-                            )
-                    self._targets = {t.id: dom for (t, dom, _) in pairs}
-                    self._target_to_workers = {t.id: set() for (t, _, _) in pairs}
-                    for t_dto, t_dom, cred_plaintext in pairs:
-                        if not t_dom.enabled:
-                            continue
-                        if cred_plaintext is None:
-                            continue
-                        await self._spawn_workers_for_target(
-                            target_dto=t_dto,
-                            target_dom=t_dom,
-                            plaintext_key=cred_plaintext,
-                        )
-                    await self._set_run_state(
-                        RunState.ARMED,
-                        RunAction.WORKERS_SPAWNED,
-                        cause="all enabled targets have running workers",
-                    )
-                    # Slice 3: drain queued OBS-publish signals that
-                    # arrived during STARTING (e.g., operator started
-                    # OBS BEFORE clicking START, or webhooks fired
-                    # during the multi-second worker spawn). The drain
-                    # is the single source of truth for the ARMED↔LIVE
-                    # transition and the `_obs_is_publishing` flag —
-                    # there is no longer an "auto-promote after ARMED"
-                    # special case based on a lock-free flag read.
-                    await self._drain_pending_actions_locked()
-                    await self._audit(
-                        "run_started",
-                        data={
-                            "run_id": self._current_run_id,
-                            "target_count": len(self._target_to_workers),
-                            "worker_count": len(self._workers),
-                        },
-                    )
-                except BaseException:
-                    # Spawn failed; tear down anything we did spawn and
-                    # transition to ERROR so the user must clear it.
-                    #
-                    # Hex Audit BA-F10 (slice 3): the ERROR-path used
-                    # to leak `_obs_is_publishing = True` into the next
-                    # `start_run` (the flag wasn't cleared on this
-                    # path). Now we synthesise an `OBS_PUBLISH_ENDED`
-                    # action and drain — the drain clears the flag
-                    # under `_lock` exactly the way a real webhook
-                    # would, so there's only one writer.
-                    with contextlib.suppress(Exception):
-                        await self._tear_down_all_workers(grace=WORKER_GRACE)
-                    self._enqueue_synthetic_action(_PendingActionKind.OBS_PUBLISH_ENDED)
-                    with contextlib.suppress(Exception):
-                        await self._drain_pending_actions_locked()
-                    with contextlib.suppress(Exception):
-                        await self._set_run_state(
-                            RunState.ERROR,
-                            RunAction.UNRECOVERABLE_FAILED,
-                            cause="failure during start_run",
-                        )
-                    with contextlib.suppress(Exception):
-                        await self._close_run_session(reason="error")
-                    raise
-            finally:
-                self._rotation_lock.release()
-
-    async def stop_run(self, *, grace: timedelta = WORKER_GRACE, reason: str = "user_stop") -> None:
+    async def _stop_run_locked(
+        self, *, grace: timedelta = WORKER_GRACE, reason: str = "normal"
+    ) -> None:
         """Active state → STOPPING → (drain workers) → OFFLINE.
+
+        Caller MUST hold `self._lock`. Used both by the public
+        `stop_run` wrapper and by `_drain_pending_actions_locked` when
+        an OBS_PUBLISH_ENDED action arrives while LIVE/ARMED (ADR-0015
+        auto-run-on-publish, `reason="publish_idle"`).
 
         Reason is one of `app.repositories.sessions_history.VALID_END_REASONS`.
         VK per-session credentials are deleted before the run-session row
@@ -481,62 +509,49 @@ class Supervisor:
         step is best-effort so a teardown failure cannot leave a VK key
         in the DB or skip the audit (post-Phase-5 review fix).
         """
-        async with self._lock:
-            # STOPPING is a no-op (already in progress); OFFLINE/ERROR
-            # are terminal-pending-clear. Without the STOPPING guard the
-            # transition table refuses STOPPING→STOP_REQUESTED and the
-            # run sticks halfway through teardown.
-            if self._run_state in (RunState.OFFLINE, RunState.STOPPING, RunState.ERROR):
-                return
-            # Slice 3 (FG2-H6): drain queued OBS signals BEFORE the
-            # STOPPING transition. A Began that arrived during LIVE but
-            # hasn't drained yet should still register (so the audit
-            # log captures the publish-attempt before the stop) — and
-            # an Ended from the user closing OBS during the stop should
-            # also drain so we don't carry a stale Began over.
-            await self._drain_pending_actions_locked()
+        # STOPPING is a no-op (already in progress); OFFLINE/ERROR
+        # are terminal-pending-clear. Without the STOPPING guard the
+        # transition table refuses STOPPING→STOP_REQUESTED and the
+        # run sticks halfway through teardown.
+        if self._run_state in (RunState.OFFLINE, RunState.STOPPING, RunState.ERROR):
+            return
+        await self._set_run_state(
+            RunState.STOPPING,
+            RunAction.STOP_REQUESTED,
+            cause=f"stop requested ({reason})",
+        )
+        teardown_exc: BaseException | None = None
+        try:
+            await self._tear_down_all_workers(grace=grace)
+        except BaseException as exc:
+            _logger.exception("supervisor_teardown_failed")
+            teardown_exc = exc
+        # Wipe and close MUST run on every path — VK keys are
+        # single-use; a leaked row violates platform contract.
+        with contextlib.suppress(Exception):
+            await self._wipe_per_session_credentials()
+        with contextlib.suppress(Exception):
+            await self._close_run_session(reason=reason)
+        with contextlib.suppress(Exception):
             await self._set_run_state(
-                RunState.STOPPING,
-                RunAction.STOP_REQUESTED,
-                cause=f"stop requested ({reason})",
+                RunState.OFFLINE,
+                RunAction.WORKERS_DRAINED,
+                cause="all workers drained",
             )
-            teardown_exc: BaseException | None = None
-            try:
-                await self._tear_down_all_workers(grace=grace)
-            except BaseException as exc:
-                _logger.exception("supervisor_teardown_failed")
-                teardown_exc = exc
-            # Wipe and close MUST run on every path — VK keys are
-            # single-use; a leaked row violates platform contract.
-            with contextlib.suppress(Exception):
-                await self._wipe_per_session_credentials()
-            with contextlib.suppress(Exception):
-                await self._close_run_session(reason=reason)
-            with contextlib.suppress(Exception):
-                await self._set_run_state(
-                    RunState.OFFLINE,
-                    RunAction.WORKERS_DRAINED,
-                    cause="all workers drained",
-                )
-            # Slice 3 (FG2-H6 / BA-F7): synthesise an OBS_PUBLISH_ENDED
-            # and drain it. The drain is the single writer of
-            # `_obs_is_publishing` — so the explicit `= False` is gone,
-            # replaced by the same code path a real `runOnNotReady`
-            # webhook would take. This closes the race where a webhook
-            # `Began` could land AFTER `_obs_is_publishing = False`
-            # but BEFORE the next `start_run`, leaving the flag True
-            # for the next attempt.
-            #
-            # MediaMTX's `runOnNotReady` SHOULD also fire — but we
-            # don't depend on that ordering; the synthetic Ended is
-            # the authoritative wipe.
-            self._enqueue_synthetic_action(_PendingActionKind.OBS_PUBLISH_ENDED)
-            with contextlib.suppress(Exception):
-                await self._drain_pending_actions_locked()
-            with contextlib.suppress(Exception):
-                await self._audit("run_stopped", data={"reason": reason})
-            if teardown_exc is not None:
-                raise teardown_exc
+        # ADR-0015 auto-run-on-publish: the drain itself is what called
+        # us (when reason="publish_idle"), so the caller already cleared
+        # _obs_is_publishing before delegating. The synthetic
+        # OBS_PUBLISH_ENDED below remains a safety net for non-drain
+        # callers (lifespan shutdown, tests, manual stop_run paths) —
+        # without it, a stale True flag would survive into the next
+        # session and skew the first auto-start's diagnostics.
+        self._enqueue_synthetic_action(_PendingActionKind.OBS_PUBLISH_ENDED)
+        with contextlib.suppress(Exception):
+            await self._drain_pending_actions_locked()
+        with contextlib.suppress(Exception):
+            await self._audit("run_stopped", data={"reason": reason})
+        if teardown_exc is not None:
+            raise teardown_exc
 
     # ------------------------------------------------------------------
     # Per-target control (Phase 6 REST handlers call these)
@@ -898,7 +913,7 @@ class Supervisor:
     async def _open_run_session(self) -> None:
         async with self._sessionmaker() as session, session.begin():
             history = SessionsHistoryRepository(session)
-            row = await history.start(notes={"trigger": "user_start"})
+            row = await history.start(notes={"trigger": "obs_publish"})
             self._current_run_id = row.id
 
     async def _close_run_session(self, *, reason: str) -> None:
@@ -1268,6 +1283,20 @@ class Supervisor:
             action = self._pending_actions.popleft()
             if action.kind is _PendingActionKind.OBS_PUBLISH_BEGAN:
                 self._obs_is_publishing = True
+                if self._run_state is RunState.OFFLINE:
+                    # ADR-0015 auto-run-on-publish: cold start. Suppress
+                    # IllegalRunStateTransitionError defensively (a race
+                    # where state changed under us between the check and
+                    # the call is rare under `_lock`, but the drain is
+                    # the single source of truth and must not crash).
+                    # RunBlockedByRotationError is the expected outcome
+                    # when an operator-initiated passphrase rotation is
+                    # in flight; the publish signal is dropped — the
+                    # operator must restart OBS after rotation completes.
+                    with contextlib.suppress(
+                        IllegalRunStateTransitionError, RunBlockedByRotationError
+                    ):
+                        await self._start_run_locked()
                 if self._run_state is RunState.ARMED:
                     with contextlib.suppress(IllegalRunStateTransitionError):
                         await self._set_run_state(
@@ -1277,13 +1306,14 @@ class Supervisor:
                         )
             else:  # OBS_PUBLISH_ENDED
                 self._obs_is_publishing = False
-                if self._run_state is RunState.LIVE:
+                if self._run_state in (RunState.LIVE, RunState.ARMED):
+                    # ADR-0015 auto-run-on-publish: immediate teardown,
+                    # no grace. OBS reconnect blips therefore cause a
+                    # full session cycle (workers drain → wipe → respawn
+                    # on next publish). Operator accepted this tradeoff
+                    # for the simpler "OBS publishing = streaming" model.
                     with contextlib.suppress(IllegalRunStateTransitionError):
-                        await self._set_run_state(
-                            RunState.ARMED,
-                            RunAction.OBS_PUBLISH_ENDED,
-                            cause="OBS stopped publishing",
-                        )
+                        await self._stop_run_locked(reason="publish_idle")
 
     # ------------------------------------------------------------------
     # Internal: heartbeat + drop alerts

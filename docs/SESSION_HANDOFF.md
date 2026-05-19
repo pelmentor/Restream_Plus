@@ -5389,3 +5389,22 @@ The hex-audit project is **DONE**. No more slices in the named workflow. Future 
 - **Phase 13 multi-track ingest:** still deferred per ADR-0003 §"Open questions" — re-open ONLY when OBS Custom Service supports `multitrack_video_configuration_url` AND ffmpeg mainline merges BtbN's `enhanced-flv` branch.
 - **Future hex-audit:** if a future feature lands that introduces ≥40 new sites or a security-critical refactor, run a fresh hex-audit (Rule №6 makes the footgun-hunter mandatory). Create a new `docs/audit/hex-audit-YYYY-MM-DD.md` referencing both 2026-05-18 and 2026-05-19 as priors.
 
+### 2026-05-19 evening — auto-run-on-publish (feature branch `feat/auto-run-on-publish`)
+
+Operator request: _"I don't want to press Start/Stop button every time, I want the restream to work and stream to configured platforms as soon as restreamplus receives obs stream."_
+
+Decision recorded in **ADR-0015**. Branch stacked on `audit/hex-burndown-slices-8-to-10` (PR #14). Open PR for this feature lands separately once the operator has tested both stacks on the dev machine.
+
+**Behaviour change**: OBS publishing is now the single trigger for the run lifecycle. Hero card has no Start/Stop button — it shows a non-interactive `StatePill` (READY / STARTING / ARMED / LIVE / STOPPING / ERROR) plus the existing body. `POST /api/run/start` and `POST /api/run/stop` deleted; only `GET /api/run/state` survives. The drain (`_drain_pending_actions_locked`) calls `_start_run_locked()` on `OBS_PUBLISH_BEGAN` when state is OFFLINE and `_stop_run_locked(reason="publish_idle")` on `OBS_PUBLISH_ENDED` when state is LIVE/ARMED. **No grace window** — operator's explicit choice. Audit-log vocab updated: `run_stopped.data.reason` adds `publish_idle`, drops `user_stop`. `sessions_history.notes.trigger` is now `"obs_publish"` (was `"user_start"`). `VALID_END_REASONS` is `{"normal", "publish_idle", "control_plane_crash", "error"}`.
+
+**Known sharp edges** (documented in ADR-0015):
+- Every OBS network blip drives a full session cycle: workers drain, VK creds wipe, credentials re-decrypt, workers respawn. Viewers see 5–25 s drops on every platform per blip.
+- VK-Live per-session credentials wipe on every disconnect; the `InlinePromptCard` auto-renders in OFFLINE and resets its dismissed flag on every return-to-OFFLINE transition (reviewer IMP-3) so the operator can re-paste the key inline.
+- ERROR state has no in-UI clear affordance; recovery is process restart or DB edit. Rare (only on credential-decrypt or worker-spawn failure during `_start_run_locked`).
+
+**Reviewer pass** (Rule №4, agent `aa542470cca44f065`): 0 Critical / 3 Important / 3 Nice-to-have. All 3 Important fixed in-slice (IMP-1 stale `notes.trigger` value, IMP-2 stale schema.sql comment, IMP-3 `vkPromptDismissed` not reset on run-boundary). N-1 sharpest-edge test added (`test_obs_bounce_during_spawn_audits_started_then_stopped` proves `run_started → run_stopped` ordering in the back-to-back Began+Ended-during-spawn scenario). N-2 (rotation-lock silent drop) and N-3 (`aria-live` redundancy) accepted as flagged-not-fixed.
+
+**Gates**: mypy **72/72** ✓ | pytest **781/781** ✓ (+2 new auto-mode tests, -1 deleted `test_obs_publish_began_before_start_promotes_to_live`) | frontend typecheck/lint clean / **37 vitest** ✓ | build **226 KB** gzipped (within 256 KB budget) ✓.
+
+**Cumulative diff awaiting v1.1.4 image build**: PR #14 (slice 8/8.5/9/10) + auto-run-on-publish. Operator must approve image build (LOCAL-DEV MODE invariant).
+

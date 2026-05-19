@@ -28,7 +28,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 
 VALID_END_REASONS: Final[frozenset[str]] = frozenset(
-    {"normal", "user_stop", "control_plane_crash", "error"}
+    {"normal", "publish_idle", "control_plane_crash", "error"}
 )
 
 

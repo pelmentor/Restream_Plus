@@ -208,19 +208,6 @@ class RunStateView(BaseModel):
     run_state_changed_at: AwareDatetime | None
 
 
-class RunActionAcceptedResponse(BaseModel):
-    """202 Accepted body for /api/run/{start,stop}.
-
-    Per Phase 6 design memo §Q11: REST returns immediately with this
-    body; the client watches the WS for the `run.state.changed` event
-    to see the transition complete.
-    """
-
-    model_config = ConfigDict(frozen=True)
-    accepted: Literal[True] = True
-    previous_state: RunState
-
-
 class HostCpuByTargetEntry(BaseModel):
     """One row of per-target ffmpeg CPU% inside `HostStatsView`.
 
@@ -555,7 +542,6 @@ __all__ = [
     "RepromptIssueRequest",
     "RevealCredentialResponse",
     "RotatePassphraseRequest",
-    "RunActionAcceptedResponse",
     "RunHistoryItem",
     "RunHistoryPage",
     "RunStateView",

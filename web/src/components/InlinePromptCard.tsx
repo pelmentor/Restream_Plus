@@ -9,7 +9,7 @@ import type { TargetT } from "@/lib/schemas/targets";
 export interface InlinePromptCardProps {
   readonly vkTargets: readonly TargetT[];
   readonly submitting: boolean;
-  readonly onUseAndStart: (perTarget: ReadonlyMap<string, string>) => void;
+  readonly onSave: (perTarget: ReadonlyMap<string, string>) => void;
   readonly onSkip: () => void;
 }
 
@@ -27,7 +27,7 @@ export interface InlinePromptCardProps {
 export function InlinePromptCard({
   vkTargets,
   submitting,
-  onUseAndStart,
+  onSave,
   onSkip,
 }: InlinePromptCardProps): ReactNode {
   const [values, setValues] = useState<Record<string, string>>({});
@@ -46,7 +46,7 @@ export function InlinePromptCard({
       const v = values[t.id];
       if (v !== undefined && v.length > 0) map.set(t.id, v);
     });
-    onUseAndStart(map);
+    onSave(map);
   }
 
   return (
@@ -103,7 +103,7 @@ export function InlinePromptCard({
           disabled={!allFilled || submitting}
           loading={submitting}
         >
-          {t("dashboard.vkUseAndStart")}
+          {t("dashboard.vkSave")}
         </Button>
       </div>
     </div>

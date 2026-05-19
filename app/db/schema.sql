@@ -119,7 +119,7 @@ CREATE TABLE sessions_history (
     started_at        INTEGER NOT NULL,
     -- NULL while the run is live. Set on STOP or via crash-recovery on boot.
     ended_at          INTEGER,
-    -- normal | user_stop | control_plane_crash | error. NULL while live.
+    -- normal | publish_idle | control_plane_crash | error. NULL while live.
     end_reason        TEXT,
     notes_json        TEXT    NOT NULL DEFAULT '{}'
 ) STRICT;

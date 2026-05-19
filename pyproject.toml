@@ -99,7 +99,7 @@ packages = ["app"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["app"]
+src = ["app", "scripts"]
 extend-exclude = ["web/", "docs/", "docker/"]
 
 [tool.ruff.lint]

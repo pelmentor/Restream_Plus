@@ -456,9 +456,9 @@ httpx==0.27.2 \
     --hash=sha256:7bb2708e112d8fdd7829cd4243970f0c223274051cb35ee80c03301ee29a3df0 \
     --hash=sha256:f7c2be1d2f3c3c3160d441802406b206c2b76f5947b11115e6df10c6c65e66c2
     # via restream-plus (pyproject.toml)
-hypothesis==6.152.7 \
-    --hash=sha256:741dedcede2ae0f32c32929a5992804b61f2b0400403b6a51a881a2b58482782 \
-    --hash=sha256:c0b17dd428fcb6e962f60315f6f4a77816c72fbb281ce9ba73699dabead5ec82
+hypothesis==6.152.9 \
+    --hash=sha256:9c4fdccb1eac0b12ec740c12290d0e6a0bea3526a3f0bf812b7643bb563c2d8b \
+    --hash=sha256:de4711d69ce3a18009047c3b44882810fd0c0348c1558e920a4b0d2c45f59e1e
     # via restream-plus (pyproject.toml)
 idna==3.15 \
     --hash=sha256:048adeaf8c2d788c40fee287673ccaa74c24ffd8dcf09ffa555a2fbb59f10ac8 \

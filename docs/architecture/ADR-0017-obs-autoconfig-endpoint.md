@@ -66,12 +66,9 @@ OBS-mandatory for a successful start (else hard-fail / refuse to stream, `Multit
 
 OBS encodes the returned `encoder_configurations[]` **verbatim** — zero negotiation — and **hard-fails if the named `type` isn't available on the client** ("Encoder type '%s' not available", `MultitrackVideoOutput.cpp:233`). There is no fallback list. Therefore the endpoint MUST choose `type` from the POSTed `capabilities.gpu` + `client.supported_codecs`:
 
-- **Hardware GPU encoding only — never CPU/x264 (operator directive).** The encode box has a capable GPU ("put 5069 to work"); the CPU must not do encode work. The endpoint selects a hardware encoder from `capabilities.gpu[].vendor_id`:
-  - NVIDIA (`0x10DE`) → `jim_nvenc` (H.264) / `jim_hevc_nvenc` (HEVC) / NVENC AV1 (`av01`, RTX-40+ only — gate on the exact GPU model).
-  - AMD (`0x1002`) → `h264_texture_amf` / HEVC AMF.
-  - Intel (`0x8086`) → `obs_qsv11_v2`.
-- **`obs_x264` is NOT an acceptable ladder entry.** If the POSTed capabilities show no usable hardware encoder, the endpoint **fails loud** — returns `status.result:"error"` with a clear message ("no supported hardware encoder detected") and refuses to hand OBS a config — rather than silently falling back to CPU encoding. This follows the project's no-silent-fallback rule and the operator's explicit "no CPU encoding."
-- Per-codec routing (the actual product win, ADR-0016 §6): offer one H.264 NVENC track for everyone + one modern-codec NVENC track (HEVC/AV1) for YouTube **only when the GPU can encode it** (`supported_codecs` + model gate). Never advertise a codec the client can't hardware-encode.
+- **NVENC only — never CPU/x264, AMD AMF, or Intel QSV (operator directive: "Only nvenc!").** The stream PC is an NVIDIA RTX 5060; the endpoint advertises only NVENC encoder ids: `jim_nvenc` (H.264), `jim_hevc_nvenc` (HEVC), and NVENC AV1 (`av01` — the 5060 / Blackwell supports it). The exact AV1 NVENC id string (`obs_nvenc_av1_tex` vs `jim_av1_nvenc`) is confirmed from the OBS source at build time (EB2).
+- **Fail loud if the client isn't NVENC-capable.** The endpoint verifies `capabilities.gpu[].vendor_id == 0x10DE` (NVIDIA); if absent, it returns `status.result:"error"` ("no NVENC-capable GPU detected") and refuses to hand OBS a config — it does NOT fall back to x264/AMF/QSV. No silent fallback (project rule + operator's explicit "no CPU encoding").
+- Per-codec routing (the product win, ADR-0016 §6): one H.264 NVENC track for everyone + one AV1/HEVC NVENC track for YouTube. All tracks are NVENC.
 
 ### What we deliberately do NOT replicate
 
@@ -113,7 +110,7 @@ If `--config-url` is insufficient and services.json is required, the clobber/for
 ## Consequences
 
 - **Positive:** paste-free, Twitch-equivalent operator experience; the rendition/codec ladder is configured in RP's own UI (where targets already live), not in OBS; reuses the existing ingest-key auth; the endpoint is supervisor-independent (reads config, returns JSON).
-- **Negative / risk:** we are (per research) the first known *self-hosted* implementer of this protocol — Twitch/IVS/Millicast are all commercial. Brittleness vectors: OBS schema/format-version drift (mitigated by lenient parsing + version-detect → readable `status:"error"`), encoder-type/hardware mismatch (mitigated by capability-aware NVENC/AMF/QSV selection; fail-loud if no HW encoder, never an x264 fallback), and VPS transport security (mitigated by Tailscale/Caddy, never self-signed).
+- **Negative / risk:** we are (per research) the first known *self-hosted* implementer of this protocol — Twitch/IVS/Millicast are all commercial. Brittleness vectors: OBS schema/format-version drift (mitigated by lenient parsing + version-detect → readable `status:"error"`), encoder-type/hardware mismatch (NVENC-only by directive; fail-loud if the client isn't NVIDIA, never an x264/AMF/QSV fallback), and VPS transport security (mitigated by Tailscale/Caddy, never self-signed).
 - **Proportionality note (honest):** for pure re-push, per-*resolution* renditions are largely redundant (platforms re-transcode). The durable win is per-platform *codec* selection (AV1/HEVC→YouTube, H.264→Twitch), which platform transcoding cannot give. The endpoint should bias toward a small codec-focused ladder, not a deep resolution ladder, unless the operator explicitly wants more.
 
 ---

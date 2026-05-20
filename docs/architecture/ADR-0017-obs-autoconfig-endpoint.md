@@ -46,10 +46,10 @@ The manual override (path 1) is demoted to a **documented fallback**, not the pr
     { "protocol": "RTMP", "url_template": "rtmp://<advertised>/live/{stream_key}" }
   ],
   "encoder_configurations": [
-    { "type": "obs_x264", "width": 1920, "height": 1080,
+    { "type": "jim_nvenc", "width": 1920, "height": 1080,
       "framerate": {"numerator": 60, "denominator": 1},
       "canvas_index": 0,
-      "settings": {"rate_control":"CBR","bitrate":6000,"keyint_sec":2,"profile":"high","preset":"veryfast"} }
+      "settings": {"rate_control":"CBR","bitrate":6000,"keyint_sec":2,"profile":"high","preset2":"p5","tune":"hq"} }
   ],
   "audio_configurations": { "live": [ {"codec":"aac","track_id":0,"channels":2,"settings":{"bitrate":160}} ] }
 }
@@ -66,9 +66,12 @@ OBS-mandatory for a successful start (else hard-fail / refuse to stream, `Multit
 
 OBS encodes the returned `encoder_configurations[]` **verbatim** — zero negotiation — and **hard-fails if the named `type` isn't available on the client** ("Encoder type '%s' not available", `MultitrackVideoOutput.cpp:233`). There is no fallback list. Therefore the endpoint MUST choose `type` from the POSTed `capabilities.gpu` + `client.supported_codecs`:
 
-- **Universal safe default: `obs_x264`** (every OBS install has it). A correct, if CPU-heavy, ladder always works.
-- **Hardware upgrades** when the GPU supports them: NVIDIA → `jim_nvenc` (H.264) / `jim_hevc_nvenc` (HEVC); AMD → `h264_texture_amf`; Intel → `obs_qsv11_v2`. Vendor is read from `capabilities.gpu[].vendor_id` (0x10DE NVIDIA, 0x1002 AMD, 0x8086 Intel).
-- Per-codec routing (the actual product win, ADR-0016 §6): offer one H.264 track for everyone + one modern-codec track (HEVC/AV1) for YouTube **only when the client can encode it** (`supported_codecs` + GPU). Never advertise a codec the client lacks.
+- **Hardware GPU encoding only — never CPU/x264 (operator directive).** The encode box has a capable GPU ("put 5069 to work"); the CPU must not do encode work. The endpoint selects a hardware encoder from `capabilities.gpu[].vendor_id`:
+  - NVIDIA (`0x10DE`) → `jim_nvenc` (H.264) / `jim_hevc_nvenc` (HEVC) / NVENC AV1 (`av01`, RTX-40+ only — gate on the exact GPU model).
+  - AMD (`0x1002`) → `h264_texture_amf` / HEVC AMF.
+  - Intel (`0x8086`) → `obs_qsv11_v2`.
+- **`obs_x264` is NOT an acceptable ladder entry.** If the POSTed capabilities show no usable hardware encoder, the endpoint **fails loud** — returns `status.result:"error"` with a clear message ("no supported hardware encoder detected") and refuses to hand OBS a config — rather than silently falling back to CPU encoding. This follows the project's no-silent-fallback rule and the operator's explicit "no CPU encoding."
+- Per-codec routing (the actual product win, ADR-0016 §6): offer one H.264 NVENC track for everyone + one modern-codec NVENC track (HEVC/AV1) for YouTube **only when the GPU can encode it** (`supported_codecs` + model gate). Never advertise a codec the client can't hardware-encode.
 
 ### What we deliberately do NOT replicate
 
@@ -97,7 +100,7 @@ The stream key rides in the POST body (`PostData.authentication`), so transport 
 
 A real OBS (latest stable, operator's box) must confirm what the source can't:
 
-- [ ] OBS, pointed at our endpoint (via `--config-url` and/or a generated services.json), actually POSTs `GetClientConfiguration` to us and starts streaming on a `status:"success"` response with an `obs_x264` ladder.
+- [ ] OBS, pointed at our endpoint (via `--config-url` and/or a generated services.json), actually POSTs `GetClientConfiguration` to us and starts streaming on a `status:"success"` response with an NVENC (`jim_nvenc`) ladder matched to the operator's GPU.
 - [ ] Whether `--config-url` alone enables the multitrack output, or the service+checkbox is also required.
 - [ ] Field tolerances for the operator's exact OBS version (`schema_version`, `canvases[]` vs flat, which `capabilities` fields arrive).
 - [ ] The push that results is genuinely multi-track (`PACKETTYPE_MULTITRACK = 6`), so the ADR-0016 demuxer sees >1 track.
@@ -110,7 +113,7 @@ If `--config-url` is insufficient and services.json is required, the clobber/for
 ## Consequences
 
 - **Positive:** paste-free, Twitch-equivalent operator experience; the rendition/codec ladder is configured in RP's own UI (where targets already live), not in OBS; reuses the existing ingest-key auth; the endpoint is supervisor-independent (reads config, returns JSON).
-- **Negative / risk:** we are (per research) the first known *self-hosted* implementer of this protocol — Twitch/IVS/Millicast are all commercial. Brittleness vectors: OBS schema/format-version drift (mitigated by lenient parsing + version-detect → readable `status:"error"`), encoder-type/hardware mismatch (mitigated by capability-aware selection with `obs_x264` floor), and VPS transport security (mitigated by Tailscale/Caddy, never self-signed).
+- **Negative / risk:** we are (per research) the first known *self-hosted* implementer of this protocol — Twitch/IVS/Millicast are all commercial. Brittleness vectors: OBS schema/format-version drift (mitigated by lenient parsing + version-detect → readable `status:"error"`), encoder-type/hardware mismatch (mitigated by capability-aware NVENC/AMF/QSV selection; fail-loud if no HW encoder, never an x264 fallback), and VPS transport security (mitigated by Tailscale/Caddy, never self-signed).
 - **Proportionality note (honest):** for pure re-push, per-*resolution* renditions are largely redundant (platforms re-transcode). The durable win is per-platform *codec* selection (AV1/HEVC→YouTube, H.264→Twitch), which platform transcoding cannot give. The endpoint should bias toward a small codec-focused ladder, not a deep resolution ladder, unless the operator explicitly wants more.
 
 ---

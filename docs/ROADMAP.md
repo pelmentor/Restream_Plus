@@ -1,6 +1,6 @@
 # Restream_Plus Roadmap
 
-**Last updated:** 2026-05-19
+**Last updated:** 2026-05-20
 **Purpose:** single-page grand plan. Cold-resume entry point. Everything
 else (`SESSION_HANDOFF.md`, ADRs, audit burndowns) is reachable from
 here. If you're picking up this project after a compact / context loss /
@@ -13,9 +13,22 @@ fresh conversation, read this first.
 - **Production:** `ghcr.io/pelmentor/restream-plus:v1.1.3` running on operator's Unraid box (10.10.0.2:8000, plain HTTP, bind-mount `/mnt/user/appdata/restream-plus`). Five releases shipped 2026-05-18 (v1.0.0 → v1.1.3); **every release before v1.1.3 has a known browser-blocking bug — do NOT pull `:v1.0.0` through `:v1.1.2`**.
 - **LOCAL-DEV MODE:** no GHCR image builds or tag pushes without explicit operator authorisation. `build-image.yml` only fires on push to `main`, so merging into `main` triggers `:edge` + `:sha-<short>` automatically.
 - **Hex audit:** terminal state. Both burndown files at 0 open findings (`docs/audit/hex-audit-2026-05-18.md` 87/0, `docs/audit/hex-audit-2026-05-19.md` 31/0). Future regressions need a fresh hex-audit run.
-- **Two open PRs awaiting operator dev-machine test:**
-  - [PR #14 — `refactor(audit): drain hex-audit burndown — slices 8/8.5/9/10`](https://github.com/pelmentor/Restream_Plus/pull/14). Base `main`. 133 files, +12791/−1249.
-  - [PR #15 — `feat(run): auto-run-on-publish — OBS publishing is the only run trigger`](https://github.com/pelmentor/Restream_Plus/pull/15). Stacked on #14 (base = `audit/hex-burndown-slices-8-to-10`). 18 files, +636/−771. GitHub auto-flips base to `main` once #14 merges.
+- **Open PR stack — 10 PRs (#14 → #23), all stacked, awaiting operator dev-machine test/merge.** Each base auto-rebases when its parent merges; merge oldest-first. `backend-lint` + `backend-lockfile` CI (red on #14/#15 from a pre-existing ruff backlog + a stale `hypothesis` pin) was drained green on #14 (`chore(ruff)` 46 lint/14 format fixes + `chore(deps)` hypothesis 6.152.7→6.152.9) and cascaded through the stack — all 5 required checks now green on all PRs.
+
+  | PR | branch | what |
+  |---|---|---|
+  | #14 | `audit/hex-burndown-slices-8-to-10` | hex audit slices 8/8.5/9/10 + ruff backlog drain + hypothesis lockfile bump. Base `main`. |
+  | #15 | `feat/auto-run-on-publish` | auto-run-on-publish (ADR-0015) |
+  | #16 | `docs/roadmap-and-adr-0016` | this ROADMAP + ADR-0016 + multitrack-pilot runbook |
+  | #17 | `feat/pilot-ertmp-analyser` | pilot FLV CLI analyser (`scripts/pilot_ertmp.py`) |
+  | #18 | `feat/flv-parser-module` | **B1** prod FLV parser `app/fanout/flv/parser.py` |
+  | #19 | `feat/codec-compat-and-bus-events` | **B2** `accepted_video_codecs` + `TrackManifestEvent` + `WorkerSpec.stdin_provider` |
+  | #20 | `feat/flv-tap` | **B3** `FlvTap` (ffmpeg `-c copy -f flv` ingest fork) |
+  | #21 | `feat/sequence-header-parser` | **B4** SPS/VPS/OBU → resolution (verified vs 9 real ffmpeg vectors) |
+  | #22 | `feat/flv-demuxer` | **B5** `FlvDemuxer` push-parser |
+  | #23 | `docs/adr-0017-obs-autoconfig` | **ADR-0017** OBS auto-config endpoint design (+ this ROADMAP refresh) |
+
+  All Phase-B code is receive-side and pure (no production wiring yet); `pytest -n auto` 905/905 at the stack tip. **None of this is on `main` or in any image** — LOCAL-DEV MODE, operator must dev-test + merge.
 
 ---
 
@@ -46,44 +59,68 @@ When operator authorises:
 
 ---
 
-## Multi-track / Enhanced RTMP support (ADR-0016)
+## Multi-track / Enhanced RTMP support (ADR-0016 receive + ADR-0017 send)
 
-**Design accepted, no code written, implementation gated on Phase A pilot.**
+The feature has **two halves**, both designed, with the receive half largely built:
 
-See [ADR-0016](architecture/ADR-0016-enhanced-rtmp-multitrack-ingest.md) for the full architecture (always-on `FlvDemuxer` with single-track fast path, ffmpeg-tap (Option A), stdin-pipe distribution to per-target workers, `settings_json["track_preference"]` per target, fail-loud codec compat). See [docs/research/obs-multitrack-feasibility.md](research/obs-multitrack-feasibility.md) for the OBS source-level evidence behind the design.
+- **RECEIVE side — [ADR-0016](architecture/ADR-0016-enhanced-rtmp-multitrack-ingest.md):** always-on `FlvDemuxer` (single-track fast path), ffmpeg-tap (Option A), stdin-pipe distribution to per-target workers, per-target `track_preference`, fail-loud codec compat. Source-level evidence in [docs/research/obs-multitrack-feasibility.md](research/obs-multitrack-feasibility.md).
+- **SEND side — [ADR-0017](architecture/ADR-0017-obs-autoconfig-endpoint.md):** a Twitch-Enhanced-Broadcasting-compatible `GetClientConfiguration` HTTP endpoint so OBS auto-fetches the encoder ladder and emits multi-track with **zero manual JSON pasting** (the operator's hard requirement). RP authenticates by the ingest key, returns a `GoLiveApi::Config`, points OBS at our RTMP ingest.
 
-**Why this matters:** OBS encodes a `{1080p/720p/480p}` ladder once; Restream_Plus picks the right rendition per target. Today every target gets the same single-track stream regardless of platform fit.
+**Why this matters:** OBS encodes the ladder once on the GPU; Restream_Plus routes the right track per platform. The durable win is **per-platform codec** (AV1/HEVC→YouTube, H.264→Twitch) — platform transcoding can't give you a better *source* codec — plus per-platform bitrate fit.
 
-### Phase A — Pilot (≤1 day, operator-driven, MANDATORY before Phase B)
+### Locked product decisions (operator, 2026-05-20) — see `memory/project-multitrack-hardware-encoding.md`
 
-**No application code changes.** Operator-facing setup + analysis script.
+- **NVENC only.** Ladder advertises NVIDIA NVENC encoder ids exclusively (`jim_nvenc` / `jim_hevc_nvenc` / NVENC AV1). Never x264 / AMF / QSV. Fail-loud (`status:"error"`) if the client GPU isn't NVIDIA. Stream PC = **RTX 5060** (Blackwell — NVENC does H.264 + HEVC + AV1, so AV1→YouTube is in reach).
+- **Ladder OBS encodes:** tier0 **1080p60 @ 12000 kbps** (operator-fixed), tier1 **720p60** (~8000), tier2 **480p ~30** (~2500). 720/480 bitrates + exact NVENC encoder-id strings finalised at build (EB2) from OBS source.
+- **Routing policy:** deliver the **top tier (1080p60@12000) to every target by default; step down only when a platform forces it.** Twitch is the known forced-downgrade case — non-affiliate (no transcode → source-only) + ~8500 ingest ceiling, so **Twitch never gets 12000** (that's an ingest ceiling, not a transcode limit). Default Twitch to the highest legal tier; the per-target dropdown overrides.
+- **Per-target tier is operator-configurable, never hardcoded** (`track_preference`, ADR-0016 §6). Handles affiliate-vs-not transparently: an affiliate/partner (has transcode → viewer rungs) bumps Twitch up to ~8500; a non-affiliate keeps it light (720p60@5000 / 1080p60@6000). Same OBS ladder, different dropdown.
 
-See [docs/ops/multitrack-pilot.md](ops/multitrack-pilot.md) for the procedure. Exit gates:
+### Phase B — RECEIVE-side modules — ✅ DONE (PRs #18–#22, all green, 905 tests)
 
-- [ ] OBS with `multitrack_video_config_override` JSON actually emits `PACKETTYPE_MULTITRACK = 6` tags via the `custom_config_only` path.
-- [ ] ffmpeg `-c copy -f flv` tap forwards multi-track bytes intact (does NOT silently drop them).
-- [ ] Tag layout matches [reference/obs-studio/plugins/obs-outputs/flv-mux.c:442-501](../reference/obs-studio/plugins/obs-outputs/flv-mux.c#L442) exactly.
-- [ ] JSON schema for `multitrack_video_config_override` empirically validated.
-- [ ] Captured FLV fixture committed at `tests/fixtures/multitrack_pilot.flv` (or SHA-pinned in CI fixture spec if too large).
-
-**If item 2 fails:** ffmpeg tap is broken for multi-track; escalate to Option B (Python RTMP client) in Phase B; adds ~2 weeks scope.
-
-### Phases B → E (sequential, only after Phase A passes)
-
-| Phase | Scope | Time |
+| Slice | PR | Module |
 |---|---|---|
-| **B** | `FlvDemuxer` + `FlvTap` + `SequenceHeaderParser` modules + unit tests; `WorkerSpec.stdin_provider`; `TargetTypeSpec.accepted_video_codecs`; `TrackManifestEvent` bus type | ~1 week |
-| **C** | Supervisor wiring (`_start_run_locked` tap startup, `_stop_run_locked` tap teardown, track-aware `_spawn_workers_for_target`); ffmpeg-worker stdin-writer task; `settings.track_preference` read path. **Exit:** Twitch + YouTube each receive auto-selected rendition from 2-track OBS push | ~1 week |
-| **D** | `TrackSelector.tsx` + `useTrackManifest.ts`; per-target track-preference UI in `TargetDetails.tsx`; API validation | ~3 days |
-| **E** | Full SPS/VPS/OBU resolution parsing; demuxer Hypothesis fuzz; long-session memory profile; codec-compat coverage; track-disappeared-mid-session test | ~3 days |
+| B1 | #18 | `app/fanout/flv/parser.py` — pull FLV/E-RTMP tag parser |
+| B2 | #19 | `TargetTypeSpec.accepted_video_codecs` + `TrackManifestEvent`/`TrackInfo` + `WorkerSpec.stdin_provider` |
+| B3 | #20 | `app/fanout/flv/tap.py` — `FlvTap` ffmpeg ingest fork |
+| B4 | #21 | `app/fanout/flv/sequence_header.py` — SPS/VPS/OBU → resolution (verified vs 9 real ffmpeg vectors) |
+| B5 | #22 | `app/fanout/flv/demuxer.py` — `FlvDemuxer` push-parser |
 
-**Total impl scope post-pilot:** ~3 weeks of work + reviewer + audit per Rule №4/№5.
+### Remaining slices (the build queue)
+
+**SEND side (ADR-0017 — do these next; they're what makes OBS emit multi-track at all):**
+
+| Slice | Scope |
+|---|---|
+| **EB1** | Extract `keys_match` from `internal_rtmp.py` + `internal_mtx.py` → `app/auth/ingest_key.py` (prerequisite; closes existing duplication) |
+| **EB2** | `GetClientConfiguration` endpoint core — stream-key auth, NVENC-only capability-aware ladder, `GoLiveApi::Config` response; operator-configurable ladder stored in settings |
+| **EB3** | Enablement — `--config-url` launch-flag support (primary; `GoLiveAPI_Network.cpp:111-127`) + generated `services.json` download + `RESTREAM_LAN_ONLY_RELAXED_TLS` fail-loud gate |
+| **EB4** | Ladder-config + "connect OBS" UI in Settings |
+
+**RECEIVE side wiring (ADR-0016, after the tap has a real source):**
+
+| Slice | Scope |
+|---|---|
+| **C1** | Supervisor wiring — `_start_run_locked` tap startup, `_stop_run_locked` teardown, `FlvDemuxer` consume task, `TrackManifestEvent` emission. **Purely additive (observability) — single-track path unchanged.** |
+| **C2** | `WorkerSpec.stdin_provider` → ffmpeg-worker stdin-writer; per-target `track_preference` read path; fail-loud codec compat |
+| **D1** | `TrackSelector.tsx` + `useTrackManifest.ts` + per-target preference UI in `TargetDetails.tsx` |
+| **E1** | Demuxer Hypothesis fuzz; long-session memory profile; codec-compat coverage; track-disappeared-mid-session test |
+
+### Slimmed Phase A pilot (the ONE thing source can't settle — operator + real OBS)
+
+The old "paste a `multitrack_video_config_override` JSON" pilot is **superseded by ADR-0017** (auto-config endpoint = no paste). The real-OBS smoke test now confirms, against the operator's latest stable OBS + RTX 5060:
+
+- [ ] OBS, pointed at our endpoint (`--config-url` and/or generated `services.json`), POSTs `GetClientConfiguration` and **starts** on our `status:"success"` NVENC ladder.
+- [ ] Whether `--config-url` alone enables multitrack, or the Settings→Stream checkbox (bundled-service-gated) is also required.
+- [ ] The resulting push is genuinely multi-track (`PACKETTYPE_MULTITRACK = 6`) so `FlvDemuxer` sees >1 track; capture it → commit `tests/fixtures/multitrack_real.flv` (replaces the synthetic vectors).
+- [ ] ffmpeg `-c copy -f flv` tap forwards the multi-track tags intact (if not → Option B Python RTMP client, +~2 weeks).
+
+This pilot can run any time the operator has OBS up; the EB endpoint must exist first (EB2) for the auto-config path to be testable.
 
 ---
 
 ## Deferred / future / non-blocking
 
-- **Twitch Multitrack downstream forwarding** — out of scope per ADR-0016 §5 (proprietary API, RTX-only HEVC beta). Future ADR-0017 amendment if Twitch publishes the partner API; until then Twitch gets one track on its standard ingest, same as everyone.
+- **Twitch *Multitrack downstream* forwarding** — out of scope per ADR-0016 §5 (Twitch's own proprietary multi-track *ingest* API, RTX-only HEVC beta). We send Twitch ONE track on its standard RTMP ingest. (Note: ADR-0017 is the *upstream* OBS→us auto-config endpoint — a separate concern from downstream us→Twitch.)
 - **HEVC/AV1 → H.264 transcode on our side** — explicitly rejected by ADR-0016 §6 (Rule №2 smell; would drag x264 into the supervisor). Codec mismatches surface as fail-loud target misconfiguration; operator adjusts OBS ladder.
 - **Audio multi-track (`AUDIO_PACKETTYPE_MULTITRACK = 5`)** — zero downstream consumers as of 2026-05-19; Veovera v2 stable spec is too new. If a platform ever advertises ingest support, this is a new ADR.
 - **Phase 13 deferral document** in ADR-0003 §"Open questions" is superseded by the 2026-05-19 amendment + ADR-0016 — historical bullets stay in place but **MUST NOT be cited as the current position**.
@@ -116,3 +153,5 @@ These govern collaboration with Claude on this project. Source of truth in `memo
 - **`__Host-` cookie ONLY in TLS mode** (controlled by `RESTREAM_COOKIE_SECURE`).
 - **`-c copy` lock** (ADR-0008) — no transcoding on our side, ever. ADR-0016 preserves it.
 - **`MAX_LIFETIME_SPAWN_ATTEMPTS = 1000`** (slice 10) — absolute per-`(target,role)` spawn cap; escape requires worker rebuild via target toggle off+on.
+- **OBS Enhanced-Broadcasting contract pinned** (ADR-0017, from `reference/obs-studio` commit `5dacbb6` latest stable): request `GoLiveApi::PostData` (service `"IVS"`, `schema_version "2025-01-25"`, stream key in `authentication`, GPU/CPU capabilities); response `GoLiveApi::Config` (meta+config_id, `status:"success"`, `ingest_endpoints[]` with `{stream_key}` template, non-empty `encoder_configurations[]`, `audio_configurations.live[]`). OBS encodes the returned ladder **verbatim** and **hard-fails if the named encoder `type` isn't on the client** — so the endpoint MUST pick NVENC ids from the posted GPU. One RTMP connection, all tracks muxed. Services format `version 5`. `--config-url` launch flag overrides the service URL (`GoLiveAPI_Network.cpp:111-127`).
+- **Stream PC = NVIDIA RTX 5060** (NVENC H.264+HEVC+AV1). VPS-future security: stream key rides in the POST body → LAN plain-HTTP ok, but a public VPS needs Tailscale/WireGuard or Caddy+Let's-Encrypt — **never self-signed** (OBS verifies certs, no trust-cert UI).

@@ -20,6 +20,7 @@ The Adobe FLV container layout (header + back-references) is per
 the public FLV File Format Specification v10.
 """
 
+from app.fanout.flv.demuxer import FlvDemuxer, StreamMode
 from app.fanout.flv.parser import (
     AUDIO_ERTMP_HIGH_NIBBLE,
     AUDIO_HIGH_NIBBLE_MASK,
@@ -83,9 +84,11 @@ __all__ = [
     "VIDEO_PACKETTYPE_MULTITRACK",
     "AnalysisReport",
     "AudioTagInfo",
+    "FlvDemuxer",
     "FlvHeader",
     "FlvParseError",
     "MultitrackKind",
+    "StreamMode",
     "ScriptTagInfo",
     "Tag",
     "TagBody",
